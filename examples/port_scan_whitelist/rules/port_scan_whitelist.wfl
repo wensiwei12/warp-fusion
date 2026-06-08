@@ -5,25 +5,21 @@ use "network.wfs"
 // 架构：
 //   1. scanner_whitelist 窗口（over=0，静态）从 whitelist stream 加载白名单
 //   2. conn_events 窗口接收 netflow 事件
-//   3. snapshot join 关联白名单数据（当前为 INNER join，用于数据富化）
+//   3. anti join 排除白名单 IP
 //
-// 当前 join 行为：数据关联，不影响 match 条件。
-// 白名单 IP 仍会触发告警。需要 ANTI join 实现排除：
-//   join scanner_whitelist anti on c.sip == scanner_whitelist.sip
-//
-// 当前 workaround：白名单在数据采集层分流（不同 _stream 或上游 agent 过滤）
+// 注：ANTI join 需要完整引擎运行时验证（WFL test runner 不支持跨窗口 join）。
+//     解析和编译已支持，运行时通过 execute_joins 返回 false 来排除匹配事件。
 
 rule port_scan_whitelist {
     events { c : conn_events && action == "syn" }
     match<sip:5m> {
         on event { c.dport | distinct | count >= 10; }
     } -> score(80.0)
-    join scanner_whitelist snapshot on c.sip == scanner_whitelist.sip
+    join scanner_whitelist anti on c.sip == scanner_whitelist.sip
     entity(ip, c.sip)
     yield security_alerts (sip = c.sip, alert_type = "port_scan", detail = "distinct ports >= 10")
 }
 
-// 攻击者达到阈值 —— 正常告警
 test scan_detected for port_scan_whitelist {
   input {
     row(c, sip = "10.0.0.99", dip = "192.168.1.1", dport = "80", bytes = "100", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:00:00Z");
@@ -44,7 +40,6 @@ test scan_detected for port_scan_whitelist {
   }
 }
 
-// 未达阈值 —— 不告警
 test below_threshold for port_scan_whitelist {
   input {
     row(c, sip = "10.0.0.1", dip = "192.168.1.1", dport = "80", bytes = "100", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:00:00Z");
