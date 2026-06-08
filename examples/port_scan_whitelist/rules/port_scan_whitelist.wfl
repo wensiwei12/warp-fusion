@@ -1,14 +1,19 @@
 use "network.wfs"
+
+// 端口扫描检测 —— 静态窗口白名单 + ANTI join 排除已知漏扫器
+
 rule port_scan_whitelist {
-    events { c : conn_events }
+    events { c : conn_events && action == "syn" }
     match<sip:5m> {
-        on event { c | count >= 1; }
-        and close { total: c | count >= 1; }
-    } -> score(70.0)
+        on event { c.dport | distinct | count >= 10; }
+        and close { total: c | count >= 10; }
+    } -> score(80.0)
+    join scanner_whitelist anti on c.sip == scanner_whitelist.sip
     entity(ip, c.sip)
-    yield network_alerts (sip = c.sip, alert_type = "test", detail = "test")
+    yield network_alerts (sip = c.sip, alert_type = "port_scan", detail = "distinct ports >= 10")
 }
 
+// 攻击者扫 10 个不同端口 → 告警
 test scan_detected for port_scan_whitelist {
   input {
     row(c, sip = "10.0.0.99", dip = "192.168.1.1", dport = "80", bytes = "100", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:00:00Z");
@@ -29,6 +34,7 @@ test scan_detected for port_scan_whitelist {
   }
 }
 
+// 不足 10 个不同端口 → 不告警
 test below_threshold for port_scan_whitelist {
   input {
     row(c, sip = "10.0.0.1", dip = "192.168.1.1", dport = "80", bytes = "100", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:00:00Z");
