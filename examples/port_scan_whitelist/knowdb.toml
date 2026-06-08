@@ -1,0 +1,12 @@
+version = 2
+base_dir = "."
+
+[csv]
+has_header = true
+delimiter  = ","
+
+[[tables]]
+name = "scanner_whitelist"
+dir  = "whitelist"
+enabled = true
+columns.by_header = ["sip", "added_at", "note"]

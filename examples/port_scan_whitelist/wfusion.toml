@@ -1,15 +1,7 @@
 mode = "batch"
 sinks = "../close_demo/sinks"
 
-# 白名单：CSV 格式，header 匹配 schema 字段
-[[sources]]
-type = "file"
-name = "seed_whitelist"
-path = "data/scanner_whitelist.csv"
-stream = "whitelist"
-format = "csv"
-
-# 连接事件：NDJSON 格式
+# 连接事件
 [[sources]]
 type = "file"
 name = "seed_netflow"
@@ -50,3 +42,7 @@ over_cap = "0s"
 [logging]
 level = "info"
 format = "plain"
+
+# 知识库：白名单通过 knowdb.toml 直接加载到窗口
+[knowledge]
+knowdb = "knowdb.toml"
