@@ -1,1 +1,4 @@
 {"_stream":"whitelist","sip":"10.0.2.1","added_at":"2026-01-01T00:00:00Z","note":"vuln_scanner"}
+{"_stream":"whitelist","sip":"10.0.2.2","added_at":"2026-01-01T00:00:00Z","note":"internal_nessus"}
+{"_stream":"whitelist","sip":"10.0.2.3","added_at":"2026-01-01T00:00:00Z","note":"internal_openvas"}
+{"_stream":"whitelist","sip":"192.168.1.100","added_at":"2026-01-01T00:00:00Z","note":"ci_scan_tool"}

@@ -1,17 +1,19 @@
 mode = "batch"
 sinks = "../close_demo/sinks"
 
+# 白名单：CSV 格式，header 匹配 schema 字段
 [[sources]]
 type = "file"
 name = "seed_whitelist"
-path = "data/scanner_whitelist.ndjson"
+path = "data/scanner_whitelist.csv"
 stream = "whitelist"
-format = "ndjson"
+format = "csv"
 
+# 连接事件：NDJSON 格式
 [[sources]]
 type = "file"
 name = "seed_netflow"
-path = "data/close_events.ndjson"
+path = "data/conn_events.ndjson"
 stream = "netflow"
 format = "ndjson"
 
@@ -43,8 +45,8 @@ over_cap = "1h"
 [window.scanner_whitelist]
 mode = "local"
 max_window_bytes = "1MB"
-over_cap = "1h"
+over_cap = "0s"
 
 [logging]
-level = "debug"
+level = "info"
 format = "plain"
