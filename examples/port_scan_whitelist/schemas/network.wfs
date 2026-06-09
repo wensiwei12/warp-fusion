@@ -2,15 +2,30 @@ window conn_events {
     stream = "netflow"
     time = event_time
     over = 30m
-    fields { sip: ip, dip: ip, dport: digit, bytes: digit, protocol: chars, action: chars, event_time: time }
+    fields {
+        sip: ip
+        dip: ip
+        dport: digit
+        bytes: digit
+        protocol: chars
+        action: chars
+        event_time: time
+    }
 }
 
 window network_alerts {
     over = 0
-    fields { sip: ip, alert_type: chars, detail: chars }
+    fields {
+        sip: ip
+        alert_type: chars
+        detail: chars
+    }
 }
 
-// Provider 窗口：knowdb.toml 中有同名表的自动成为 ProviderWindow
 window scanner_whitelist {
-    fields { sip: ip, note: chars }
+    over = 0
+    fields {
+        sip: ip
+        note: chars
+    }
 }
