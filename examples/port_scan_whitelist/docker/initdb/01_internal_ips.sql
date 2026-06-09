@@ -1,3 +1,15 @@
+CREATE TABLE IF NOT EXISTS scanner_whitelist (
+    sip TEXT PRIMARY KEY,
+    note TEXT NOT NULL
+);
+
+INSERT INTO scanner_whitelist (sip, note) VALUES
+    ('10.0.2.1', 'vuln_scanner'),
+    ('10.0.2.2', 'internal_nessus'),
+    ('10.0.2.3', 'internal_openvas'),
+    ('192.168.1.100', 'ci_scan_tool')
+ON CONFLICT (sip) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS internal_ips (
     ip TEXT PRIMARY KEY,
     department TEXT NOT NULL,
