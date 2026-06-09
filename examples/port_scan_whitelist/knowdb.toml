@@ -1,9 +1,14 @@
 version = 2
-base_dir = "."
 
-[csv]
-has_header = true
-delimiter = ","
+[cache]
+enabled = true
+capacity = 1024
+ttl_ms = 300000
+
+[provider]
+kind = "postgres"
+connection_uri = "postgres://wfusion:wfusion@127.0.0.1:55432/port_scan_db"
+pool_size = 4
 
 [[tables]]
 name = "scanner_whitelist"
