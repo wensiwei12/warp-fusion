@@ -14,8 +14,11 @@
 # 1. 内联测试
 wfl test rules/port_scan_whitelist.wfl --schemas "schemas/*.wfs"
 
-# 2. 完整管道（batch 模式）
-wfusion run -c examples/port_scan_whitelist/wfusion.toml --work-dir examples/port_scan_whitelist
+# 2. 离线回放
+wfl replay rules/port_scan_whitelist.wfl --input data/conn_events.ndjson
+
+# 3. 完整引擎（batch 模式）
+wfusion run -c ./wfusion.toml
 ```
 
 ## 规则

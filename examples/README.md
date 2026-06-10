@@ -4,10 +4,12 @@
 |------|------|---------|---------|
 | 端口扫描 + 白名单 | `port_scan_whitelist/` | 扫描检测 | distinct + count 阈值 + join anti 排除 |
 | SSH 暴力破解 | `ssh_brute_force/` | 暴力破解 | count 阈值 + 多目标聚合 |
+| SQL 注入探测 | `sqli_probe/` | Web 攻击 | URI 模式匹配 + count 阈值 |
+| 远控扩散（凭据窃取） | `rat_propagation/` | 攻击链 | 多步匹配 scan→login→xfer |
+| 远控扩散（漏洞利用） | `rat_propagation/` | 攻击链 | 多步匹配 scan→xfer |
 | DNS 隧道 | `dns_tunneling/` | 数据外泄 | 长域名 + TXT 查询统计 |
 | 横向移动 | `lateral_movement/` | 内网渗透 | 内部 IP 间 SMB/RDP 扫描 |
 | C2 Beacon | `c2_beacon/` | 远控回连 | 周期性低字节心跳检测 |
-| SQL 注入探测 | `sqli_probe/` | Web 攻击 | URI 模式匹配 + count 阈值 |
 
 ---
 
@@ -189,8 +191,8 @@ window security_alerts {
 wfl test rules/<scenario>.wfl --schemas "schemas/*.wfs"
 
 # 离线回放
-wfl replay --file rules/<scenario>.wfl --input data/events.ndjson
+wfl replay rules/<scenario>.wfl --input data/events.ndjson
 
 # 完整引擎（batch 模式）
-wfusion run -c examples/<scenario>/wfusion.toml --work-dir examples/<scenario>
+wfusion run -c ./wfusion.toml
 ```

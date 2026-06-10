@@ -1,7 +1,7 @@
 window http_events {
     stream = "http"
     time = event_time
-    over = 24h
+    over = 5m
     fields {
         sip: ip
         dip: ip

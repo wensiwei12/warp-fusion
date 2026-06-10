@@ -3,6 +3,13 @@ sinks = "sinks"
 
 [[sources]]
 type = "file"
+name = "conn_source"
+path = "data/conn_events.ndjson"
+stream = "netflow"
+format = "ndjson"
+
+[[sources]]
+type = "file"
 name = "auth_source"
 path = "data/auth_events.ndjson"
 stream = "auth"
@@ -12,7 +19,7 @@ format = "ndjson"
 executor_parallelism = 2
 rule_exec_timeout = "30s"
 schemas = "schemas/*.wfs"
-rules   = "rules/ssh_brute_force.wfl"
+rules   = "rules/rat_propagation.wfl"
 
 [window_defaults]
 evict_interval = "30s"
@@ -23,21 +30,20 @@ watermark = "1s"
 allowed_lateness = "0s"
 late_policy = "drop"
 
-[window.auth_events]
+[window.conn_events]
 mode = "local"
 max_window_bytes = "64MB"
+over_cap = "30m"
+
+[window.auth_events]
+mode = "local"
+max_window_bytes = "16MB"
 over_cap = "30m"
 
 [window.security_alerts]
 mode = "local"
 max_window_bytes = "1MB"
 over_cap = "0s"
-
-[window.scanner_whitelist]
-mode = "local"
-max_window_bytes = "1MB"
-over_cap = "0s"
-table = "scanner_whitelist"
 
 [logging]
 level = "info"

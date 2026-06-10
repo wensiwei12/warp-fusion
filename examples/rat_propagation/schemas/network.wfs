@@ -1,7 +1,21 @@
+window conn_events {
+    stream = "netflow"
+    time = event_time
+    over = 30m
+    fields {
+        sip: ip
+        dip: ip
+        dport: digit
+        bytes_out: digit
+        protocol: chars
+        event_time: time
+    }
+}
+
 window auth_events {
     stream = "auth"
     time = event_time
-    over = 5m
+    over = 30m
     fields {
         sip: ip
         dip: ip
@@ -18,15 +32,7 @@ window security_alerts {
     fields {
         sip: ip
         dip: ip
-        user: chars
         alert_type: chars
         detail: chars
-    }
-}
-
-window<provider> scanner_whitelist {
-    fields {
-        sip: ip
-        note: chars
     }
 }
