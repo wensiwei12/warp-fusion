@@ -4,7 +4,7 @@
 
 有时间和数据流的窗口，接收外部数据。
 
-```
+```wfs
 window conn_events {
     stream = "netflow"       # 匹配数据源 [[sources]].stream
     time = event_time         # 时间字段名（必须为 time 类型）
@@ -28,7 +28,7 @@ window conn_events {
 
 无时间窗口，仅定义告警数据结构。规则 `yield` 的目标。
 
-```
+```wfs
 window security_alerts {
     over = 0                  # 0 = 无时间驱逐
     fields {
@@ -44,7 +44,7 @@ window security_alerts {
 
 静态数据窗口，数据来自 PostgreSQL 或文件，不订阅 stream。
 
-```
+```wfs
 window<provider> scanner_whitelist {
     fields {
         sip: ip
