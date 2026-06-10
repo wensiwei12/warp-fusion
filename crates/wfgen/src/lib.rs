@@ -1,8 +1,15 @@
+pub mod cmd_bench;
+pub mod cmd_gen;
+pub mod cmd_helpers;
+pub mod cmd_lint;
+pub mod cmd_send;
+pub mod cmd_verify;
 pub mod datagen;
 pub mod error;
 pub mod loader;
 pub mod oracle;
 pub mod output;
+pub mod tcp_send;
 pub mod validate;
 pub mod verify;
 pub mod wfg_ast;

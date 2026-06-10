@@ -1,0 +1,12 @@
+{"sip":"10.0.0.99","dip":"192.168.1.10","method":"GET","uri":"/search?q='+or+1=1--","status":"200","bytes_out":"512","user_agent":"sqlmap/1.0","event_time":"2026-01-01T00:00:00Z"}
+{"sip":"10.0.0.99","dip":"192.168.1.10","method":"GET","uri":"/search?q=union+select+1,2,3--","status":"200","bytes_out":"512","user_agent":"sqlmap/1.0","event_time":"2026-01-01T00:00:10Z"}
+{"sip":"10.0.0.99","dip":"192.168.1.10","method":"GET","uri":"/user?id=1'+or+'1'='1","status":"200","bytes_out":"512","user_agent":"sqlmap/1.0","event_time":"2026-01-01T00:00:20Z"}
+{"sip":"10.0.0.99","dip":"192.168.1.10","method":"GET","uri":"/product?id=1'+and+sleep(5)--","status":"200","bytes_out":"512","user_agent":"sqlmap/1.0","event_time":"2026-01-01T00:00:30Z"}
+{"sip":"10.0.0.99","dip":"192.168.1.10","method":"GET","uri":"/login?user=admin'--","status":"200","bytes_out":"512","user_agent":"sqlmap/1.0","event_time":"2026-01-01T00:00:40Z"}
+{"sip":"10.0.0.50","dip":"192.168.1.10","method":"GET","uri":"/item?id=1'+or+1=1--","status":"200","bytes_out":"512","user_agent":"Mozilla/5.0","event_time":"2026-01-01T00:01:00Z"}
+{"sip":"10.0.0.50","dip":"192.168.1.10","method":"GET","uri":"/item?id=2","status":"200","bytes_out":"512","user_agent":"Mozilla/5.0","event_time":"2026-01-01T00:01:10Z"}
+{"sip":"10.0.0.50","dip":"192.168.1.10","method":"GET","uri":"/item?id=3","status":"200","bytes_out":"512","user_agent":"Mozilla/5.0","event_time":"2026-01-01T00:01:20Z"}
+{"sip":"10.0.0.123","dip":"192.168.1.10","method":"GET","uri":"/home","status":"200","bytes_out":"256","user_agent":"Mozilla/5.0","event_time":"2026-01-01T00:02:00Z"}
+{"sip":"10.0.0.123","dip":"192.168.1.10","method":"GET","uri":"/css/app.css","status":"200","bytes_out":"2048","user_agent":"Mozilla/5.0","event_time":"2026-01-01T00:02:01Z"}
+{"sip":"10.0.0.123","dip":"192.168.1.10","method":"GET","uri":"/api/items?page=1","status":"200","bytes_out":"128","user_agent":"Mozilla/5.0","event_time":"2026-01-01T00:02:02Z"}
+{"sip":"10.0.0.123","dip":"192.168.1.10","method":"GET","uri":"/js/main.js","status":"200","bytes_out":"4096","user_agent":"Mozilla/5.0","event_time":"2026-01-01T00:02:03Z"}

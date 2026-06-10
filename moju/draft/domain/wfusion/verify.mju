@@ -1,0 +1,13 @@
+// Verify CLI dispatch
+
+verify DispatchOk for flow Dispatch {
+  given {
+    Dispatch.subcommand = "scenario"
+  }
+
+  when Dispatch
+
+  expect {
+    DispatchResult.subcommand == "scenario"
+  }
+}

@@ -4,11 +4,11 @@ use std::net::TcpStream;
 use orion_error::conversion::{SourceErr, SourceRawErr};
 
 use wf_lang::WindowSchema;
-use wfgen::datagen::stream_gen::GenEvent;
-use wfgen::error::{self, WfgenReason, WfgenResult};
-use wfgen::output::arrow_ipc::events_to_typed_batches;
+use crate::datagen::stream_gen::GenEvent;
+use crate::error::{self, WfgenReason, WfgenResult};
+use crate::output::arrow_ipc::events_to_typed_batches;
 
-pub(crate) fn connect_sender(addr: &str) -> WfgenResult<TcpStream> {
+pub fn connect_sender(addr: &str) -> WfgenResult<TcpStream> {
     let stream = TcpStream::connect(addr).source_err(
         WfgenReason::Network,
         format!("connecting to runtime: {addr}"),
@@ -19,7 +19,7 @@ pub(crate) fn connect_sender(addr: &str) -> WfgenResult<TcpStream> {
     Ok(stream)
 }
 
-pub(crate) fn send_events_with_stream(
+pub fn send_events_with_stream(
     events: &[GenEvent],
     schemas: &[WindowSchema],
     stream: &mut TcpStream,
@@ -57,7 +57,7 @@ pub(crate) fn send_events_with_stream(
     Ok(sent_frames)
 }
 
-pub(crate) fn send_events(
+pub fn send_events(
     events: &[GenEvent],
     schemas: &[WindowSchema],
     addr: &str,

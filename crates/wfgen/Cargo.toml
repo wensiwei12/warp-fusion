@@ -8,6 +8,10 @@ license.workspace = true
 name = "wfgen"
 path = "src/main.rs"
 
+[lib]
+name = "wfgen"
+path = "src/lib.rs"
+
 [dependencies]
 wf-engine.workspace = true
 wf-config.workspace = true

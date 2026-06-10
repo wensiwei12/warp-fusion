@@ -1,0 +1,12 @@
+mode = "batch"
+
+[runtime]
+rules = "examples/ssh_brute_force/rules"
+schemas = "examples/ssh_brute_force/schemas"
+
+[metrics]
+enabled = false
+
+[logging]
+file = "wfusion.log"
+level = "info"

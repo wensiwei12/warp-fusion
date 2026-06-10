@@ -1,0 +1,25 @@
+window http_events {
+    stream = "http"
+    time = event_time
+    over = 24h
+    fields {
+        sip: ip
+        dip: ip
+        method: chars
+        uri: chars
+        status: digit
+        bytes_out: digit
+        user_agent: chars
+        event_time: time
+    }
+}
+
+window security_alerts {
+    over = 0
+    fields {
+        sip: ip
+        alert_type: chars
+        detail: chars
+        sample_uri: chars
+    }
+}

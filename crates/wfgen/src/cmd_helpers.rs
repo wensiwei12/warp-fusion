@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use orion_error::conversion::SourceErr;
 
-use wfgen::error::{WfgenReason, WfgenResult, WfgenStructExt};
+use crate::error::{WfgenReason, WfgenResult, WfgenStructExt};
 
-pub(crate) fn load_ws_files(paths: &[PathBuf]) -> WfgenResult<Vec<wf_lang::WindowSchema>> {
+pub fn load_ws_files(paths: &[PathBuf]) -> WfgenResult<Vec<wf_lang::WindowSchema>> {
     let mut schemas = Vec::new();
     for path in paths {
         let content = std::fs::read_to_string(path).source_err(
@@ -17,7 +17,7 @@ pub(crate) fn load_ws_files(paths: &[PathBuf]) -> WfgenResult<Vec<wf_lang::Windo
     Ok(schemas)
 }
 
-pub(crate) fn load_wfl_files(paths: &[PathBuf]) -> WfgenResult<Vec<wf_lang::ast::WflFile>> {
+pub fn load_wfl_files(paths: &[PathBuf]) -> WfgenResult<Vec<wf_lang::ast::WflFile>> {
     let mut files = Vec::new();
     for path in paths {
         let content = std::fs::read_to_string(path).source_err(

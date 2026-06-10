@@ -35,7 +35,7 @@ test scan_detected for port_scan_whitelist {
     row(c, sip = "10.0.0.99", dip = "192.168.1.1", dport = "6379", bytes = "100", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:00:06Z");
     row(c, sip = "10.0.0.99", dip = "192.168.1.1", dport = "27017", bytes = "100", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:00:07Z");
     row(c, sip = "10.0.0.99", dip = "192.168.1.1", dport = "9200", bytes = "100", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:00:08Z");
-    row(c, sip = "10.0.0.99", dip = "192.168.1.1", dport = "11211", bytes = "100", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:00:09Z");
+    row(c, sip = "10.0.0.98", dip = "192.168.1.1", dport = "11211", bytes = "100", protocol = "tcp", action = "syn", event_time = "2026-01-01T00:00:09Z");
   }
   expect {
     hits == 1;

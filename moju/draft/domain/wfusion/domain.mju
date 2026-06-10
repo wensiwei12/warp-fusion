@@ -1,0 +1,23 @@
+// ---------------------------------------------------------------------------
+// wfusion domain — unified CLI entry point
+// Crate: wfusion (crates/wfusion)
+// ---------------------------------------------------------------------------
+
+// -- Actor -------------------------------------------------------------------
+
+actor User {
+  can Dispatch
+}
+
+// -- Dispatch command --------------------------------------------------------
+
+command Dispatch {
+  subcommand: String
+}
+
+// -- Dispatch result ---------------------------------------------------------
+
+struct DispatchResult {
+  subcommand: String
+  domain: String
+}

@@ -3,15 +3,15 @@ use std::path::PathBuf;
 
 use orion_error::conversion::SourceErr;
 
-use wfgen::datagen::generate;
-use wfgen::error::{self, WfgenReason, WfgenResult};
-use wfgen::loader::load_from_uses;
-use wfgen::wfg_parser::parse_wfg;
+use crate::datagen::generate;
+use crate::error::{self, WfgenReason, WfgenResult};
+use crate::loader::load_from_uses;
+use crate::wfg_parser::parse_wfg;
 
 use crate::cmd_helpers::{load_wfl_files, load_ws_files};
 use crate::tcp_send::{connect_sender, send_events, send_events_with_stream};
 
-pub(crate) fn run(
+pub fn run(
     scenario: PathBuf,
     ws: Vec<PathBuf>,
     wfl: Vec<PathBuf>,

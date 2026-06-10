@@ -2,12 +2,12 @@ use std::path::PathBuf;
 
 use orion_error::conversion::SourceErr;
 
-use wfgen::error::{WfgenReason, WfgenResult};
-use wfgen::oracle::OracleTolerances;
-use wfgen::output::jsonl::{read_alerts_jsonl, read_oracle_jsonl};
-use wfgen::verify::verify;
+use crate::error::{WfgenReason, WfgenResult};
+use crate::oracle::OracleTolerances;
+use crate::output::jsonl::{read_alerts_jsonl, read_oracle_jsonl};
+use crate::verify::verify;
 
-pub(crate) fn run(
+pub fn run(
     expected: PathBuf,
     actual: PathBuf,
     score_tolerance: Option<f64>,

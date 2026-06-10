@@ -5,21 +5,21 @@ use orion_error::conversion::SourceErr;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-use wfgen::datagen::fault_gen::apply_faults;
-use wfgen::datagen::generate;
-use wfgen::error::{self, WfgenReason, WfgenResult};
-use wfgen::loader::load_from_uses;
-use wfgen::oracle::{extract_oracle_tolerances, run_oracle};
-use wfgen::output::arrow_ipc::write_arrow_ipc;
-use wfgen::output::jsonl::{write_jsonl, write_oracle_jsonl};
-use wfgen::validate::validate_wfg;
-use wfgen::wfg_parser::parse_wfg;
+use crate::datagen::fault_gen::apply_faults;
+use crate::datagen::generate;
+use crate::error::{self, WfgenReason, WfgenResult};
+use crate::loader::load_from_uses;
+use crate::oracle::{extract_oracle_tolerances, run_oracle};
+use crate::output::arrow_ipc::write_arrow_ipc;
+use crate::output::jsonl::{write_jsonl, write_oracle_jsonl};
+use crate::validate::validate_wfg;
+use crate::wfg_parser::parse_wfg;
 
 use crate::cmd_helpers::{load_wfl_files, load_ws_files};
 use crate::tcp_send::send_events;
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run(
+pub fn run(
     scenario: PathBuf,
     format: String,
     out: PathBuf,

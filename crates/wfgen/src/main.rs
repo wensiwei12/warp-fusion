@@ -2,14 +2,6 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-mod cmd_bench;
-mod cmd_gen;
-mod cmd_helpers;
-mod cmd_lint;
-mod cmd_send;
-mod cmd_verify;
-mod tcp_send;
-
 use wfgen::error::WfgenResult;
 
 #[derive(Parser)]
@@ -160,8 +152,8 @@ fn run_cli() -> WfgenResult<()> {
             no_oracle,
             send,
             addr,
-        } => cmd_gen::run(scenario, format, out, ws, wfl, no_oracle, send, addr),
-        Commands::Lint { scenario, ws, wfl } => cmd_lint::run(scenario, ws, wfl),
+        } => wfgen::cmd_gen::run(scenario, format, out, ws, wfl, no_oracle, send, addr),
+        Commands::Lint { scenario, ws, wfl } => wfgen::cmd_lint::run(scenario, ws, wfl),
         Commands::Verify {
             expected,
             actual,
@@ -169,7 +161,7 @@ fn run_cli() -> WfgenResult<()> {
             time_tolerance,
             meta,
             format,
-        } => cmd_verify::run(
+        } => wfgen::cmd_verify::run(
             expected,
             actual,
             score_tolerance,
@@ -182,7 +174,7 @@ fn run_cli() -> WfgenResult<()> {
             input,
             addr,
             ws,
-        } => cmd_send::run(scenario, input, addr, ws),
+        } => wfgen::cmd_send::run(scenario, input, addr, ws),
         Commands::Bench {
             scenario,
             ws,
@@ -190,6 +182,6 @@ fn run_cli() -> WfgenResult<()> {
             duration,
             send,
             addr,
-        } => cmd_bench::run(scenario, ws, wfl, duration, send, addr),
+        } => wfgen::cmd_bench::run(scenario, ws, wfl, duration, send, addr),
     }
 }

@@ -3,14 +3,14 @@ use std::path::PathBuf;
 
 use orion_error::conversion::SourceErr;
 
-use wfgen::error::{WfgenReason, WfgenResult};
-use wfgen::loader::load_from_uses;
-use wfgen::validate::validate_wfg;
-use wfgen::wfg_parser::parse_wfg;
+use crate::error::{WfgenReason, WfgenResult};
+use crate::loader::load_from_uses;
+use crate::validate::validate_wfg;
+use crate::wfg_parser::parse_wfg;
 
 use crate::cmd_helpers::{load_wfl_files, load_ws_files};
 
-pub(crate) fn run(scenario: PathBuf, ws: Vec<PathBuf>, wfl: Vec<PathBuf>) -> WfgenResult<()> {
+pub fn run(scenario: PathBuf, ws: Vec<PathBuf>, wfl: Vec<PathBuf>) -> WfgenResult<()> {
     let wfg_content = std::fs::read_to_string(&scenario).source_err(
         WfgenReason::Io,
         format!("reading .wfg file: {}", scenario.display()),

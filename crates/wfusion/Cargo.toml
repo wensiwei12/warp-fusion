@@ -1,0 +1,23 @@
+[package]
+name = "wfusion"
+version = "0.1.3" #@gxl:set(version)
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wfusion"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+wf-runtime.workspace = true
+wfgen = { path = "../wfgen" }
+wfl = { path = "../wfl" }
+wf-config.workspace = true
+orion-error.workspace = true
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+moju-derive = { git = "https://github.com/dayu-sec/moju-derive.git", branch = "main" }
+
+[dev-dependencies]
+tempfile = "3"

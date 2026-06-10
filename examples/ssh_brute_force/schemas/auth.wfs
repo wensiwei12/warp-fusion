@@ -1,0 +1,32 @@
+window auth_events {
+    stream = "auth"
+    time = event_time
+    over = 24h
+    fields {
+        sip: ip
+        dip: ip
+        dport: digit
+        service: chars
+        user: chars
+        result: chars
+        event_time: time
+    }
+}
+
+window security_alerts {
+    over = 0
+    fields {
+        sip: ip
+        dip: ip
+        user: chars
+        alert_type: chars
+        detail: chars
+    }
+}
+
+window<provider> scanner_whitelist {
+    fields {
+        sip: ip
+        note: chars
+    }
+}

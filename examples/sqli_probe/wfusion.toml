@@ -1,0 +1,12 @@
+mode = "batch"
+
+[runtime]
+rules = "examples/sqli_probe/rules"
+schemas = "examples/sqli_probe/schemas"
+
+[metrics]
+enabled = false
+
+[logging]
+file = "wfusion.log"
+level = "info"

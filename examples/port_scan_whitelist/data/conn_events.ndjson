@@ -14,7 +14,7 @@
 {"_stream":"netflow","sip":"10.0.0.99","dip":"192.168.1.1","dport":"22","bytes":"100","protocol":"tcp","action":"syn","event_time":"2026-01-01T00:01:03Z"}
 {"_stream":"netflow","sip":"10.0.0.99","dip":"192.168.1.1","dport":"3306","bytes":"100","protocol":"tcp","action":"syn","event_time":"2026-01-01T00:01:04Z"}
 {"_stream":"netflow","sip":"10.0.0.99","dip":"192.168.1.1","dport":"5432","bytes":"100","protocol":"tcp","action":"syn","event_time":"2026-01-01T00:01:05Z"}
-{"_stream":"netflow","sip":"10.0.0.99","dip":"192.168.1.1","dport":"6379","bytes":"100","protocol":"tcp","action":"syn","event_time":"2026-01-01T00:01:06Z"}
-{"_stream":"netflow","sip":"10.0.0.99","dip":"192.168.1.1","dport":"27017","bytes":"100","protocol":"tcp","action":"syn","event_time":"2026-01-01T00:01:07Z"}
-{"_stream":"netflow","sip":"10.0.0.99","dip":"192.168.1.1","dport":"9200","bytes":"100","protocol":"tcp","action":"syn","event_time":"2026-01-01T00:01:08Z"}
-{"_stream":"netflow","sip":"10.0.0.99","dip":"192.168.1.1","dport":"11211","bytes":"100","protocol":"tcp","action":"syn","event_time":"2026-01-01T00:01:09Z"}
+{"_stream":"netflow","sip":"10.0.0.98","dip":"192.168.1.1","dport":"6379","bytes":"100","protocol":"tcp","action":"syn","event_time":"2026-01-01T00:01:06Z"}
+{"_stream":"netflow","sip":"10.0.0.98","dip":"192.168.1.1","dport":"27017","bytes":"100","protocol":"tcp","action":"syn","event_time":"2026-01-01T00:01:07Z"}
+{"_stream":"netflow","sip":"10.0.0.98","dip":"192.168.1.1","dport":"9200","bytes":"100","protocol":"tcp","action":"syn","event_time":"2026-01-01T00:01:08Z"}
+{"_stream":"netflow","sip":"10.0.0.98","dip":"192.168.1.1","dport":"11211","bytes":"100","protocol":"tcp","action":"syn","event_time":"2026-01-01T00:01:09Z"}
