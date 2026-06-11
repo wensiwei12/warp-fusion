@@ -43,9 +43,29 @@ NDJSON/CSV 的字段名和值须与 schema 兼容：
 - 时间字段：ISO 8601 格式字符串，如 `2026-01-01T00:00:00Z`
 - IP 字段：字符串，如 `"10.0.0.1"`
 
+## Kafka
+
+```toml
+[[sources]]
+type = "kafka"
+name = "netflow_kafka"        # 可选，默认 kafka_{N}
+brokers = ["localhost:9092"]   # bootstrap servers
+topic = "netflow"              # 消费的 topic
+group_id = "wfusion"           # consumer group ID（默认 "wfusion"）
+stream = "netflow"              # 匹配 schema 中的 window.stream
+format = "ndjson"               # ndjson | arrow-ipc
+enabled = true
+```
+
+> **依赖**：Kafka 源需要 `rdkafka` crate。当前为占位实现，需在 `wf-runtime/Cargo.toml` 中添加 `rdkafka` 依赖并实现 consumer.poll() 循环。
+
+每条 Kafka message 按 `format` 解析：
+- `ndjson`：message payload 为单个 NDJSON 事件
+- `arrow-ipc`：message payload 为 Arrow IPC RecordBatch
+
 ## 多源
 
-支持同时配置多个 TCP 和文件源，引擎并行消费：
+支持同时配置 TCP、文件和 Kafka 源，引擎并行消费：
 
 ```toml
 [[sources]]
