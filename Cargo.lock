@@ -121,8 +121,10 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-cast",
+ "arrow-csv",
  "arrow-data",
  "arrow-ipc",
+ "arrow-json",
  "arrow-ord",
  "arrow-row",
  "arrow-schema",
@@ -192,6 +194,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrow-csv"
+version = "54.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1644877d8bc9a0ef022d9153dc29375c2bda244c39aec05a91d0e87ccf77995f"
+dependencies = [
+ "arrow-array",
+ "arrow-cast",
+ "arrow-schema",
+ "chrono",
+ "csv",
+ "csv-core",
+ "lazy_static",
+ "regex",
+]
+
+[[package]]
 name = "arrow-data"
 version = "54.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -214,6 +232,28 @@ dependencies = [
  "arrow-data",
  "arrow-schema",
  "flatbuffers",
+]
+
+[[package]]
+name = "arrow-json"
+version = "54.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ee5b4ca98a7fb2efb9ab3309a5d1c88b5116997ff93f3147efdc1062a6158e9"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-cast",
+ "arrow-data",
+ "arrow-schema",
+ "chrono",
+ "half",
+ "indexmap",
+ "lexical-core",
+ "memchr",
+ "num",
+ "serde",
+ "serde_json",
+ "simdutf8",
 ]
 
 [[package]]
@@ -2582,6 +2622,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
+name = "simdutf8"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3500,7 +3546,7 @@ dependencies = [
 [[package]]
 name = "wf-config"
 version = "0.1.5"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.6#60a551953e51d70fd45ffd852d206ec8cde32c3f"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.6#4159a62319f6cbd1769e3482dfceabe480df53e3"
 dependencies = [
  "glob",
  "moju-derive",
@@ -3514,9 +3560,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wf-connector-api"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a778ae579e23b106c03021466763136f309693b13852aa7ce337ea3158cdd61"
+dependencies = [
+ "arrow",
+ "async-trait",
+ "orion-error",
+]
+
+[[package]]
 name = "wf-engine"
 version = "0.1.5"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.6#60a551953e51d70fd45ffd852d206ec8cde32c3f"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.6#4159a62319f6cbd1769e3482dfceabe480df53e3"
 dependencies = [
  "arrow",
  "async-trait",
@@ -3540,7 +3597,7 @@ dependencies = [
 [[package]]
 name = "wf-lang"
 version = "0.1.5"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.6#60a551953e51d70fd45ffd852d206ec8cde32c3f"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.6#4159a62319f6cbd1769e3482dfceabe480df53e3"
 dependencies = [
  "moju-derive",
  "orion-error",
@@ -3551,7 +3608,7 @@ dependencies = [
 [[package]]
 name = "wf-runtime"
 version = "0.1.5"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.6#60a551953e51d70fd45ffd852d206ec8cde32c3f"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.6#4159a62319f6cbd1769e3482dfceabe480df53e3"
 dependencies = [
  "arrow",
  "clap",
@@ -3569,6 +3626,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "wf-config",
+ "wf-connector-api",
  "wf-engine",
  "wf-lang",
  "wp-arrow",
@@ -4027,9 +4085,8 @@ dependencies = [
 
 [[package]]
 name = "wp-core-connectors"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85956e2b6b0d921ea24e7c961b7170cad9a717a42734d5219a4672d7a03ccef6"
+version = "0.3.2"
+source = "git+https://github.com/wp-labs/wp-core-connectors.git?branch=main#d0bea41e4757acc1abe77dc1ff8af77c29dcfd25"
 dependencies = [
  "anyhow",
  "arrow",
@@ -4051,6 +4108,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
+ "wf-connector-api",
  "wp-arrow",
  "wp-conf-base",
  "wp-connector-api",

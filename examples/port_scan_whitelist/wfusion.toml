@@ -3,7 +3,7 @@ sinks = "sinks"
 
 [[sources]]
 type = "file"
-name = "seed_netflow"
+key = "seed_netflow"
 path = "data/conn_events.ndjson"
 stream = "netflow"
 format = "ndjson"

@@ -3,14 +3,14 @@ sinks = "sinks"
 
 [[sources]]
 type = "file"
-name = "conn_source"
+key = "conn_source"
 path = "data/conn_events.ndjson"
 stream = "netflow"
 format = "ndjson"
 
 [[sources]]
 type = "file"
-name = "auth_source"
+key = "auth_source"
 path = "data/auth_events.ndjson"
 stream = "auth"
 format = "ndjson"

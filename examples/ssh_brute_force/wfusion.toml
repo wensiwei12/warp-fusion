@@ -3,7 +3,7 @@ sinks = "sinks"
 
 [[sources]]
 type = "file"
-name = "auth_source"
+key = "auth_source"
 path = "data/auth_events.ndjson"
 stream = "auth"
 format = "ndjson"

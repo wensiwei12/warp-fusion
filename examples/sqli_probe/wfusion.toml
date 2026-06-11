@@ -3,7 +3,7 @@ sinks = "sinks"
 
 [[sources]]
 type = "file"
-name = "http_source"
+key = "http_source"
 path = "data/http_events.ndjson"
 stream = "http"
 format = "ndjson"
