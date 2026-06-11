@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/wfusion", "crates/wfgen", "crates/wfl", "crates/wf-connector-api"]
+members = ["crates/wfusion", "crates/wfgen", "crates/wfl"]
 default-members = ["crates/wfusion", "crates/wfgen", "crates/wfl"]
 resolver = "2"
 
@@ -18,6 +18,7 @@ wf-engine = { git = "https://github.com/wp-labs/wp-reactor.git", tag = "v0.1.6" 
 wf-config = { git = "https://github.com/wp-labs/wp-reactor.git", tag = "v0.1.6" }
 wf-lang = { git = "https://github.com/wp-labs/wp-reactor.git", tag = "v0.1.6" }
 wf-runtime = { git = "https://github.com/wp-labs/wp-reactor.git", tag = "v0.1.6" }
+wf-connector-api = { git = "https://github.com/wp-labs/wf-connector-api.git", branch = "main" }
 
 #wf-engine = { path = "../wp-reactor/crates/wf-engine" }
 #wf-config = { path = "../wp-reactor/crates/wf-config" }

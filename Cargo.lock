@@ -3514,15 +3514,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wf-connector-api"
-version = "0.1.0"
-dependencies = [
- "arrow",
- "async-trait",
- "thiserror",
-]
-
-[[package]]
 name = "wf-engine"
 version = "0.1.5"
 source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.6#60a551953e51d70fd45ffd852d206ec8cde32c3f"
