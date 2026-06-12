@@ -17,7 +17,19 @@ mod ver {
     }
 flow set_cargo_ver {
         gx.patch_file(
-        file   : "./Cargo.toml",
+        file   : "./crates/wfgen/Cargo.toml",
+        action : "set",
+        marker : "version",
+        value  : r#""${VERSION}""#
+        );
+        gx.patch_file(
+        file   : "./crates/wfl/Cargo.toml",
+        action : "set",
+        marker : "version",
+        value  : r#""${VERSION}""#
+        );
+        gx.patch_file(
+        file   : "./crates/wfusion/Cargo.toml",
         action : "set",
         marker : "version",
         value  : r#""${VERSION}""#
