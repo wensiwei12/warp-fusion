@@ -537,6 +537,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
+name = "combine"
+version = "4.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "memchr",
+ "pin-project-lite",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -705,6 +719,9 @@ name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
+dependencies = [
+ "powerfmt",
+]
 
 [[package]]
 name = "derive-getters"
@@ -1387,9 +1404,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "js-sys"
-version = "0.3.100"
+version = "0.3.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2025f20d7a4fa7785846e7b63d10a76d3f1cee98ee5cb79ea59703f95e42162"
+checksum = "03d04c30968dffe80775bd4d7fb676131cd04a1fb46d2686dbffbaec2d9dfd31"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -2269,6 +2286,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
+name = "redis"
+version = "0.25.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e46922bd01fefcfdcf58d9cd626da082bb2cde27211920dacfde6b2ecf9a35b"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "bytes",
+ "combine",
+ "futures",
+ "futures-util",
+ "itoa",
+ "percent-encoding",
+ "pin-project-lite",
+ "ryu",
+ "sha1_smol",
+ "socket2 0.5.10",
+ "tokio",
+ "tokio-retry",
+ "tokio-util",
+ "url",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2551,6 +2592,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2631,6 +2678,16 @@ checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
 dependencies = [
  "borsh",
  "serde_core",
+]
+
+[[package]]
+name = "socket2"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
+dependencies = [
+ "libc",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2989,11 +3046,12 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.48"
+version = "0.3.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc1aa89044e7786ffb2ec017acb22cb7de5b0be46d0f21aea2b224b8561e5db2"
+checksum = "743bd48c283afc0388f9b8827b976905fb217ad9e647fae3a379a9283c4def2c"
 dependencies = [
  "deranged",
+ "itoa",
  "num-conv",
  "powerfmt",
  "serde_core",
@@ -3003,15 +3061,15 @@ dependencies = [
 
 [[package]]
 name = "time-core"
-version = "0.1.9"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1c906769ad99c88eaa54e728060edef082f8e358ff32030cb7c7d315e81109"
+checksum = "7694e1cfe791f8d31026952abf09c69ca6f6fa4e1a1229e18988f06a04a12dca"
 
 [[package]]
 name = "time-macros"
-version = "0.2.28"
+version = "0.2.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d3bfe86347f0cc659f586f01e26303ccd32418f26f30c7b0309b3ca3a07d695"
+checksum = "2e70e4c5a0e0a8a4823ad65dfe1a6930e4f4d756dcd9dd7939022b5e8c501215"
 dependencies = [
  "num-conv",
  "time-core",
@@ -3063,7 +3121,7 @@ dependencies = [
  "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
- "socket2",
+ "socket2 0.6.4",
  "tokio-macros",
  "windows-sys 0.61.2",
 ]
@@ -3077,6 +3135,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tokio-retry"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a129d95275ebf4c493ec53bf0f8cd95f5ac161bc4f381700809a54f595d4470"
+dependencies = [
+ "pin-project-lite",
+ "rand 0.10.1",
+ "tokio",
 ]
 
 [[package]]
@@ -3411,9 +3480,9 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasip2"
-version = "1.0.3+wasi-0.2.9"
+version = "1.0.4+wasi-0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20064672db26d7cdc89c7798c48a0fdfac8213434a1186e5ef29fd560ae223d6"
+checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
 dependencies = [
  "wit-bindgen 0.57.1",
 ]
@@ -3435,9 +3504,9 @@ checksum = "b8dad83b4f25e74f184f64c43b150b91efe7647395b42289f38e50566d82855b"
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.123"
+version = "0.2.125"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a254a4b10c19a76f09a27640e7ffbf9bc30bf67e16a3bf28aaefa4920fe81563"
+checksum = "8ddb3f79143bced6de84270411622a2699cee572fc0875aeaf1e7867cf9fca1a"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -3448,9 +3517,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.123"
+version = "0.2.125"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24a40fc75b0ec6f3746ceb10d36f53a93dcd68a93b11b6445983945d79eba0dc"
+checksum = "4e21a184b13fb19e157296e2c46056aec9092264fab83e4ba59e68c61b323c3d"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -3458,9 +3527,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.123"
+version = "0.2.125"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "908f34bd9b9ce3d4caf07b72dfab63d61504d156856c6bd3cd87fa350cf3985b"
+checksum = "fecefd9c35bd935a20fc3fc344b5f29138961e4f47fb03297d88f2587afb5ebd"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -3471,9 +3540,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.123"
+version = "0.2.125"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7acbf7616c27b194bbb550bf77ed0c2c3e5b7fd1260a93082b95fb7f47959b92"
+checksum = "23939e44bb9a5d7576fa2b563dc2e136628f1224e88a8deed09e04858b77871f"
 dependencies = [
  "unicode-ident",
 ]
@@ -3532,8 +3601,8 @@ dependencies = [
 
 [[package]]
 name = "wf-config"
-version = "0.1.9"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.9#05538d2364259fe9a187e13c881aa695525bba2c"
+version = "0.1.11"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.11#2068ad645946b51b7b29e974d6354e58efcb1a86"
 dependencies = [
  "glob",
  "moju-derive",
@@ -3559,8 +3628,8 @@ dependencies = [
 
 [[package]]
 name = "wf-engine"
-version = "0.1.9"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.9#05538d2364259fe9a187e13c881aa695525bba2c"
+version = "0.1.11"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.11#2068ad645946b51b7b29e974d6354e58efcb1a86"
 dependencies = [
  "arrow",
  "async-trait",
@@ -3583,8 +3652,8 @@ dependencies = [
 
 [[package]]
 name = "wf-lang"
-version = "0.1.9"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.9#05538d2364259fe9a187e13c881aa695525bba2c"
+version = "0.1.11"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.11#2068ad645946b51b7b29e974d6354e58efcb1a86"
 dependencies = [
  "moju-derive",
  "orion-error",
@@ -3594,10 +3663,11 @@ dependencies = [
 
 [[package]]
 name = "wf-runtime"
-version = "0.1.9"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.9#05538d2364259fe9a187e13c881aa695525bba2c"
+version = "0.1.11"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.11#2068ad645946b51b7b29e974d6354e58efcb1a86"
 dependencies = [
  "arrow",
+ "chrono",
  "clap",
  "csv",
  "derive_more",
@@ -3624,7 +3694,7 @@ dependencies = [
 
 [[package]]
 name = "wfgen"
-version = "0.1.5"
+version = "0.1.7"
 dependencies = [
  "arrow",
  "chrono",
@@ -3633,16 +3703,21 @@ dependencies = [
  "rand 0.9.4",
  "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing-appender",
+ "tracing-subscriber",
  "wf-config",
  "wf-engine",
  "wf-lang",
+ "wf-runtime",
  "winnow 1.0.3",
  "wp-arrow",
 ]
 
 [[package]]
 name = "wfl"
-version = "0.1.5"
+version = "0.1.7"
 dependencies = [
  "chrono",
  "clap",
@@ -3658,7 +3733,7 @@ dependencies = [
 
 [[package]]
 name = "wfusion"
-version = "0.1.5"
+version = "0.1.7"
 dependencies = [
  "clap",
  "moju-derive",
@@ -4077,9 +4152,9 @@ dependencies = [
 
 [[package]]
 name = "wp-core-connectors"
-version = "0.3.3"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb209992c5a88109e5a1a91cbcf09d53f84c6d4f0773cbefaea333e29c40d09c"
+checksum = "f36a722542492b76f58a0d907fb77fb76e67885c3436d288c44e5f83f9eab4be"
 dependencies = [
  "anyhow",
  "arrow",
@@ -4097,7 +4172,7 @@ dependencies = [
  "orion-error",
  "orion_conf",
  "serde_json",
- "socket2",
+ "socket2 0.6.4",
  "thiserror",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
@@ -4124,8 +4199,8 @@ dependencies = [
 
 [[package]]
 name = "wp-knowledge"
-version = "0.13.0"
-source = "git+https://github.com/wp-labs/wp-knowledge.git?branch=main#9a1e61267730edbe8dd0198b3c9819c570de02ff"
+version = "0.14.0"
+source = "git+https://github.com/wp-labs/wp-knowledge.git?branch=main#4a3568676b1c987cf13988b78137857ccd8cc89c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4142,6 +4217,7 @@ dependencies = [
  "orion_conf",
  "r2d2",
  "r2d2_sqlite",
+ "redis",
  "rusqlite",
  "serde",
  "serde_json",
@@ -4260,9 +4336,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.8.2"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 
 [[package]]
 name = "zerotrie"

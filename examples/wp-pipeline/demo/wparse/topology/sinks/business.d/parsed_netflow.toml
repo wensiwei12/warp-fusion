@@ -1,0 +1,13 @@
+version = "2.0"
+[sink_group]
+name = "parsed_nginx_out"
+oml = ["*"]
+batch_size = 1024
+batch_timeout_ms = 300
+tags = ["biz:parsed"]
+[[sink_group.sinks]]
+connect = "file_json_sink"
+name = "parsed_output"
+tags = ["sink:parsed"]
+[sink_group.sinks.params]
+file = "parsed.ndjson"

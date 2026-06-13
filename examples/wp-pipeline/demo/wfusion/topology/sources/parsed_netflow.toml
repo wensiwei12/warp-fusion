@@ -1,0 +1,5 @@
+type = "file"
+key = "parsed_nginx"
+path = "../../wparse/data/out_dat/parsed.ndjson"
+stream = "nginx_access"
+format = "ndjson"
