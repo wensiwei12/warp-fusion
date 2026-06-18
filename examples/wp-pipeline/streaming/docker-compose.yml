@@ -1,0 +1,29 @@
+services:
+  redis:
+    container_name: redis
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  redis-init:
+    container_name: redis_init
+    image: python:3-alpine
+    volumes:
+      - ./data/weak_password_list.ndjson:/data/weak_password_list.ndjson:ro
+      - ./scripts/docker_init.sh:/docker_init.sh:ro
+    entrypoint: ["sh", "/docker_init.sh"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  redis_data:

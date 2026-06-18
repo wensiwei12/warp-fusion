@@ -11,7 +11,7 @@ connect = "file_src"
 name = "seed_netflow"
 path = "data/conn_events.ndjson"
 stream = "netflow"
-format = "ndjson"
+data_format = "ndjson"
 
 [runtime]
 executor_parallelism = 2

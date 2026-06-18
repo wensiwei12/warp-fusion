@@ -3,4 +3,4 @@ key = "http_source"
 
 path = "data/http_events.ndjson"
 stream = "http"
-format = "ndjson"
+data_format = "ndjson"

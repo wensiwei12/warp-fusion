@@ -5,6 +5,7 @@
 
 mod cli_config;
 mod error;
+mod register;
 
 use std::path::PathBuf;
 

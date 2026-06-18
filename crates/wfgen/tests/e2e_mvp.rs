@@ -19,10 +19,15 @@ use wf_config::FusionConfig;
 use wf_runtime::lifecycle::Reactor;
 use wf_runtime::tracing_init::{DomainFormat, FileFields};
 
-/// Build a length-prefixed TCP frame from an Arrow IPC payload.
+/// Build an RFC 6587 octet-counting TCP frame from an Arrow IPC payload.
+///
+/// Format: `<len><SP><payload>` where `<len>` is the payload length as
+/// ASCII decimal digits and `<SP>` is a single space byte. This matches
+/// the `framing = "len"` mode of `wp-core-connectors`' TCP source.
 fn make_tcp_frame(ipc_payload: &[u8]) -> Vec<u8> {
-    let mut frame = Vec::with_capacity(4 + ipc_payload.len());
-    frame.extend_from_slice(&(ipc_payload.len() as u32).to_be_bytes());
+    let header = format!("{} ", ipc_payload.len());
+    let mut frame = Vec::with_capacity(header.len() + ipc_payload.len());
+    frame.extend_from_slice(header.as_bytes());
     frame.extend_from_slice(ipc_payload);
     frame
 }
@@ -59,7 +64,15 @@ async fn e2e_brute_force_alert() {
         )
         .try_init();
 
-    // -- Build config from inline TOML with port 0 and connector-based sink routing --
+    // -- Build config from inline TOML with connector-based sink routing --
+    // Use a fixed port (not :0) so the test knows where to connect without
+    // needing the reactor to surface the bound address.
+    //
+    // The connector-based TCP source expects `addr` + `port` (not `listen`)
+    // and `framing` for the wire-level framing mode.
+    // `data_format = "arrow_framed"` tells our BatchSource adapter how to decode
+    // each framed payload.
+    const TCP_PORT: u16 = 17900;
     let toml_str = format!(
         r#"
 mode = "daemon"
@@ -69,8 +82,12 @@ work_root = "{}"
 [[sources]]
 type = "tcp"
 name = "ingress"
-listen = "tcp://127.0.0.1:0"
-format = "arrow_framed"
+stream = ""
+listen = "tcp://127.0.0.1:{}"
+addr = "127.0.0.1"
+port = "{}"
+framing = "len"
+data_format = "arrow_framed"
 
 [runtime]
 executor_parallelism = 2
@@ -100,7 +117,9 @@ over_cap = "1h"
 [vars]
 FAIL_THRESHOLD = "3"
 "#,
-        artifact_dir.display()
+        artifact_dir.display(),
+        TCP_PORT,
+        TCP_PORT
     );
 
     let config: FusionConfig = toml_str.parse().expect("failed to parse config TOML");
@@ -113,9 +132,9 @@ FAIL_THRESHOLD = "3"
     let reactor = Reactor::start(config, &base_dir)
         .await
         .expect("Reactor::start failed");
-    let addr = reactor
-        .listen_addr()
-        .expect("expected tcp listener address in daemon mode");
+    let addr: std::net::SocketAddr = format!("127.0.0.1:{}", TCP_PORT).parse().unwrap();
+    // Allow the connector's TCP listener to bind before connecting.
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // -- Connect TCP and send 3 "failed" auth events --
     // Fields must be nullable to match the Window schema built from .wfs files.

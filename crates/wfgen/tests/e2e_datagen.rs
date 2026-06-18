@@ -163,7 +163,7 @@ work_root = "{}"
 type = "file"
 name = "ingress"
 path = "{}"
-format = "arrow_framed"
+data_format = "arrow_framed"
 stream = ""
 
 [runtime]

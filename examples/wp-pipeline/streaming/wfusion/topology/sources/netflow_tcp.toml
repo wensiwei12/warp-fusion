@@ -1,4 +1,6 @@
 connect = "tcp_src"
 key = "nginx_tcp"
-listen = "tcp://127.0.0.1:9802"
 stream = "nginx_access"
+addr = "0.0.0.0"
+port = "9802"
+framing = "auto"

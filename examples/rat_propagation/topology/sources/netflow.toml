@@ -3,4 +3,4 @@ key = "conn_source"
 
 path = "data/conn_events.ndjson"
 stream = "netflow"
-format = "ndjson"
+data_format = "ndjson"

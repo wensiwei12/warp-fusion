@@ -1,0 +1,14 @@
+version = 2
+base_dir = "."
+
+[provider.redis]
+connection_uri = "redis://127.0.0.1:6379"
+command_timeout_ms = 100
+
+[cache]
+enabled = true
+capacity = 10000
+
+[fun.password_check]
+call = "sismember"
+key = "weak_passwords"

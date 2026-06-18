@@ -4,6 +4,32 @@ All notable changes to `warp-fusion` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [unreleased] — 2026-06-18
+
+### Changed
+
+- **`wf-connector-api` integration landed.** Runtime now consumes source data
+  via the `BatchSource` trait (`DataSourceBatchSource` adapter in
+  `wf-runtime/src/source/mod.rs`), replacing inline Arrow IPC / NDJSON decode.
+  EOF is now handled correctly (task exits instead of infinite retry).
+- **`wp-core-connectors` upgraded 0.5.0 → 0.5.2.** Source factories now
+  validate `data_format` in `validate_spec`; `WireFormat` enum
+  (`Ndjson` / `ArrowStream` / `ArrowFramed`) replaces the runtime's custom
+  `SourceFormat`. Decode logic delegates to connector-layer shared helpers.
+- **`wp-connectors` upgraded v0.15.4 → v0.15.5.**
+- **Config parameter renamed:** `format` → `data_format` for source payload
+  format declaration.
+- **Removed `listen_addr` from `Reactor`.** TCP listen address is a connector
+  implementation detail, not tracked at the Reactor level.
+- **Removed dead `Receiver` struct** and inline TCP handler from `receiver.rs`.
+
+### Fixed
+
+- EOF on `DataSource` no longer causes infinite retry loops — the source task
+  exits cleanly when the stream ends.
+- `ArrowFramed` format now extracts the wp_arrow frame tag and uses it as the
+  routing stream name when no explicit `stream` param is configured.
+
 ## [0.1.8] — 2026-06-15
 
 ### Added
