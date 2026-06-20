@@ -1,0 +1,6 @@
+connect = "file_src"
+key = "auth_source"
+
+path = "data/auth_events.ndjson"
+stream = "auth"
+data_format = "ndjson"

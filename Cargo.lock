@@ -5019,7 +5019,7 @@ dependencies = [
 
 [[package]]
 name = "wf-config"
-version = "0.1.14"
+version = "0.1.16"
 dependencies = [
  "glob",
  "moju-derive",
@@ -5045,7 +5045,7 @@ dependencies = [
 
 [[package]]
 name = "wf-engine"
-version = "0.1.14"
+version = "0.1.16"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5068,7 +5068,7 @@ dependencies = [
 
 [[package]]
 name = "wf-lang"
-version = "0.1.14"
+version = "0.1.16"
 dependencies = [
  "moju-derive",
  "orion-error",
@@ -5078,7 +5078,7 @@ dependencies = [
 
 [[package]]
 name = "wf-runtime"
-version = "0.1.14"
+version = "0.1.16"
 dependencies = [
  "arrow",
  "async-broadcast",
@@ -5112,7 +5112,7 @@ dependencies = [
 
 [[package]]
 name = "wfgen"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "arrow",
  "chrono",
@@ -5135,7 +5135,7 @@ dependencies = [
 
 [[package]]
 name = "wfl"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "chrono",
  "clap",
@@ -5151,7 +5151,7 @@ dependencies = [
 
 [[package]]
 name = "wfusion"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "clap",
  "moju-derive",
@@ -5629,8 +5629,8 @@ dependencies = [
 
 [[package]]
 name = "wp-connectors"
-version = "0.15.5"
-source = "git+https://github.com/wp-labs/wp-connectors.git?tag=v0.15.5#78b7dfe1be062abb8be1debc486b61842cea5d34"
+version = "0.15.6"
+source = "git+https://github.com/wp-labs/wp-connectors.git?tag=v0.15.6#269bf62e18d15de357ea163ebe32633786b1d5a0"
 dependencies = [
  "actix-web",
  "anyhow",
@@ -5674,9 +5674,9 @@ dependencies = [
 
 [[package]]
 name = "wp-core-connectors"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8223edd722fc8d147c410c9c2e40d7d7595ca2d2a97acda262e253a2cb2fc9a"
+checksum = "8f17c833d6dc16800274cdb20fbded28263f28b1f32bd7def3d990a1674fe700"
 dependencies = [
  "anyhow",
  "arrow",

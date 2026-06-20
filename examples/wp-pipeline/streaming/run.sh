@@ -16,7 +16,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "1> wpgen: generating $LINE_CNT nginx logs..."
-cd wparse && wpgen sample -n "$LINE_CNT" > /dev/null 2>&1 && cd ..
+cd wparse && rm -f data/in_dat/gen.dat && wpgen sample -n "$LINE_CNT" > /dev/null 2>&1 && cd ..
 
 echo "2> wfusion: starting daemon (tcp://127.0.0.1:9802)..."
 cd wfusion && rm -rf data/out_dat && mkdir -p data/out_dat/alerts

@@ -1,0 +1,33 @@
+// 登录认证事件流
+window auth_events {
+    stream = "auth"
+    time = event_time
+    over = 10m
+    fields {
+        sip: ip
+        dip: ip
+        dport: digit
+        service: chars
+        user: chars
+        password_hash: chars
+        result: chars
+        event_time: time
+    }
+}
+
+// 告警输出 window
+//
+// 注：与 weak_password 示例不同，此处不含 found_password/category 字段——
+// Redis sismember 只返回 bool。富化（password_masked/category）可通过第二个
+// external_value() 调用查 HASH wp:<hash> 获得，本示例从简未做。
+window security_alerts {
+    over = 0
+    fields {
+        sip: ip
+        dip: ip
+        user: chars
+        password_hash: chars
+        alert_type: chars
+        detail: chars
+    }
+}

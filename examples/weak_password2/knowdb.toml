@@ -2,13 +2,15 @@ version = 2
 base_dir = "."
 
 [provider.redis]
-connection_uri = "redis://127.0.0.1:6379"
+connection_uri = "redis://127.0.0.1:6380"
 command_timeout_ms = 100
 
 [cache]
 enabled = true
 capacity = 10000
 
+# external("password_check", <hash_value>) -> sismember weak_passwords <hash_value>
+# 返回 bool：命中=1，未命中=0
 [fun.password_check]
 call = "sismember"
 key = "weak_passwords"

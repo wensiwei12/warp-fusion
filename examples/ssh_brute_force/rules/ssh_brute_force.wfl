@@ -26,7 +26,7 @@ rule ssh_brute_force {
     entity(ip, e.sip)
     yield security_alerts (
         sip = e.sip,
-        dip = e.dip,
+        dip = first(e.dip),
         user = e.user,
         alert_type = "ssh_brute_force",
         detail = "failed login >= 10 in 5min"

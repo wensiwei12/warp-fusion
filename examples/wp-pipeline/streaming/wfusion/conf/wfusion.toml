@@ -42,11 +42,6 @@ mode = "local"
 max_window_bytes = "1MB"
 over_cap = "0s"
 
-[window.weak_pwd_alerts]
-mode = "local"
-max_window_bytes = "1MB"
-over_cap = "0s"
-
 [logging]
 level = "info"
 format = "plain"

@@ -1,5 +1,5 @@
 [[connectors]]
-allow_override = ["addr", "port", "framing", "protocol"]
+allow_override = ["addr", "port", "framing", "protocol", "data_format", "tag"]
 id = "tcp_sink"
 type = "tcp"
 

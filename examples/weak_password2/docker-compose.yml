@@ -1,20 +1,20 @@
 services:
   redis:
-    container_name: redis
+    container_name: redis_wp2
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
     volumes:
-      - redis_data:/data
+      - redis_wp2_data:/data
     command: redis-server --appendonly yes
 
   redis-init:
-    container_name: redis_init
+    container_name: redis_wp2_init
     image: python:3-alpine
     volumes:
       - ./data/weak_password_list.ndjson:/data/weak_password_list.ndjson:ro
@@ -26,4 +26,4 @@ services:
     restart: "no"
 
 volumes:
-  redis_data:
+  redis_wp2_data:
