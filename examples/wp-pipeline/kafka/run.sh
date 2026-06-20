@@ -4,13 +4,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 LINE_CNT=${LINE_CNT:-5000}
 
 # ---- pre-check ----
-WF_BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/target/release"
-resolve_binary() { local n="$1"; [ -x "$WF_BUILD_DIR/$n" ] && export PATH="$WF_BUILD_DIR:$PATH" && return 0; command -v "$n" 2>/dev/null && return 0; return 1; }
-if ! resolve_binary wfusion || ! resolve_binary wparse; then echo "ERROR: wfusion/wparse not found" >&2; exit 1; fi
-if ! wfusion version --ge 0.1.0 >/dev/null 2>&1; then echo "ERROR: wfusion >= 0.1.0 required" >&2; exit 1; fi
-if ! wparse version --ge 0.25.0 >/dev/null 2>&1; then echo "ERROR: wparse >= 0.25.0 required" >&2; exit 1; fi
-WFUSION_VER=$(wfusion version 2>&1 | awk '{print $NF}')
-WPARSE_VER=$(wparse version 2>&1)
+source "$(dirname "${BASH_SOURCE[0]}")/../lib-check.sh"
 # -------------------
 
 cleanup() {
@@ -28,7 +22,7 @@ echo "============================================"
 # 1. Start Kafka
 echo "1> Starting Kafka..."
 docker-compose up -d
-sleep 5
+sleep 3
 echo "   Kafka ready at localhost:9092"
 
 # 2. Fresh consumer group
@@ -42,7 +36,6 @@ rm -rf ../data/alerts; mkdir -p ../data/alerts
 wfusion run --config conf/wfusion.toml &
 WFUSION_PID=$!
 cd ..
-sleep 3
 echo "   wfusion PID=$WFUSION_PID"
 
 # 4. Start wparse (batch mode — kafka_sink is async, no persistent connection needed)
