@@ -4,6 +4,6 @@ id = "file_src"
 type = "file"
 
 [connectors.params]
-base = "./data/in_dat"
+base = "../data"
 encode = "text"
 file = "gen.dat"

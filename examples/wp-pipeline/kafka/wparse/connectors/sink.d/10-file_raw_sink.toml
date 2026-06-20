@@ -4,7 +4,7 @@ id = "file_raw_sink"
 type = "file"
 
 [connectors.params]
-base = "./data/out_dat"
+base = "../data"
 file = "default.raw"
 fmt = "raw"
 sync = false

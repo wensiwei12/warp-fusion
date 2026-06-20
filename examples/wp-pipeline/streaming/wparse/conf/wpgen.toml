@@ -15,6 +15,6 @@ file = "gen.dat"
 [logging]
 level = "info"
 output = "file"
-file_path = "./data/logs"
+file_path = "../data/logs"
 
 [presets]

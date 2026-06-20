@@ -4,7 +4,7 @@ id = "file_proto_sink"
 type = "file"
 
 [connectors.params]
-base = "./data/out_dat"
+base = "../data"
 file = "default.dat"
 fmt = "proto-text"
 sync = false

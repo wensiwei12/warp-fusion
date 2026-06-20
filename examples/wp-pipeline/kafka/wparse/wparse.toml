@@ -18,7 +18,7 @@ parse_workers = 4
 level = "warn,ctrl=info,data=error"
 output = "File"
 [log_conf.file]
-path = "./data/logs/"
+path = "../data/logs/"
 
 [[stat.pick]]
 key = "pick_stat"

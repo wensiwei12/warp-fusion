@@ -4,6 +4,6 @@ id = "file_rescue_sink"
 type = "test_rescue"
 
 [connectors.params]
-base = "./data/out_dat"
+base = "../data"
 file = "default.kv"
 fmt = "kv"

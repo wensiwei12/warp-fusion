@@ -4,7 +4,7 @@ id = "file_json_sink"
 type = "file"
 
 [connectors.params]
-base = "./data/out_dat"
+base = "../data"
 file = "default.json"
 fmt = "json"
 sync = false
