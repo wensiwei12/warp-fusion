@@ -3,6 +3,17 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 LINE_CNT=${LINE_CNT:-3000}
 
+# ---- pre-check ----
+REQUIRED_WPARSE="0.25"; REQUIRED_WFUSION="0.1"
+WF_BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/target/release"
+resolve_binary() { local n="$1"; command -v "$n" 2>/dev/null && return 0; [ -x "$WF_BUILD_DIR/$n" ] && export PATH="$WF_BUILD_DIR:$PATH" && return 0; return 1; }
+if ! resolve_binary wfusion || ! resolve_binary wparse; then echo "ERROR: wfusion/wparse not found" >&2; exit 1; fi
+WFUSION_VER=$(wfusion --version 2>&1 | grep -o '[0-9.]*' | head -1)
+WPARSE_VER=$(wparse --version 2>&1 | grep -o '[0-9.]*' | head -1)
+if ! printf '%s\n%s' "$REQUIRED_WFUSION" "$WFUSION_VER" | sort -V -C 2>/dev/null; then echo "ERROR: wfusion >= $REQUIRED_WFUSION required, got $WFUSION_VER" >&2; exit 1; fi
+if ! printf '%s\n%s' "$REQUIRED_WPARSE" "$WPARSE_VER" | sort -V -C 2>/dev/null; then echo "ERROR: wparse >= $REQUIRED_WPARSE required, got $WPARSE_VER" >&2; exit 1; fi
+# -------------------
+
 cleanup() {
     if [ -n "${WFUSION_PID:-}" ] && kill -0 "$WFUSION_PID" 2>/dev/null; then kill "$WFUSION_PID" 2>/dev/null; wait "$WFUSION_PID" 2>/dev/null || true; fi
     echo ""; echo "stopped."
