@@ -3,40 +3,37 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 LINE_CNT=${LINE_CNT:-3000}
 
-echo "============================================"
-echo "  wp-pipeline streaming: Arrow IPC over TCP"
-echo "============================================"
-
 cleanup() {
-    if [ -n "${WFUSION_PID:-}" ] && kill -0 "$WFUSION_PID" 2>/dev/null; then
-        kill "$WFUSION_PID" 2>/dev/null
-        wait "$WFUSION_PID" 2>/dev/null || true
-    fi
+    if [ -n "${WFUSION_PID:-}" ] && kill -0 "$WFUSION_PID" 2>/dev/null; then kill "$WFUSION_PID" 2>/dev/null; wait "$WFUSION_PID" 2>/dev/null || true; fi
+    echo ""; echo "stopped."
 }
 trap cleanup EXIT
 
+echo "============================================"
+echo "  streaming: wpgen → wparse → Arrow TCP → wfusion"
+echo "============================================"
+
+# 1. Generate data (wpgen outputs to ../data/gen.dat via wpgen.toml)
 echo "1> wpgen: generating $LINE_CNT nginx logs..."
-cd wparse && rm -f data/in_dat/gen.dat && wpgen sample -n "$LINE_CNT" > /dev/null 2>&1 && cd ..
+(cd wparse && rm -rf .run && wpgen sample -n "$LINE_CNT" > /dev/null 2>&1)
+echo "   → data/gen.dat"
 
-echo "2> wfusion: starting daemon (tcp://127.0.0.1:9802)..."
-cd wfusion && rm -rf data/out_dat && mkdir -p data/out_dat/alerts
-wfusion run --config conf/wfusion.toml &
-WFUSION_PID=$!
-sleep 2
-cd ..
+# 2. Start wfusion (listens on TCP :9802, sinks write to ../../data/alerts)
+echo "2> wfusion: starting daemon (tcp://0.0.0.0:9802)..."
+(cd wfusion && rm -rf ../data/alerts && mkdir -p ../data/alerts && wfusion run --config conf/wfusion.toml &)
+WFUSION_PID=$!; sleep 5
+echo "   wfusion PID=$WFUSION_PID"
 
-echo "3> wparse: parsing -> Arrow IPC -> TCP..."
-cd wparse && mkdir -p data/out_dat data/logs
-wparse batch -p -n "$LINE_CNT" -S 1 > /dev/null 2>&1
-cd ..
+# 3. Run wparse (reads file via file_src ../data/gen*.dat, sends Arrow via TCP)
+echo "3> wparse: parsing → Arrow IPC → TCP :9802..."
+(cd wparse && wparse batch -p -n "$LINE_CNT" -S 1 > /dev/null 2>&1)
+echo "   → Arrow IPC → TCP :9802 → wfusion"
 
-# Signal wfusion to gracefully shut down, which flushes windows and writes alerts
+# 4. Flush wfusion
 echo "4> flushing wfusion windows..."
-kill "$WFUSION_PID" 2>/dev/null || true
-wait "$WFUSION_PID" 2>/dev/null || true
-sleep 1
+kill "$WFUSION_PID" 2>/dev/null || true; wait "$WFUSION_PID" 2>/dev/null || true; sleep 1
 
-echo ""
-echo "wfusion alerts:"
-ls -la wfusion/data/out_dat/alerts/*.ndjson 2>/dev/null | awk '{printf "  %s  %s bytes\n", $NF, $5}'
+# 5. Show alerts
+echo ""; echo "wfusion alerts:"
+ls -la data/alerts/*.ndjson 2>/dev/null | awk '{printf "  %s  %s bytes\n", $NF, $5}'
 echo ""

@@ -9,7 +9,7 @@ parallel = 1
 connect = "file_json_sink"
 
 [output.params]
-base = "data/in_dat"
+base = "../data"
 file = "gen.dat"
 
 [logging]
