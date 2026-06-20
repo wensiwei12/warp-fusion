@@ -1,10 +1,8 @@
 [[sources]]
-key = "tcp_1"
+key = "file_1"
 enable = true
-connect = "tcp_src"
+connect = "file_src"
 tags = []
-
 [sources.params]
-addr = "127.0.0.1"
-port = "9801"
-framing = "line"
+encode = "text"
+file = "gen*.dat"

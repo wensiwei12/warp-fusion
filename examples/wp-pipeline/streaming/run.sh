@@ -17,9 +17,9 @@ if ! printf '%s\n%s' "$REQUIRED_WPARSE" "$WPARSE_VER" | sort -V -C 2>/dev/null; 
 # -------------------
 
 cleanup() {
-    if [ -n "${WPARSE_PID:-}" ] && kill -0 "$WPARSE_PID" 2>/dev/null; then kill "$WPARSE_PID" 2>/dev/null; wait "$WPARSE_PID" 2>/dev/null || true; fi
-    if [ -n "${WFUSION_PID:-}" ] && kill -0 "$WFUSION_PID" 2>/dev/null; then kill "$WFUSION_PID" 2>/dev/null; wait "$WFUSION_PID" 2>/dev/null || true; fi
-    echo ""; echo "stopped."
+    [ -n "${WPARSE_PID:-}" ] && kill "$WPARSE_PID" 2>/dev/null || true
+    [ -n "${WFUSION_PID:-}" ] && kill "$WFUSION_PID" 2>/dev/null || true
+    wait 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -28,8 +28,8 @@ echo "  streaming: wpgen → TCP → wparse → Arrow TCP → wfusion"
 echo "  wfusion=$WFUSION_VER  wparse=$WPARSE_VER"
 echo "============================================"
 
-# 1. Write TCP configs
-cd wparse && rm -rf .run && mkdir -p ../data/logs ../data/rescue
+# 1. Write TCP configs (subshell: heredoc + cd, no background procs)
+(cd wparse && rm -rf .run && mkdir -p ../data/logs ../data/rescue
 cat > conf/wpgen.toml <<EOF
 version = "1.0"
 
@@ -66,36 +66,45 @@ addr = "127.0.0.1"
 port = "$PORT_IN"
 framing = "line"
 EOF
-cd ..
+)
 
-# 2. Start wfusion (listens on PORT_OUT)
+# 2. Start wfusion (direct cd — $! captures wfusion PID)
 echo "1> wfusion: starting daemon (tcp://0.0.0.0:$PORT_OUT)..."
-cd wfusion && rm -rf ../data/alerts && mkdir -p ../data/alerts && wfusion run --config conf/wfusion.toml &
-WFUSION_PID=$!; sleep 5
+cd wfusion
+rm -rf ../data/alerts; mkdir -p ../data/alerts
+wfusion run --config conf/wfusion.toml &
+WFUSION_PID=$!
 cd ..
+sleep 5
 echo "   wfusion PID=$WFUSION_PID"
 
-# 3. Start wparse (NO -S 1 — waits for TCP data indefinitely)
-echo "2> wparse: listening on TCP :$PORT_IN with -S 1..."
-cd wparse && mkdir -p ../data/logs && wparse batch -p -n "$LINE_CNT" -S 1 &
-WPARSE_PID=$!; sleep 2
+# 3. Start wparse (direct cd — $! captures wparse PID)
+echo "2> wparse: listening on TCP :$PORT_IN..."
+cd wparse
+mkdir -p ../data/logs
+wparse batch -p -n "$LINE_CNT" -S 1 &
+WPARSE_PID=$!
 cd ..
+sleep 2
 echo "   wparse PID=$WPARSE_PID"
 
-# 4. Run wpgen — sends data over TCP, then closes → wparse detects EOF → exits
+# 4. Run wpgen (foreground, sends data over TCP)
 echo "3> wpgen: sending $LINE_CNT nginx logs over TCP :$PORT_IN..."
-cd wparse && wpgen sample -n "$LINE_CNT" > /dev/null 2>&1
+cd wparse
+wpgen sample -n "$LINE_CNT" > /dev/null 2>&1
 cd ..
 echo "   → TCP :$PORT_IN → wparse → Arrow TCP :$PORT_OUT → wfusion"
 
-# 5. Wait for wparse to exit naturally (EOF from wpgen)
+# 5. Wait for wparse to finish
 echo "4> waiting for wparse to finish..."
 wait "$WPARSE_PID" 2>/dev/null || true
 echo "   → wparse complete"
 
 # 6. Flush wfusion
 echo "5> flushing wfusion windows..."
-kill "$WFUSION_PID" 2>/dev/null || true; wait "$WFUSION_PID" 2>/dev/null || true; sleep 1
+kill "$WFUSION_PID" 2>/dev/null || true
+wait "$WFUSION_PID" 2>/dev/null || true
+sleep 1
 
 # 7. Show alerts
 echo ""; echo "wfusion alerts:"
