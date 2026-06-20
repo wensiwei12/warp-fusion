@@ -8,9 +8,9 @@ WF_BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/target/rele
 resolve_binary() { local n="$1"; [ -x "$WF_BUILD_DIR/$n" ] && export PATH="$WF_BUILD_DIR:$PATH" && return 0; command -v "$n" 2>/dev/null && return 0; return 1; }
 if ! resolve_binary wfusion || ! resolve_binary wparse; then echo "ERROR: wfusion/wparse not found" >&2; exit 1; fi
 if ! wfusion version --ge 0.1.0 >/dev/null 2>&1; then echo "ERROR: wfusion >= 0.1.0 required" >&2; exit 1; fi
-if ! wparse --version >/dev/null 2>&1; then echo "ERROR: wparse not found" >&2; exit 1; fi
+if ! wparse version --ge 0.25.2 >/dev/null 2>&1; then echo "ERROR: wparse >= 0.25.2 required" >&2; exit 1; fi
 WFUSION_VER=$(wfusion version 2>&1 | awk '{print $NF}')
-WPARSE_VER=$(wparse --version 2>&1 | grep -o '[0-9.]*' | head -1)
+WPARSE_VER=$(wparse version 2>&1)
 # -------------------
 
 cleanup() {
@@ -32,7 +32,6 @@ rm -rf ../data/alerts; mkdir -p ../data/alerts
 wfusion run --config conf/wfusion.toml &
 WFUSION_PID=$!
 cd ..
-sleep 5
 echo "   wfusion PID=$WFUSION_PID"
 
 # 2. Start wparse (daemon mode)
