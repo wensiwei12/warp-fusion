@@ -6,13 +6,14 @@ speed = 5000
 parallel = 1
 
 [output]
-connect = "file_json_sink"
+connect = "tcp_sink"
 
 [output.params]
-base = "data/in_dat"
-file = "conn_events.ndjson"
+addr = "127.0.0.1"
+port = "9800"
+framing = "line"
 
 [logging]
 level = "info"
 output = "file"
-file_path = "./data/logs"
+file_path = "../data/logs"

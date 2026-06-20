@@ -25,3 +25,4 @@ target
 out_dat
 *.log
 *.dat
+examples/wp-pipeline/kafka/data/

@@ -4,6 +4,6 @@ type = "file"
 allow_override = ["base", "file", "sync"]
 [connectors.params]
 fmt = "json"
-base = "../data/out_dat/alerts"
+base = "../../data/alerts"
 file = "default.ndjson"
 sync = false
