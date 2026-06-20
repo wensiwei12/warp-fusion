@@ -4,6 +4,16 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 LINE_CNT=${LINE_CNT:-5000}
 PORT=${PORT:-9800}
 
+# ---- pre-check ----
+WF_BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/target/release"
+resolve_binary() { local n="$1"; [ -x "$WF_BUILD_DIR/$n" ] && export PATH="$WF_BUILD_DIR:$PATH" && return 0; command -v "$n" 2>/dev/null && return 0; return 1; }
+if ! resolve_binary wfusion || ! resolve_binary wparse; then echo "ERROR: wfusion/wparse not found" >&2; exit 1; fi
+if ! wfusion version --ge 0.1.0 >/dev/null 2>&1; then echo "ERROR: wfusion >= 0.1.0 required" >&2; exit 1; fi
+if ! wparse --version >/dev/null 2>&1; then echo "ERROR: wparse not found" >&2; exit 1; fi
+WFUSION_VER=$(wfusion version 2>&1 | awk '{print $NF}')
+WPARSE_VER=$(wparse --version 2>&1 | grep -o '[0-9.]*' | head -1)
+# -------------------
+
 cleanup() {
     if [ -n "${WPARSE_PID:-}" ] && kill -0 "$WPARSE_PID" 2>/dev/null; then kill "$WPARSE_PID" 2>/dev/null; wait "$WPARSE_PID" 2>/dev/null || true; fi
     if [ -n "${WFUSION_PID:-}" ] && kill -0 "$WFUSION_PID" 2>/dev/null; then kill "$WFUSION_PID" 2>/dev/null; wait "$WFUSION_PID" 2>/dev/null || true; fi
@@ -13,7 +23,8 @@ cleanup() {
 trap cleanup EXIT
 
 echo "============================================"
-echo "  Kafka Pipeline: wpgen → wparse → Kafka → wfusion → alerts"
+echo "  Kafka Pipeline: wpgen → TCP → wparse → Kafka (Arrow) → wfusion → alerts"
+echo "  wfusion=$WFUSION_VER  wparse=$WPARSE_VER"
 echo "============================================"
 echo ""
 
