@@ -2,8 +2,6 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 LINE_CNT=${LINE_CNT:-3000}
-PORT_IN=${PORT_IN:-9801}
-PORT_OUT=${PORT_OUT:-9802}
 
 # ---- pre-check ----
 REQUIRED_WPARSE="0.25"; REQUIRED_WFUSION="0.1"
@@ -28,88 +26,48 @@ echo "  streaming: wpgen → TCP → wparse → Arrow TCP → wfusion"
 echo "  wfusion=$WFUSION_VER  wparse=$WPARSE_VER"
 echo "============================================"
 
-# 1. Write TCP configs (subshell: heredoc + cd)
-(cd wparse && rm -rf .run && mkdir -p ../data/logs ../data/rescue
-cat > conf/wpgen.toml <<EOF
-version = "1.0"
-
-[generator]
-count = 1000
-speed = 1000
-parallel = 1
-
-[output]
-connect = "tcp_sink"
-
-[output.params]
-addr = "127.0.0.1"
-port = "$PORT_IN"
-framing = "line"
-
-[logging]
-level = "info"
-output = "file"
-file_path = "../data/logs"
-
-[presets]
-EOF
-
-cat > topology/sources/wpsrc.toml <<EOF
-[[sources]]
-key = "tcp_1"
-enable = true
-connect = "tcp_src"
-tags = []
-
-[sources.params]
-addr = "127.0.0.1"
-port = "$PORT_IN"
-framing = "line"
-EOF
-)
-
-# 2. Start wfusion (daemon mode)
-echo "1> wfusion: daemon, listening on TCP :$PORT_OUT..."
+# 1. Start wfusion (daemon mode)
+echo "1> wfusion: daemon, listening on TCP :9802..."
 cd wfusion
 rm -rf ../data/alerts; mkdir -p ../data/alerts
 wfusion run --config conf/wfusion.toml &
 WFUSION_PID=$!
 cd ..
-sleep 5  # wait for TCP listener to bind
+sleep 5
 echo "   wfusion PID=$WFUSION_PID"
 
-# 3. Start wparse (daemon mode — NOT batch)
-echo "2> wparse: daemon, tcp_src :$PORT_IN → tcp_sink → wfusion :$PORT_OUT..."
+# 2. Start wparse (daemon mode)
+echo "2> wparse: daemon, tcp_src :9801 → tcp_sink → wfusion :9802..."
 cd wparse
-mkdir -p ../data/logs
+rm -rf .run; mkdir -p ../data/logs ../data/rescue
 wparse daemon -p &
 WPARSE_PID=$!
 cd ..
-sleep 2  # wait for tcp_src bind + tcp_sink connect
+sleep 2
 echo "   wparse PID=$WPARSE_PID"
 
-# 4. wpgen sends data over TCP, then closes connection
-echo "3> wpgen: sending $LINE_CNT nginx logs over TCP :$PORT_IN..."
+# 3. wpgen sends data over TCP, then closes connection
+echo "3> wpgen: sending $LINE_CNT nginx logs over TCP :9801..."
 (cd wparse && wpgen sample -n "$LINE_CNT" > /dev/null 2>&1)
 echo "   → wpgen done, TCP connection closed"
 
-# 5. Wait for wparse to finish processing remaining data
+# 4. Wait for wparse to finish processing
 echo "4> waiting for wparse to process..."
 sleep 3
 
-# 6. Stop wparse (graceful — flush, close)
+# 5. Stop wparse (graceful)
 echo "5> stopping wparse..."
 kill "$WPARSE_PID" 2>/dev/null || true
 wait "$WPARSE_PID" 2>/dev/null || true
 echo "   → wparse stopped"
 
-# 7. Stop wfusion (graceful — flush windows → alerts)
+# 6. Stop wfusion (graceful — flush windows → alerts)
 echo "6> stopping wfusion..."
 kill "$WFUSION_PID" 2>/dev/null || true
 wait "$WFUSION_PID" 2>/dev/null || true
 echo "   → wfusion stopped"
 
-# 8. Show alerts
+# 7. Show alerts
 echo ""; echo "wfusion alerts:"
 ls -la data/alerts/*.ndjson 2>/dev/null | awk '{printf "  %s  %s bytes\n", $NF, $5}'
 echo ""
