@@ -158,14 +158,15 @@ enum Commands {
     },
 }
 
-fn main() {
-    if let Err(err) = run_cli() {
+#[tokio::main]
+async fn main() {
+    if let Err(err) = run_cli().await {
         eprintln!("{}", err.report().render());
         std::process::exit(1);
     }
 }
 
-fn run_cli() -> WfgenResult<()> {
+async fn run_cli() -> WfgenResult<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -178,7 +179,7 @@ fn run_cli() -> WfgenResult<()> {
             no_oracle,
             send,
             addr,
-        } => wfgen::cmd_gen::run(scenario, format, out, ws, wfl, no_oracle, send, addr),
+        } => wfgen::cmd_gen::run(scenario, format, out, ws, wfl, no_oracle, send, addr).await,
         Commands::Lint { scenario, ws, wfl } => wfgen::cmd_lint::run(scenario, ws, wfl),
         Commands::Verify {
             expected,
@@ -200,7 +201,7 @@ fn run_cli() -> WfgenResult<()> {
             input,
             addr,
             ws,
-        } => wfgen::cmd_send::run(scenario, input, addr, ws),
+        } => wfgen::cmd_send::run(scenario, input, addr, ws).await,
         Commands::Bench {
             scenario,
             ws,
@@ -208,7 +209,7 @@ fn run_cli() -> WfgenResult<()> {
             duration,
             send,
             addr,
-        } => wfgen::cmd_bench::run(scenario, ws, wfl, duration, send, addr),
+        } => wfgen::cmd_bench::run(scenario, ws, wfl, duration, send, addr).await,
         Commands::Stream {
             scenario_dir,
             ws,
@@ -216,6 +217,6 @@ fn run_cli() -> WfgenResult<()> {
             addr,
             interval,
             rate_sleep,
-        } => wfgen::cmd_stream::run(scenario_dir, ws, wfl, addr, interval, rate_sleep),
+        } => wfgen::cmd_stream::run(scenario_dir, ws, wfl, addr, interval, rate_sleep).await,
     }
 }

@@ -7,7 +7,7 @@
 //!   wpgen stream --scenario-dir scenarios/ --ws schemas/*.wfs --addr 127.0.0.1:9800
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use orion_error::conversion::SourceErr;
 
@@ -30,7 +30,7 @@ struct LoadedScenario {
     rule_plans: Vec<wf_lang::plan::RulePlan>,
 }
 
-pub fn run(
+pub async fn run(
     scenario_dir: PathBuf,
     ws: Vec<PathBuf>,
     wfl: Vec<PathBuf>,
@@ -71,13 +71,13 @@ pub fn run(
     );
     eprintln!("Target: {}", addr);
 
-    // 4. Connect to wparse TCP (persistent)
-    let mut stream = connect_sender(&addr)?;
+    // 4. Connect to wfusion TCP via wp_core_connectors NetWriter (async)
+    let mut writer = connect_sender(&addr).await?;
     eprintln!("Connected to {}", addr);
 
     // 5. Cycle through scenarios forever
-    let sleep_dur = Duration::from_millis(rate_sleep_ms);
-    let scenario_dur = Duration::from_secs(interval_secs);
+    let sleep_dur = tokio::time::Duration::from_millis(rate_sleep_ms);
+    let scenario_dur = std::time::Duration::from_secs(interval_secs);
     let mut idx = 0usize;
     let mut total_events: u64 = 0;
     let mut total_frames: u64 = 0;
@@ -103,15 +103,16 @@ pub fn run(
             let event_count = result.events.len();
 
             let sent =
-                crate::tcp_send::send_events_with_stream(&result.events, &schemas, &mut stream)?;
+                crate::tcp_send::send_events_with_stream(&result.events, &schemas, &mut writer)
+                    .await?;
 
             total_events += event_count as u64;
             total_frames += sent as u64;
             phase_events += event_count as u64;
             phase_frames += sent as u64;
 
-            if sleep_dur > Duration::ZERO {
-                std::thread::sleep(sleep_dur);
+            if sleep_dur > tokio::time::Duration::ZERO {
+                tokio::time::sleep(sleep_dur).await;
             }
         }
 
@@ -192,25 +193,4 @@ fn load_scenarios(
     }
 
     Ok(result)
-}
-
-/// Try to find .wfl files in the same directory as scenarios.
-fn load_wfl_from_scenario_dir(dir: &Path) -> WfgenResult<Vec<PathBuf>> {
-    let parent = dir.parent().unwrap_or(Path::new("."));
-    let rules_dir = parent.join("rules");
-    if rules_dir.is_dir() {
-        let mut entries: Vec<PathBuf> = std::fs::read_dir(&rules_dir)
-            .source_err(
-                WfgenReason::Io,
-                format!("reading rules dir {}", rules_dir.display()),
-            )?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|ext| ext == "wfl"))
-            .collect();
-        entries.sort();
-        Ok(entries)
-    } else {
-        Ok(Vec::new())
-    }
 }

@@ -10,8 +10,9 @@ use crate::wfg_parser::parse_wfg;
 
 use crate::cmd_helpers::{load_wfl_files, load_ws_files};
 use crate::tcp_send::{connect_sender, send_events, send_events_with_stream};
+use wp_core_connectors::sinks::tcp::TcpArrowSink;
 
-pub fn run(
+pub async fn run(
     scenario: PathBuf,
     ws: Vec<PathBuf>,
     wfl: Vec<PathBuf>,
@@ -51,23 +52,23 @@ pub fn run(
             let mut iterations: u64 = 0;
             let mut total_events: u64 = 0;
             let mut total_frames: u64 = 0;
-            let mut stream = if send {
-                Some(connect_sender(&addr)?)
+            let mut writer: Option<TcpArrowSink> = if send {
+                Some(connect_sender(&addr).await?)
             } else {
                 None
             };
 
             while wall_start.elapsed() < target_dur {
                 let result = generate(&wfg, &schemas, &rule_plans)?;
-                if let Some(stream) = stream.as_mut() {
-                    let sent = send_events_with_stream(&result.events, &schemas, stream).map_err(
-                        |err| {
+                if let Some(writer) = writer.as_mut() {
+                    let sent = send_events_with_stream(&result.events, &schemas, writer)
+                        .await
+                        .map_err(|err| {
                             err.with_context(
                                 orion_error::OperationContext::doing("sending bench iteration")
                                     .with_field("iteration", iterations + 1),
                             )
-                        },
-                    )?;
+                        })?;
                     total_frames += sent as u64;
                 }
                 total_events += result.events.len() as u64;
@@ -95,7 +96,7 @@ pub fn run(
             let start = std::time::Instant::now();
             let result = generate(&wfg, &schemas, &rule_plans)?;
             let sent_frames = if send {
-                Some(send_events(&result.events, &schemas, &addr)?)
+                Some(send_events(&result.events, &schemas, &addr).await?)
             } else {
                 None
             };

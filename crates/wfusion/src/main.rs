@@ -265,6 +265,7 @@ async fn run_cli() -> CliResult<()> {
                 addr,
             } => {
                 wfgen::cmd_gen::run(scenario, format, out, ws, wfl, no_oracle, send, addr)
+                    .await
                     .map_err(into_cli_error_from_wfgen)?;
             }
             ScenarioCommands::Lint { scenario, ws, wfl } => {
@@ -295,6 +296,7 @@ async fn run_cli() -> CliResult<()> {
                 ws,
             } => {
                 wfgen::cmd_send::run(scenario, input, addr, ws)
+                    .await
                     .map_err(into_cli_error_from_wfgen)?;
             }
             ScenarioCommands::Bench {
@@ -306,6 +308,7 @@ async fn run_cli() -> CliResult<()> {
                 addr,
             } => {
                 wfgen::cmd_bench::run(scenario, ws, wfl, duration, send, addr)
+                    .await
                     .map_err(into_cli_error_from_wfgen)?;
             }
             ScenarioCommands::Stream {
@@ -317,6 +320,7 @@ async fn run_cli() -> CliResult<()> {
                 rate_sleep,
             } => {
                 wfgen::cmd_stream::run(scenario_dir, ws, wfl, addr, interval, rate_sleep)
+                    .await
                     .map_err(into_cli_error_from_wfgen)?;
             }
         },

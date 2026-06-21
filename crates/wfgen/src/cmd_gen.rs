@@ -19,7 +19,7 @@ use crate::cmd_helpers::{load_wfl_files, load_ws_files};
 use crate::tcp_send::send_events;
 
 #[allow(clippy::too_many_arguments)]
-pub fn run(
+pub async fn run(
     scenario: PathBuf,
     format: String,
     out: PathBuf,
@@ -244,7 +244,7 @@ pub fn run(
     }
 
     if send {
-        let sent_frames = send_events(&output_events, &schemas, &addr)?;
+        let sent_frames = send_events(&output_events, &schemas, &addr).await?;
         println!(
             "Sent {} events as {} frame(s) -> {}",
             output_events.len(),
