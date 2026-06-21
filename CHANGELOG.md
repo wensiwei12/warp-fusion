@@ -1,106 +1,13 @@
 # Changelog
 
-All notable changes to `warp-fusion` will be documented in this file.
+## [0.1.11] - 2026-06-21
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+### wfgen — 使用 wp-core-connectors TcpArrowSink 发送数据
 
-## [unreleased] — 2026-06-18
-
-### Changed
-
-- **`wf-connector-api` integration landed.** Runtime now consumes source data
-  via the `BatchSource` trait (`DataSourceBatchSource` adapter in
-  `wf-runtime/src/source/mod.rs`), replacing inline Arrow IPC / NDJSON decode.
-  EOF is now handled correctly (task exits instead of infinite retry).
-- **`wp-core-connectors` upgraded 0.5.0 → 0.5.2.** Source factories now
-  validate `data_format` in `validate_spec`; `WireFormat` enum
-  (`Ndjson` / `ArrowStream` / `ArrowFramed`) replaces the runtime's custom
-  `SourceFormat`. Decode logic delegates to connector-layer shared helpers.
-- **`wp-connectors` upgraded v0.15.4 → v0.15.5.**
-- **Config parameter renamed:** `format` → `data_format` for source payload
-  format declaration.
-- **Removed `listen_addr` from `Reactor`.** TCP listen address is a connector
-  implementation detail, not tracked at the Reactor level.
-- **Removed dead `Receiver` struct** and inline TCP handler from `receiver.rs`.
-
-### Fixed
-
-- EOF on `DataSource` no longer causes infinite retry loops — the source task
-  exits cleanly when the stream ends.
-- `ArrowFramed` format now extracts the wp_arrow frame tag and uses it as the
-  routing stream name when no explicit `stream` param is configured.
-
-## [0.1.8] — 2026-06-15
-
-### Added
-
-- **Connector-based source/sink architecture.** Sources and sinks are now built
-  through a unified connector factory registry (`wp_core_connectors::registry`),
-  symmetric between `SourceFactory` and `SinkFactory`.
-- **Kafka source & sink.** `KafkaSourceFactory` and `KafkaSinkFactory` from
-  `wp-connectors` are registered at startup, enabling wfusion to consume from
-  and produce to Kafka topics.
-- **Arrow IPC Stream support for TCP source.** The TCP source now supports
-  Arrow IPC Stream format in addition to the legacy length-prefixed framed
-  format.
-- **External source task spawning.** `spawn_external_source_tasks()` in
-  `wf-runtime` discovers source factories from the global registry, builds
-  sources, and runs the consume → decode (ndjson) → route loop for any
-  connector-based source kind.
-- **wp-pipeline examples.** Three end-to-end pipeline examples under
-  `examples/wp-pipeline/`:
-  - `demo` — file → wparse → file → wfusion → file
-  - `streaming` — wpgen → wparse → Arrow IPC over TCP → wfusion → alerts
-  - `kafka` — wpgen → wparse → Kafka → wfusion → Kafka (alerts)
-- **Detection scenario examples.** Added `port_scan_whitelist`,
-  `rat_propagation`, `sqli_probe`, `ssh_brute_force`, `weak_password`, and
-  `close_demo` examples with WFL rules, schemas, and topology configs.
-- **moju-derive integration.** CLI config types annotated with `MoJu` derive
-  for structured metadata generation.
-
-### Changed
-
-- **wp-reactor upgraded from v0.1.3 to v0.1.12.** Brings window validation
-  (`validate_over_vs_over_cap`), pipeline internal windows, provider windows,
-  and the connector-based sink dispatcher.
-- **Added `wp-connectors` (v0.15.4) and `wp-core-connectors` (0.5.0).**
-  Replaces inline sink implementations with the shared connector crate
-  ecosystem.
-- **Added `wf-connector-api` (0.1).** Arrow-native `BatchSource` trait for
-  wfusion-native source consumption.
-- **Sink building uses `SinkFactoryRegistry`.** `bootstrap.rs` registers
-  built-in factories (`File`, `Syslog`, `TCP`, `BlackHole`) and imports
-  additional factories from the global registry (`import_from_global_registry`).
-- **CLI error handling** uses structured `orion-error` reports throughout
-  `wfusion`, `wfl`, and `wfgen`.
-
-### Fixed
-
-- **Kafka pipeline example topic mismatch.** Corrected wparse sink topic from
-  auto-generated test name to `wp_nginx_logs` to match wfusion source config.
-- **Streaming example output format.** Fixed `run.sh` to check for `.ndjson`
-  alert files instead of `.arrow`, and added graceful shutdown to flush
-  windows before checking output.
-
-## [0.1.0]
-
-### Added
-
-- Bootstrapped the `warp-fusion` Cargo workspace with three CLI deliverables:
-  `wfusion`, `wfgen`, and `wfl`.
-- Added the `wfusion` binary as the main WarpFusion runtime / config entrypoint,
-  delegating execution to `wf-engine`.
-- Added `wfgen` as the scenario-driven test data generator with `gen`, `lint`,
-  `verify`, `send`, and `bench` subcommands.
-- Added `wfl` as the rule developer toolchain with `explain`, `lint`, `fmt`,
-  `replay`, `verify`, and `test` subcommands.
-- Added integration coverage for `wfusion config` CLI flows, including
-  rendered config output, variable inspection, origins tracing, and expanded
-  diff reporting.
-- Wired the workspace to reuse core runtime and language crates from the
-  shared `wp-reactor` codebase.
-
-### Notes
-
-- This entry captures the initial public workspace baseline currently tracked in
-  the repository.
+- **依赖**：添加 `wp-core-connectors`、`wp-connector-api`、`tokio` 依赖
+- **重构**：`tcp_send.rs` 从原始 `TcpStream` + 手动 Arrow IPC 编码 → `TcpArrowSink::connect()` + `encode_batch_payload_with_tag()` + `send_payload()`
+  - Arrow IPC 编码：使用 `encode_ipc_frame`（与 `wp_arrow::ipc::encode_ipc` 兼容）
+  - Framing：RFC6587 octet-counted（`<len> <payload>`），匹配 wfusion `tcp_src` 的 `framing = "len"`
+  - 传输层：`NetWriter` 带背压控制
+- **异步化**：`cmd_stream`、`cmd_send`、`cmd_bench`、`cmd_gen` 全部改为 `async fn`
+- **依赖升级**：`wp-core-connectors` 0.5.2 → 0.5.5（含 `encode_batch_payload_with_tag` 公开 API）
