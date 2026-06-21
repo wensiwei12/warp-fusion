@@ -140,8 +140,8 @@ enum Commands {
         #[arg(long)]
         ws: Vec<PathBuf>,
 
-        /// Rule files (.wfl)
-        #[arg(long)]
+        /// Rule files (.wfl) — required for injection to work correctly
+        #[arg(long, required = true)]
         wfl: Vec<PathBuf>,
 
         /// Target TCP address (wparse tcp_src)

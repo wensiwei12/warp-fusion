@@ -49,7 +49,7 @@ pub async fn run(
         match wf_lang::compile_wfl(wfl_file, &schemas) {
             Ok(plans) => all_rule_plans.extend(plans),
             Err(e) => {
-                eprintln!("Warning: WFL compilation failed: {:?}", wfl_file);
+                eprintln!("Warning: WFL compilation failed for {:?}: {}", wfl_file, e);
             }
         }
     }
@@ -102,18 +102,22 @@ pub async fn run(
             let result = generate(&scenario.wfg, &schemas, &scenario.rule_plans)?;
             let event_count = result.events.len();
 
-            let sent =
-                crate::tcp_send::send_events_with_stream(&result.events, &schemas, &mut writer)
-                    .await?;
+            // Split into smaller chunks so wfusion can process them incrementally
+            const CHUNK_SIZE: usize = 1000;
+            let mut gen_frames = 0u64;
+            for chunk in result.events.chunks(CHUNK_SIZE) {
+                let sent =
+                    crate::tcp_send::send_events_with_stream(chunk, &schemas, &mut writer).await?;
+                gen_frames += sent as u64;
+                if sleep_dur > tokio::time::Duration::ZERO {
+                    tokio::time::sleep(sleep_dur).await;
+                }
+            }
 
             total_events += event_count as u64;
-            total_frames += sent as u64;
+            total_frames += gen_frames;
             phase_events += event_count as u64;
-            phase_frames += sent as u64;
-
-            if sleep_dur > tokio::time::Duration::ZERO {
-                tokio::time::sleep(sleep_dur).await;
-            }
+            phase_frames += gen_frames;
         }
 
         let elapsed = wall_start.elapsed().as_secs_f64();

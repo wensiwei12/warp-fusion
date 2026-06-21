@@ -123,9 +123,9 @@ dependencies = [
 
 [[package]]
 name = "actix-web"
-version = "4.13.0"
+version = "4.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff87453bc3b56e9b2b23c1cc0b1be8797184accf51d2abe0f8a33ec275d316bf"
+checksum = "df09e2d9239703dd64056359c920c7f3fba6535ec61a0059e0f44e095ffe02b4"
 dependencies = [
  "actix-codec",
  "actix-http",
@@ -141,7 +141,7 @@ dependencies = [
  "cfg-if",
  "derive_more",
  "encoding_rs",
- "foldhash 0.1.5",
+ "foldhash 0.2.0",
  "futures-core",
  "futures-util",
  "impl-more",
@@ -1940,9 +1940,9 @@ dependencies = [
 
 [[package]]
 name = "impl-more"
-version = "0.1.9"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8a5a9a0ff0086c7a148acb942baaabeadf9504d10400b5a05645853729b9cd2"
+checksum = "35a84fd5aa25fae5c0f4a33d9cac2ca017fc622cbd089be2229993514990f870"
 
 [[package]]
 name = "indexmap"
@@ -5019,8 +5019,7 @@ dependencies = [
 
 [[package]]
 name = "wf-config"
-version = "0.1.16"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.16#f763a3cdeeb75c8413b638f6c4515190a6837b94"
+version = "0.1.17"
 dependencies = [
  "glob",
  "moju-derive",
@@ -5046,8 +5045,7 @@ dependencies = [
 
 [[package]]
 name = "wf-engine"
-version = "0.1.16"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.16#f763a3cdeeb75c8413b638f6c4515190a6837b94"
+version = "0.1.17"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5070,8 +5068,7 @@ dependencies = [
 
 [[package]]
 name = "wf-lang"
-version = "0.1.16"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.16#f763a3cdeeb75c8413b638f6c4515190a6837b94"
+version = "0.1.17"
 dependencies = [
  "moju-derive",
  "orion-error",
@@ -5081,8 +5078,7 @@ dependencies = [
 
 [[package]]
 name = "wf-runtime"
-version = "0.1.16"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.16#f763a3cdeeb75c8413b638f6c4515190a6837b94"
+version = "0.1.17"
 dependencies = [
  "arrow",
  "async-broadcast",
@@ -5116,7 +5112,7 @@ dependencies = [
 
 [[package]]
 name = "wfgen"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "arrow",
  "chrono",
@@ -5141,7 +5137,7 @@ dependencies = [
 
 [[package]]
 name = "wfl"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "chrono",
  "clap",
@@ -5157,7 +5153,7 @@ dependencies = [
 
 [[package]]
 name = "wfusion"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "clap",
  "moju-derive",
