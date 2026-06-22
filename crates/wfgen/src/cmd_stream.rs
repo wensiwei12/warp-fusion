@@ -90,9 +90,8 @@ pub async fn run(
         let mut phase_frames = 0u64;
 
         eprintln!(
-            "[{}] phase={} scenario={} (idx {}/{})",
+            "[{}] phase=start scenario={} (idx {}/{})",
             chrono::Local::now().format("%H:%M:%S"),
-            "start",
             scenario.name,
             idx,
             scenarios.len()
@@ -127,9 +126,8 @@ pub async fn run(
             0.0
         };
         eprintln!(
-            "[{}] phase={} scenario={} events={} frames={} | total_events={} total_frames={} eps={:.0}",
+            "[{}] phase=done scenario={} events={} frames={} | total_events={} total_frames={} eps={:.0}",
             chrono::Local::now().format("%H:%M:%S"),
-            "done",
             scenario.name,
             phase_events,
             phase_frames,
