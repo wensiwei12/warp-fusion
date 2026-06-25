@@ -5268,7 +5268,7 @@ dependencies = [
 
 [[package]]
 name = "wfgen"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "arrow",
  "chrono",
@@ -5293,7 +5293,7 @@ dependencies = [
 
 [[package]]
 name = "wfl"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "chrono",
  "clap",
@@ -5309,7 +5309,7 @@ dependencies = [
 
 [[package]]
 name = "wfusion"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "clap",
  "moju-derive",
