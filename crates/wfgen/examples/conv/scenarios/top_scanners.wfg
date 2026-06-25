@@ -1,5 +1,5 @@
-use "../../../../../../wp-reactor/examples/conv/schemas/network.wfs"
-use "../../../../../../wp-reactor/examples/conv/rules/top_scanners.wfl"
+use "../schemas/network.wfs"
+use "../rules/top_scanners.wfl"
 
 #[duration=2h]
 scenario top_scanners_detect<seed=42> {

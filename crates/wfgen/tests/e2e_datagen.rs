@@ -95,7 +95,7 @@ async fn e2e_datagen_brute_force() {
         .try_init();
 
     // ---- Load scenario (.wfg → schemas + rules) ----
-    let base_dir = manifest_dir.join("../../../wp-reactor/examples");
+    let base_dir = manifest_dir.join("examples");
     let wfg_path = manifest_dir.join("examples/count/scenarios/brute_force.wfg");
     let vars = HashMap::from([("FAIL_THRESHOLD".into(), "3".into())]);
     let loaded = wfgen::loader::load_scenario(&wfg_path, &vars).expect("failed to load scenario");

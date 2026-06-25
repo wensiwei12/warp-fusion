@@ -1,5 +1,5 @@
-use "../../../../../../wp-reactor/examples/sum/schemas/network.wfs"
-use "../../../../../../wp-reactor/examples/sum/rules/data_exfil.wfl"
+use "../schemas/network.wfs"
+use "../rules/data_exfil.wfl"
 
 #[duration=15m]
 scenario data_exfil_detect<seed=42> {

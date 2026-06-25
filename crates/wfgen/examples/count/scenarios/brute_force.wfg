@@ -1,5 +1,5 @@
-use "../../../../../../wp-reactor/examples/count/schemas/security.wfs"
-use "../../../../../../wp-reactor/examples/count/rules/brute_force.wfl"
+use "../schemas/security.wfs"
+use "../rules/brute_force.wfl"
 
 #[duration=10m]
 scenario brute_force_detect<seed=42> {

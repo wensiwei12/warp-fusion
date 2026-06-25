@@ -1,5 +1,5 @@
-use "../../../../../../wp-reactor/examples/distinct/schemas/network.wfs"
-use "../../../../../../wp-reactor/examples/distinct/rules/port_scan.wfl"
+use "../schemas/network.wfs"
+use "../rules/port_scan.wfl"
 
 #[duration=10m]
 scenario port_scan_detect<seed=42> {

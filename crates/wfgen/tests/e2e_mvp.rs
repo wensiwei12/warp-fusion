@@ -126,7 +126,7 @@ FAIL_THRESHOLD = "3"
 
     // base_dir points to the examples/ directory so .wfs/.wfl are resolved.
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let base_dir = manifest_dir.join("../../../wp-reactor/examples");
+    let base_dir = manifest_dir.join("examples");
 
     // -- Start reactor --
     let reactor = Reactor::start(config, &base_dir)

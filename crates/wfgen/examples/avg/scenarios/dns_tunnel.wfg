@@ -1,5 +1,5 @@
-use "../../../../../../wp-reactor/examples/avg/schemas/dns.wfs"
-use "../../../../../../wp-reactor/examples/avg/rules/dns_tunnel.wfl"
+use "../schemas/dns.wfs"
+use "../rules/dns_tunnel.wfl"
 
 #[duration=10m]
 scenario dns_tunnel_detect<seed=42> {

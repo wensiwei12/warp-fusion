@@ -1,5 +1,5 @@
-use "../../../../../../wp-reactor/examples/multi_step/schemas/network.wfs"
-use "../../../../../../wp-reactor/examples/multi_step/rules/chain_attack.wfl"
+use "../schemas/network.wfs"
+use "../rules/chain_attack.wfl"
 
 #[duration=60m]
 scenario chain_attack_detect<seed=42> {
