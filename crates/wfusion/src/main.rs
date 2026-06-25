@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 use orion_error::report::DiagnosticReport;
 
 use cli_config::{ConfigLoadArgs, run_config_command, run_engine_command};
-use error::{CliResult, into_cli_error_from_wfgen, into_cli_error_from_wfl};
+use error::{CliResult, into_cli_error_from_wfl};
 
 // -- Top-level CLI -----------------------------------------------------------
 
@@ -47,12 +47,6 @@ enum Commands {
         #[command(subcommand)]
         command: cli_config::ConfigCommands,
     },
-    /// Test data generation & validation (wfgen)
-    #[command(name = "scenario")]
-    Scenario {
-        #[command(subcommand)]
-        command: ScenarioCommands,
-    },
     /// Rule authoring, testing & replay (wfl)
     #[command(name = "rule")]
     Rule {
@@ -65,98 +59,6 @@ enum Commands {
         /// Exits with code 0 if satisfied, 1 otherwise.
         #[arg(long)]
         ge: Option<String>,
-    },
-}
-
-// -- Scenario subcommands (wfgen) --------------------------------------------
-
-#[derive(Subcommand)]
-enum ScenarioCommands {
-    Gen {
-        #[arg(long)]
-        scenario: PathBuf,
-        #[arg(long, default_value = "jsonl")]
-        format: String,
-        #[arg(long)]
-        out: PathBuf,
-        #[arg(long)]
-        ws: Vec<PathBuf>,
-        #[arg(long)]
-        wfl: Vec<PathBuf>,
-        #[arg(long)]
-        no_oracle: bool,
-        #[arg(long)]
-        send: bool,
-        #[arg(long, default_value = "127.0.0.1:9800")]
-        addr: String,
-    },
-    Lint {
-        #[arg(long)]
-        scenario: PathBuf,
-        #[arg(long)]
-        ws: Vec<PathBuf>,
-        #[arg(long)]
-        wfl: Vec<PathBuf>,
-    },
-    Verify {
-        #[arg(long)]
-        expected: PathBuf,
-        #[arg(long)]
-        actual: PathBuf,
-        #[arg(long)]
-        score_tolerance: Option<f64>,
-        #[arg(long)]
-        time_tolerance: Option<f64>,
-        #[arg(long)]
-        meta: Option<PathBuf>,
-        #[arg(long, default_value = "json")]
-        format: String,
-    },
-    Send {
-        #[arg(long)]
-        scenario: PathBuf,
-        #[arg(long)]
-        input: PathBuf,
-        #[arg(long, default_value = "127.0.0.1:9800")]
-        addr: String,
-        #[arg(long)]
-        ws: Vec<PathBuf>,
-    },
-    Bench {
-        #[arg(long)]
-        scenario: PathBuf,
-        #[arg(long)]
-        ws: Vec<PathBuf>,
-        #[arg(long)]
-        wfl: Vec<PathBuf>,
-        #[arg(long)]
-        duration: Option<String>,
-        #[arg(long)]
-        send: bool,
-        #[arg(long, default_value = "127.0.0.1:9800")]
-        addr: String,
-    },
-    /// Continuous data generation (daemon mode)
-    #[command(name = "stream")]
-    Stream {
-        /// Directory containing .wfg scenario files (cycled indefinitely)
-        #[arg(long)]
-        scenario_dir: PathBuf,
-        /// Schema files (.wfs)
-        #[arg(long)]
-        ws: Vec<PathBuf>,
-        /// Rule files (.wfl) — optional, auto-discovered from ../rules/
-        #[arg(long)]
-        wfl: Vec<PathBuf>,
-        /// Target TCP address (wparse tcp_src)
-        #[arg(long, default_value = "127.0.0.1:9800")]
-        addr: String,
-        /// Seconds per scenario before switching
-        #[arg(long, default_value = "60")]
-        interval: u64,
-        /// Sleep (ms) between generate batches — controls event rate
-        #[arg(long, default_value = "100")]
-        rate_sleep: u64,
     },
 }
 
@@ -253,77 +155,6 @@ async fn run_cli() -> CliResult<()> {
             metrics_listen,
         } => run_engine_command(load, metrics, metrics_interval, metrics_listen).await?,
         Commands::Config { command } => run_config_command(command).await?,
-        Commands::Scenario { command } => match command {
-            ScenarioCommands::Gen {
-                scenario,
-                format,
-                out,
-                ws,
-                wfl,
-                no_oracle,
-                send,
-                addr,
-            } => {
-                wfgen::cmd_gen::run(scenario, format, out, ws, wfl, no_oracle, send, addr)
-                    .await
-                    .map_err(into_cli_error_from_wfgen)?;
-            }
-            ScenarioCommands::Lint { scenario, ws, wfl } => {
-                wfgen::cmd_lint::run(scenario, ws, wfl).map_err(into_cli_error_from_wfgen)?;
-            }
-            ScenarioCommands::Verify {
-                expected,
-                actual,
-                score_tolerance,
-                time_tolerance,
-                meta,
-                format,
-            } => {
-                wfgen::cmd_verify::run(
-                    expected,
-                    actual,
-                    score_tolerance,
-                    time_tolerance,
-                    meta,
-                    format,
-                )
-                .map_err(into_cli_error_from_wfgen)?;
-            }
-            ScenarioCommands::Send {
-                scenario,
-                input,
-                addr,
-                ws,
-            } => {
-                wfgen::cmd_send::run(scenario, input, addr, ws)
-                    .await
-                    .map_err(into_cli_error_from_wfgen)?;
-            }
-            ScenarioCommands::Bench {
-                scenario,
-                ws,
-                wfl,
-                duration,
-                send,
-                addr,
-            } => {
-                wfgen::cmd_bench::run(scenario, ws, wfl, duration, send, addr)
-                    .await
-                    .map_err(into_cli_error_from_wfgen)?;
-            }
-            ScenarioCommands::Stream {
-                scenario_dir,
-                ws,
-                wfl,
-                addr,
-                interval,
-                rate_sleep,
-            } => {
-                wfgen::cmd_stream::run(scenario_dir, ws, wfl, addr, interval, rate_sleep)
-                    .await
-                    .map_err(into_cli_error_from_wfgen)?;
-            }
-        },
         Commands::Rule { command } => match command {
             RuleCommands::Explain { file, schemas, var } => {
                 wfl::cmd_explain::run(file, schemas, var).map_err(into_cli_error_from_wfl)?;

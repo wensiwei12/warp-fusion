@@ -38,23 +38,23 @@ wfusion config vars -c wfusion.toml [--var-prefix WORK_]
 wfusion config diff -c wfusion.toml --to-config other.toml [--expanded]
 ```
 
-### `wfusion scenario` — 场景生成
+## `wfgen` — 场景生成（独立工具）
 
 ```bash
 # 从 .wfg 场景文件生成测试数据
-wfusion scenario gen --scenario test.wfg --out /tmp/out
+wfgen gen --scenario test.wfg --out /tmp/out
 
 # 校验场景文件
-wfusion scenario lint --scenario test.wfg
+wfgen lint test.wfg
 
 # 对比实际告警与 Oracle 期望
-wfusion scenario verify --expected oracle.jsonl --actual alerts.jsonl
+wfgen verify --expected oracle.jsonl --actual alerts.jsonl
 
 # 发送生成事件到引擎（TCP + Arrow IPC）
-wfusion scenario send --scenario test.wfg --input events.jsonl
+wfgen send --scenario test.wfg --input events.jsonl
 
 # 压测生成吞吐
-wfusion scenario bench --scenario test.wfg
+wfgen bench --scenario test.wfg
 ```
 
 ### `wfusion rule` — 规则工具
