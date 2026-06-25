@@ -1,14 +1,14 @@
 # ===========================================================================
-# Warp Parse - Runtime Docker Image (Multi-arch)
+# Warp Fusion - Runtime Docker Image (Multi-arch)
 # ===========================================================================
 
 FROM ubuntu:24.04
 
-ARG TARGETARCH
+ARG TARGETARCH=amd64
 
-LABEL org.opencontainers.image.source="https://github.com/wp-labs/warp-parse"
-LABEL org.opencontainers.image.description="High-performance flow data parsing and processing system"
-LABEL org.opencontainers.image.licenses="ELv2"
+LABEL org.opencontainers.image.source="https://github.com/wp-labs/warp-fusion"
+LABEL org.opencontainers.image.description="Warp Fusion runtime, rule tooling, and scenario generation tools"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -19,22 +19,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsasl2-2 \
     libzstd1 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd -r -s /bin/false wparse
+    && useradd -r -s /bin/false wfusion
 
 # Copy pre-built binaries (provided via build context, arch-specific)
-COPY ${TARGETARCH}/wparse /usr/local/bin/
-COPY ${TARGETARCH}/wpgen /usr/local/bin/
-COPY ${TARGETARCH}/wproj /usr/local/bin/
-COPY ${TARGETARCH}/wprescue /usr/local/bin/
+COPY ${TARGETARCH}/wfusion /usr/local/bin/
+COPY ${TARGETARCH}/wfgen /usr/local/bin/
+COPY ${TARGETARCH}/wfl /usr/local/bin/
 
 # Create data directory
-RUN mkdir -p /data && chown wparse:wparse /data
+RUN chmod 0755 /usr/local/bin/wfusion /usr/local/bin/wfgen /usr/local/bin/wfl \
+    && mkdir -p /data \
+    && chown wfusion:wfusion /data
 
 # Copy default settings
-COPY --chown=wparse:wparse default_setting/ /data/
+COPY --chown=wfusion:wfusion default_setting/ /data/
 
-USER wparse
+USER wfusion
 WORKDIR /data
 
-ENTRYPOINT ["wparse"]
+ENTRYPOINT ["wfusion"]
 CMD ["--help"]
