@@ -1,21 +1,21 @@
 {
   "version": "0.1.15-alpha",
   "channel": "alpha",
-  "published_at": "2026-06-25T07:58:45Z",
+  "published_at": "2026-06-25T08:50:11Z",
   "git_ref": "v0.1.15-alpha",
-  "git_commit": "dd4de3d9eee3afebab932bb39295abe7211bf26e",
+  "git_commit": "d713c472c9e09d2a73578dc395dd94bb28e9a068",
   "assets": {
     "aarch64-apple-darwin": {
       "url": "https://github.com/wp-labs/warp-fusion/releases/download/v0.1.15-alpha/warp-fusion-v0.1.15-alpha-aarch64-apple-darwin.tar.gz",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      "sha256": "9675226a0ebeff3914a3aaa89712b52593c2bb451f54327ae82c80845e687b3e"
     },
     "aarch64-unknown-linux-gnu": {
       "url": "https://github.com/wp-labs/warp-fusion/releases/download/v0.1.15-alpha/warp-fusion-v0.1.15-alpha-aarch64-unknown-linux-gnu.tar.gz",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      "sha256": "d195810b42ef13dd3f5effe2be95816ec1e0e4fea4c722f8358c1d9cc12fa425"
     },
     "x86_64-unknown-linux-gnu": {
       "url": "https://github.com/wp-labs/warp-fusion/releases/download/v0.1.15-alpha/warp-fusion-v0.1.15-alpha-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      "sha256": "13f57f89e30bcea855b8c2cfb09dfb6813526ce597cd0123377b37f5d9022226"
     }
   }
 }
