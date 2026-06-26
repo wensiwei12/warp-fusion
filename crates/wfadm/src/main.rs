@@ -1,4 +1,7 @@
+mod check;
 mod init;
+mod self_update;
+mod sink;
 
 use clap::{Parser, Subcommand};
 
@@ -55,18 +58,9 @@ fn main() {
             repo,
             version,
         } => cmd_init(name, dir, mode, repo, version),
-        Commands::Check => {
-            eprintln!("TODO: check");
-            Ok(())
-        }
-        Commands::Sink => {
-            eprintln!("TODO: sink");
-            Ok(())
-        }
-        Commands::SelfUpdate => {
-            eprintln!("TODO: self-update");
-            Ok(())
-        }
+        Commands::Check => check::run(),
+        Commands::Sink => sink::run(),
+        Commands::SelfUpdate => self_update::run(),
     };
 
     if let Err(e) = result {
