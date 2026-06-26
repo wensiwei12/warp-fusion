@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/wfusion", "crates/wfgen", "crates/wfl"]
-default-members = ["crates/wfusion", "crates/wfgen", "crates/wfl"]
+members = ["crates/wfusion", "crates/wfgen", "crates/wfl", "crates/wfadm"]
+default-members = ["crates/wfusion", "crates/wfgen", "crates/wfl", "crates/wfadm"]
 resolver = "2"
 
 [workspace.package]

@@ -1,0 +1,14 @@
+[package]
+name = "wfadm"
+version = "0.1.13" #@gxl:set(version)
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wfadm"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
