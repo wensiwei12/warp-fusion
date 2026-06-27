@@ -46,7 +46,7 @@ pub fn init_project(project_dir: &str, _name: &str, scope: &str) -> Result<(), S
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        for script in &["run.sh", "smoke.sh"] {
+        for script in &["test_run.sh", "smoke.sh"] {
             let path = root.join(script);
             if path.exists() {
                 let mut perms = fs::metadata(&path)

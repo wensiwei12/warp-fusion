@@ -186,7 +186,8 @@ pub(crate) const TOPO_SOURCES_INGRESS: TemplateFile = (
 
 // ── scripts ────────────────────────────────────────────────────────────
 
-pub(crate) const SCRIPT_RUN: TemplateFile = ("run.sh", include_str!("../../templates/run.sh"));
+pub(crate) const SCRIPT_RUN: TemplateFile =
+    ("test_run.sh", include_str!("../../templates/test_run.sh"));
 pub(crate) const SCRIPT_SMOKE: TemplateFile =
     ("smoke.sh", include_str!("../../templates/smoke.sh"));
 
