@@ -57,6 +57,8 @@ use templates::{
     // scripts
     SCRIPT_RUN,
     SCRIPT_SMOKE,
+    // test
+    TEST_BATCH_CONFIG,
     // sinks
     TOPO_SINKS_CONN_FILE,
     TOPO_SINKS_DEFAULT,
@@ -140,6 +142,7 @@ const ALL: &[TemplateFile] = &[
     // scripts
     SCRIPT_RUN,
     SCRIPT_SMOKE,
+    TEST_BATCH_CONFIG,
 ];
 
 /// Rules-only scope: models/{rules,schemas,scenarios} + conf + connectors + scripts.
@@ -175,6 +178,7 @@ const RULES_ONLY: &[TemplateFile] = &[
     SCENARIOS_ATTACK_CHAIN,
     SCRIPT_RUN,
     SCRIPT_SMOKE,
+    TEST_BATCH_CONFIG,
 ];
 
 /// Conf-only scope: topology/{sinks,sources} + conf + connectors + scripts.
@@ -193,4 +197,5 @@ const CONF_ONLY: &[TemplateFile] = &[
     TOPO_SOURCES_INGRESS,
     SCRIPT_RUN,
     SCRIPT_SMOKE,
+    TEST_BATCH_CONFIG,
 ];

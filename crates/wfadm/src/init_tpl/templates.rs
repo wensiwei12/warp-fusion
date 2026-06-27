@@ -21,33 +21,23 @@ pub(crate) const RULES_PORT_SCAN: TemplateFile = (
 );
 pub(crate) const RULES_PASSWORD_SPRAYING: TemplateFile = (
     "models/rules/02-initial_access/password_spraying.wfl",
-    include_str!(
-        "../../templates/models/rules/02-initial_access/password_spraying.wfl"
-    ),
+    include_str!("../../templates/models/rules/02-initial_access/password_spraying.wfl"),
 );
 pub(crate) const RULES_SSH_BRUTE: TemplateFile = (
     "models/rules/02-initial_access/ssh_brute_force.wfl",
-    include_str!(
-        "../../templates/models/rules/02-initial_access/ssh_brute_force.wfl"
-    ),
+    include_str!("../../templates/models/rules/02-initial_access/ssh_brute_force.wfl"),
 );
 pub(crate) const RULES_WEAK_PASSWORD_REDIS: TemplateFile = (
     "models/rules/02-initial_access/weak_password_redis.wfl",
-    include_str!(
-        "../../templates/models/rules/02-initial_access/weak_password_redis.wfl"
-    ),
+    include_str!("../../templates/models/rules/02-initial_access/weak_password_redis.wfl"),
 );
 pub(crate) const RULES_FIRST_SEEN: TemplateFile = (
     "models/rules/03-lateral_movement/first_seen_relationship.wfl",
-    include_str!(
-        "../../templates/models/rules/03-lateral_movement/first_seen_relationship.wfl"
-    ),
+    include_str!("../../templates/models/rules/03-lateral_movement/first_seen_relationship.wfl"),
 );
 pub(crate) const RULES_LATERAL_SPREAD: TemplateFile = (
     "models/rules/03-lateral_movement/lateral_spread.wfl",
-    include_str!(
-        "../../templates/models/rules/03-lateral_movement/lateral_spread.wfl"
-    ),
+    include_str!("../../templates/models/rules/03-lateral_movement/lateral_spread.wfl"),
 );
 pub(crate) const RULES_BEACONING: TemplateFile = (
     "models/rules/04-c2/beaconing.wfl",
@@ -67,15 +57,11 @@ pub(crate) const RULES_DATA_UPLOAD: TemplateFile = (
 );
 pub(crate) const RULES_PASS_THE_HASH: TemplateFile = (
     "models/rules/06-credential_abuse/pass_the_hash.wfl",
-    include_str!(
-        "../../templates/models/rules/06-credential_abuse/pass_the_hash.wfl"
-    ),
+    include_str!("../../templates/models/rules/06-credential_abuse/pass_the_hash.wfl"),
 );
 pub(crate) const RULES_PRIVILEGED_ANOMALY: TemplateFile = (
     "models/rules/06-credential_abuse/privileged_anomaly.wfl",
-    include_str!(
-        "../../templates/models/rules/06-credential_abuse/privileged_anomaly.wfl"
-    ),
+    include_str!("../../templates/models/rules/06-credential_abuse/privileged_anomaly.wfl"),
 );
 pub(crate) const RULES_SCAN_LOGIN_XFER: TemplateFile = (
     "models/rules/07-chains/scan_login_xfer.wfl",
@@ -200,11 +186,13 @@ pub(crate) const TOPO_SOURCES_INGRESS: TemplateFile = (
 
 // ── scripts ────────────────────────────────────────────────────────────
 
-pub(crate) const SCRIPT_RUN: TemplateFile = (
-    "run.sh",
-    include_str!("../../templates/run.sh"),
-);
-pub(crate) const SCRIPT_SMOKE: TemplateFile = (
-    "smoke.sh",
-    include_str!("../../templates/smoke.sh"),
+pub(crate) const SCRIPT_RUN: TemplateFile = ("run.sh", include_str!("../../templates/run.sh"));
+pub(crate) const SCRIPT_SMOKE: TemplateFile =
+    ("smoke.sh", include_str!("../../templates/smoke.sh"));
+
+// ── test ────────────────────────────────────────────────────────────────
+
+pub(crate) const TEST_BATCH_CONFIG: TemplateFile = (
+    "test/wfusion.batch.toml",
+    include_str!("../../templates/test/wfusion.batch.toml"),
 );
