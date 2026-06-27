@@ -2033,6 +2033,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "init-tpl"
+version = "0.1.0"
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5380,12 +5384,15 @@ version = "0.1.13"
 dependencies = [
  "clap",
  "flate2",
+ "init-tpl",
  "serde",
  "serde_json",
  "tar",
  "toml 0.8.23",
  "ureq",
  "walkdir",
+ "wp-connector-api",
+ "wp-core-connectors",
 ]
 
 [[package]]

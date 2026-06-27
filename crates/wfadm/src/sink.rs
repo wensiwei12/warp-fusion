@@ -1,7 +1,9 @@
-// wfadm sink — validate sink configuration
+// wfadm sink — validate sink and connector configuration
 
 use std::fs;
 use std::path::Path;
+
+use crate::connectors;
 
 pub fn run() -> Result<(), String> {
     let root = Path::new(".");
@@ -10,6 +12,17 @@ pub fn run() -> Result<(), String> {
         root.canonicalize()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| root.display().to_string())
+    );
+
+    // Register factories so validation can cross-check with registry
+    connectors::ensure_factories_registered();
+
+    let registered_sinks = wp_core_connectors::registry::list_sink_kinds();
+    let registered_sources = wp_core_connectors::registry::list_source_kinds();
+    println!(
+        "  registered: {} sink(s), {} source(s)",
+        registered_sinks.len(),
+        registered_sources.len()
     );
 
     let mut issues = 0u32;

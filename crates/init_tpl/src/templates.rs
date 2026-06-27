@@ -13,13 +13,6 @@ pub(crate) const CONF_WFUSION: TemplateFile = (
     include_str!("../../../docker/default_setting/conf/wfusion.toml"),
 );
 
-// ── connectors ─────────────────────────────────────────────────────────
-
-pub(crate) const CONNECTORS_FILE: TemplateFile = (
-    "connectors/sink.d/file.toml",
-    include_str!("../../../docker/default_setting/connectors/sink.d/file.toml"),
-);
-
 // ── models / rules ─────────────────────────────────────────────────────
 
 pub(crate) const RULES_PORT_SCAN: TemplateFile = (
@@ -34,7 +27,9 @@ pub(crate) const RULES_PASSWORD_SPRAYING: TemplateFile = (
 );
 pub(crate) const RULES_SSH_BRUTE: TemplateFile = (
     "models/rules/02-initial_access/ssh_brute_force.wfl",
-    include_str!("../../../docker/default_setting/models/rules/02-initial_access/ssh_brute_force.wfl"),
+    include_str!(
+        "../../../docker/default_setting/models/rules/02-initial_access/ssh_brute_force.wfl"
+    ),
 );
 pub(crate) const RULES_WEAK_PASSWORD_REDIS: TemplateFile = (
     "models/rules/02-initial_access/weak_password_redis.wfl",
@@ -72,7 +67,9 @@ pub(crate) const RULES_DATA_UPLOAD: TemplateFile = (
 );
 pub(crate) const RULES_PASS_THE_HASH: TemplateFile = (
     "models/rules/06-credential_abuse/pass_the_hash.wfl",
-    include_str!("../../../docker/default_setting/models/rules/06-credential_abuse/pass_the_hash.wfl"),
+    include_str!(
+        "../../../docker/default_setting/models/rules/06-credential_abuse/pass_the_hash.wfl"
+    ),
 );
 pub(crate) const RULES_PRIVILEGED_ANOMALY: TemplateFile = (
     "models/rules/06-credential_abuse/privileged_anomaly.wfl",

@@ -23,8 +23,6 @@ use templates::TemplateFile;
 use templates::{
     // conf
     CONF_WFUSION,
-    // connectors
-    CONNECTORS_FILE,
     // rules
     RULES_BEACONING,
     RULES_DATA_BULK_EXPORT,
@@ -35,8 +33,8 @@ use templates::{
     RULES_LATERAL_SPREAD,
     RULES_NEW_ACCOUNT,
     RULES_OFF_HOURS,
-    RULES_PASSWORD_SPRAYING,
     RULES_PASS_THE_HASH,
+    RULES_PASSWORD_SPRAYING,
     RULES_PORT_SCAN,
     RULES_PRIVILEGED_ANOMALY,
     RULES_SCAN_LOGIN_XFER,
@@ -95,7 +93,6 @@ pub fn templates_for(scope: Scope) -> &'static [TemplateFile] {
 /// All template files (normal/full scope).
 const ALL: &[TemplateFile] = &[
     CONF_WFUSION,
-    CONNECTORS_FILE,
     // rules
     RULES_PORT_SCAN,
     RULES_PASSWORD_SPRAYING,
@@ -148,7 +145,6 @@ const ALL: &[TemplateFile] = &[
 /// Rules-only scope: models/{rules,schemas,scenarios} + conf + connectors + scripts.
 const RULES_ONLY: &[TemplateFile] = &[
     CONF_WFUSION,
-    CONNECTORS_FILE,
     RULES_PORT_SCAN,
     RULES_PASSWORD_SPRAYING,
     RULES_SSH_BRUTE,
@@ -184,7 +180,6 @@ const RULES_ONLY: &[TemplateFile] = &[
 /// Conf-only scope: topology/{sinks,sources} + conf + connectors + scripts.
 const CONF_ONLY: &[TemplateFile] = &[
     CONF_WFUSION,
-    CONNECTORS_FILE,
     TOPO_SINKS_DEFAULTS,
     TOPO_SINKS_DNS,
     TOPO_SINKS_HTTP,

@@ -27,6 +27,7 @@ pub fn init_project(project_dir: &str, _name: &str, scope: &str) -> Result<(), S
 
     let scope: Scope = scope.parse().map_err(|e| format!("invalid scope: {e}"))?;
 
+    // 1. Write static templates (rules, schemas, scenarios, topology, conf)
     for (template_path, data) in templates_for(scope) {
         let full = root.join(template_path);
 
@@ -36,6 +37,10 @@ pub fn init_project(project_dir: &str, _name: &str, scope: &str) -> Result<(), S
         }
         fs::write(&full, data).map_err(|e| format!("write {template_path}: {e}"))?;
     }
+
+    // 2. Generate connector templates from registry
+    crate::connectors::generate_connector_templates(root)
+        .map_err(|e| format!("connector generation: {e}"))?;
 
     // Make scripts executable (on Unix)
     #[cfg(unix)]

@@ -1,4 +1,5 @@
 mod check;
+mod connectors;
 mod init;
 mod self_update;
 mod sink;
