@@ -38,11 +38,29 @@ echo "  duration=$DURATION (${DURATION_SECONDS}s), interval=${INTERVAL}s, rate_s
 echo "============================================"
 
 cleanup() {
-    [ -n "${WFGEN_PID:-}" ] && kill "$WFGEN_PID" 2>/dev/null || true
-    [ -n "${WFUSION_PID:-}" ] && kill "$WFUSION_PID" 2>/dev/null || true
-    wait 2>/dev/null || true
+    [ -n "${WFGEN_PID:-}" ] && kill_wait "$WFGEN_PID" 2>/dev/null || true
+    [ -n "${WFUSION_PID:-}" ] && kill_wait "$WFUSION_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+# ── helpers ──
+
+kill_wait() {
+    local pid="$1"
+    local timeout="${2:-15}"
+    kill "$pid" 2>/dev/null || true
+    local elapsed=0
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    echo "   (force killing pid=$pid after ${timeout}s)" >&2
+    kill -9 "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+}
 
 mkdir -p data/alerts data/logs
 rm -f data/alerts/*.ndjson data/logs/wfusion.log data/logs/wfgen.log
@@ -90,13 +108,11 @@ while [ "$elapsed" -lt "$DURATION_SECONDS" ]; do
 done
 
 echo "3> stopping wfgen stream..."
-kill "$WFGEN_PID" 2>/dev/null || true
-wait "$WFGEN_PID" 2>/dev/null || true
+kill_wait "$WFGEN_PID"
 unset WFGEN_PID
 
 echo "4> stopping wfusion daemon..."
-kill "$WFUSION_PID" 2>/dev/null || true
-wait "$WFUSION_PID" 2>/dev/null || true
+kill_wait "$WFUSION_PID"
 unset WFUSION_PID
 
 echo "5> alert counts"
