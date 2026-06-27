@@ -4,7 +4,7 @@ set -euo pipefail
 # wf-rules/test/run.sh — 有限时长 TCP daemon 联调脚本
 # 从项目根目录运行
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."  # cd to project root/
+cd "$(dirname "${BASH_SOURCE[0]}")"  # cd to project root/
 
 DURATION="${1:-${DURATION:-5m}}"
 INTERVAL="${INTERVAL:-5}"
