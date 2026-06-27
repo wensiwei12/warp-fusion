@@ -58,7 +58,7 @@ pub fn generate_connector_templates(work_root: &Path) -> Result<(), String> {
         fs::create_dir_all(&source_dir).map_err(|e| format!("create connectors/source.d: {e}"))?;
         for (idx, def) in source_defs.iter().enumerate() {
             let file_name = format!("{:02}-{}.toml", idx, slugify(&def.id));
-            write_if_absent(&source_dir.join(&file_name), &[def.clone()])?;
+            write_if_absent(&source_dir.join(&file_name), std::slice::from_ref(def))?;
         }
     }
 
@@ -66,7 +66,7 @@ pub fn generate_connector_templates(work_root: &Path) -> Result<(), String> {
         fs::create_dir_all(&sink_dir).map_err(|e| format!("create connectors/sink.d: {e}"))?;
         for (idx, def) in sink_defs.iter().enumerate() {
             let file_name = format!("{:02}-{}.toml", idx, slugify(&def.id));
-            write_if_absent(&sink_dir.join(&file_name), &[def.clone()])?;
+            write_if_absent(&sink_dir.join(&file_name), std::slice::from_ref(def))?;
         }
     }
 
