@@ -2,7 +2,7 @@
 
 > 本文是 `.wfg` 场景 DSL 的独立设计文档。
 > 与 `WFL` 主规范解耦演进；不兼容旧 `.wfg` 语法。
-> 本文档随 `warp-fusion` 中的 `wfgen` 实现维护，是 WFG 主设计文档。
+> 本文档随 `wf-lang`（wp-reactor）与 `wfgen`（warp-fusion）共同维护，是 WFG 主设计文档。
 
 ## 1. 目标与边界
 
@@ -15,7 +15,7 @@
 
 | 条目 | 状态 | 说明 |
 |------|------|------|
-| `.wfg` parser / AST | 已实现 | 位于 `crates/wfgen/src/wfg_parser` 与 `wfg_ast.rs`。 |
+| `.wfg` parser / AST | 已实现 | 位于 `wf-lang/src/{wfg_parser,wfg_ast}.rs`（wp-reactor），`wfgen` 中保留兼容转发。 |
 | `wfgen gen` / `lint` / `verify` / `send` | 已实现 | CLI 支持 `gen/lint/verify/send/bench/stream`。 |
 | `scenario` / `traffic` / `injection` / `expect` | 已实现主体 | 支持 stream-first 新语法、rule-aware injection、oracle/expect 输出。 |
 | 与 `.wfs/.wfl` 联动校验 | 已实现主体 | `validate_wfg` 会加载 `use`、额外 `--ws/--wfl`，校验 stream/schema/rule/injection/expect。 |
@@ -223,7 +223,7 @@ literal         = STRING | NUMBER | "true" | "false" ;
 ```text
 wfg + wfs + wfl
    -> wfgen gen --scenario ... --out ... [--send]
-   -> wfusion run
+   -> wfusion batch
    -> actual alerts
    -> wfgen verify / wfl verify
    -> expect 判定 + 报告
