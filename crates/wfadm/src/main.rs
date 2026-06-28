@@ -1,6 +1,7 @@
 mod check;
 mod config;
 mod connectors;
+mod engine;
 mod init;
 pub(crate) mod init_tpl;
 mod self_update;
@@ -47,6 +48,11 @@ enum Commands {
     },
     /// Check project integrity
     Check,
+    /// Engine management (status/reload)
+    Engine {
+        #[command(subcommand)]
+        command: engine::EngineCommands,
+    },
     /// Self-update binary
     #[command(name = "self-update")]
     SelfUpdate,
@@ -65,6 +71,7 @@ fn main() {
         } => cmd_init(name, dir, mode, repo, version),
         Commands::Config { command } => config::run(command),
         Commands::Check => check::run(),
+        Commands::Engine { command } => engine::run(command),
         Commands::SelfUpdate => self_update::run(),
     };
 
