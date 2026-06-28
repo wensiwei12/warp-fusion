@@ -10,7 +10,7 @@ cd wparse && wpgen sample -n "$LINE_CNT" > /dev/null 2>&1 && cd ..
 
 echo "2> wparse: parse → NDJSON"
 cd wparse && mkdir -p data/out_dat data/logs
-wparse batch -p -n "$LINE_CNT" -S 1 > /dev/null 2>&1 && cd ..
+wparse batch > /dev/null 2>&1 && cd ..
 
 echo "3> wfusion: detect → alerts"
 cd wfusion && mkdir -p data/out_dat/alerts

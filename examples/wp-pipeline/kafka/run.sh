@@ -42,7 +42,7 @@ echo "   wfusion PID=$WFUSION_PID"
 echo "3> wparse: listening on TCP :9800, then wpgen sending..."
 cd wparse
 rm -rf .run; mkdir -p ../data/logs ../data/rescue
-wparse batch -p -n "$LINE_CNT" -S 1 &
+wparse batch &
 WPARSE_PID=$!
 sleep 2
 wpgen sample -n "$LINE_CNT" > /dev/null 2>&1

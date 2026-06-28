@@ -32,7 +32,7 @@ echo "   wfusion PID=$WFUSION_PID"
 echo "2> wparse: daemon, tcp_src :9801 → tcp_sink → wfusion :9802..."
 cd wparse
 rm -rf .run; mkdir -p ../data/logs ../data/rescue
-wparse daemon -p &
+wparse daemon &
 WPARSE_PID=$!
 cd ..
 sleep 2
