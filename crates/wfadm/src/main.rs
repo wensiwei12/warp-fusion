@@ -4,7 +4,6 @@ mod connectors;
 mod init;
 pub(crate) mod init_tpl;
 mod self_update;
-mod sink;
 
 use clap::{Parser, Subcommand};
 
@@ -48,8 +47,6 @@ enum Commands {
     },
     /// Check project integrity
     Check,
-    /// Validate sink configuration
-    Sink,
     /// Self-update binary
     #[command(name = "self-update")]
     SelfUpdate,
@@ -68,7 +65,6 @@ fn main() {
         } => cmd_init(name, dir, mode, repo, version),
         Commands::Config { command } => config::run(command),
         Commands::Check => check::run(),
-        Commands::Sink => sink::run(),
         Commands::SelfUpdate => self_update::run(),
     };
 

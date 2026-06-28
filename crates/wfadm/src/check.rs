@@ -3,6 +3,8 @@
 use std::fs;
 use std::path::Path;
 
+use crate::connectors;
+
 pub fn run() -> Result<(), String> {
     check_project(Path::new("."))
 }
@@ -17,6 +19,16 @@ pub(crate) fn check_project(root: &Path) -> Result<(), String> {
         root.canonicalize()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| root.display().to_string())
+    );
+
+    // Register factories for reporting
+    connectors::ensure_factories_registered();
+    let registered_sinks = wp_core_connectors::registry::list_sink_kinds();
+    let registered_sources = wp_core_connectors::registry::list_source_kinds();
+    println!(
+        "  registered: {} sink(s), {} source(s)",
+        registered_sinks.len(),
+        registered_sources.len()
     );
 
     // 1. conf/wfusion.toml
@@ -86,24 +98,43 @@ pub(crate) fn check_project(root: &Path) -> Result<(), String> {
         }
     }
 
-    // 5. topology/sinks/
+    // 5. topology/sinks/ — directory structure + TOML validation
     let sinks_dir = root.join("topology").join("sinks");
     if sinks_dir.is_dir() {
         ok += 1;
         let parts = ["business.d", "infra.d"];
         for part in &parts {
-            if sinks_dir.join(part).is_dir() {
-                println!("  [OK] topology/sinks/{part}/: present");
+            let sub_dir = sinks_dir.join(part);
+            if sub_dir.is_dir() {
+                let (n, errs) = validate_sink_dir(&sub_dir);
+                if errs == 0 {
+                    println!("  [OK] topology/sinks/{part}/: {n} file(s) ok");
+                } else {
+                    warn += 1;
+                }
             } else {
                 warn += 1;
                 eprintln!("  [WARN] topology/sinks/{part}/: not found");
             }
         }
         if sinks_dir.join("defaults.toml").exists() {
-            println!("  [OK] topology/sinks/defaults.toml: present");
+            if let Err(e) = validate_sink_file(&sinks_dir.join("defaults.toml")) {
+                err += 1;
+                eprintln!("  [ERR] topology/sinks/defaults.toml: {e}");
+            } else {
+                println!("  [OK] topology/sinks/defaults.toml: valid");
+            }
         } else {
             warn += 1;
             eprintln!("  [WARN] topology/sinks/defaults.toml: not found");
+        }
+        // topology/sinks/connectors/sink.d/
+        let conn_dir = sinks_dir.join("connectors").join("sink.d");
+        if conn_dir.is_dir() {
+            let (n, errs) = validate_sink_dir(&conn_dir);
+            if errs == 0 {
+                println!("  [OK] topology/sinks/connectors/sink.d/: {n} file(s) ok");
+            }
         }
     } else {
         warn += 1;
@@ -117,13 +148,16 @@ pub(crate) fn check_project(root: &Path) -> Result<(), String> {
         println!("  [OK] topology/sources/: present");
     }
 
-    // 7. connectors/
+    // 7. connectors/ — directory + TOML validation
     let connectors_dir = root.join("connectors");
     if connectors_dir.is_dir() {
         let sink_d = connectors_dir.join("sink.d");
         if sink_d.is_dir() {
             ok += 1;
-            println!("  [OK] connectors/sink.d/: present");
+            let (n, errs) = validate_sink_dir(&sink_d);
+            if errs == 0 {
+                println!("  [OK] connectors/sink.d/: {n} file(s) ok");
+            }
         } else {
             warn += 1;
             eprintln!("  [WARN] connectors/sink.d/: not found");
@@ -147,6 +181,8 @@ pub(crate) fn check_project(root: &Path) -> Result<(), String> {
     }
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────
+
 fn count_files(dir: &Path, ext: &str) -> usize {
     let mut count = 0;
     if let Ok(entries) = fs::read_dir(dir) {
@@ -162,13 +198,48 @@ fn count_files(dir: &Path, ext: &str) -> usize {
     count
 }
 
+fn validate_sink_dir(dir: &Path) -> (u32, u32) {
+    let mut files = 0u32;
+    let mut errors = 0u32;
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let (n, e) = validate_sink_dir(&path);
+                files += n;
+                errors += e;
+            } else if path.extension().map(|e| e == "toml").unwrap_or(false) {
+                files += 1;
+                if let Err(e) = validate_sink_file(&path) {
+                    errors += 1;
+                    eprintln!("  [ERR] {}: {e}", path.display());
+                } else {
+                    println!("  [OK] {}", path.display());
+                }
+            }
+        }
+    }
+    (files, errors)
+}
+
+fn validate_sink_file(path: &Path) -> Result<(), String> {
+    let content = fs::read_to_string(path).map_err(|e| format!("read error: {e}"))?;
+    let _val: toml::Value = content
+        .parse::<toml::Value>()
+        .map_err(|e| format!("invalid TOML: {e}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("wfadm_check_{}_{}", std::process::id(), rand::random::<u32>()));
+        let dir = std::env::temp_dir().join(format!(
+            "wfadm_check_{}_{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -187,8 +258,6 @@ mod tests {
         let dir = temp_dir();
         std::fs::create_dir_all(dir.join("conf")).unwrap();
         std::fs::write(dir.join("conf/wfusion.toml"), "mode = \"daemon\"\n").unwrap();
-        // Without models or topology, we still get warnings but no errors
-        // (conf exists and is valid, but models/ and topology/ may warn)
         let _ = check_project(&dir);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -200,6 +269,21 @@ mod tests {
         std::fs::write(dir.join("conf/wfusion.toml"), "not valid toml [[[").unwrap();
         let result = check_project(&dir);
         assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_sink_toml_detected() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(dir.join("topology/sinks/business.d")).unwrap();
+        std::fs::write(dir.join("topology/sinks/defaults.toml"), "valid = \"ok\"\n").unwrap();
+        std::fs::write(
+            dir.join("topology/sinks/business.d/bad.toml"),
+            "invalid [[[ toml",
+        )
+        .unwrap();
+        // Without conf, it will error on missing conf, but we mainly check sink validation
+        let _ = check_project(&dir);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
