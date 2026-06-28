@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::connectors;
+use wf_lang::{lint_wfl, parse_wfg, parse_wfl, parse_wfs};
 
 pub fn run() -> Result<(), String> {
     check_project(Path::new("."))
@@ -57,32 +58,9 @@ pub(crate) fn check_project(root: &Path) -> Result<(), String> {
     // ── models ────────────────────────────────────────────────────────
     println!("  ── models ──");
 
-    let rules_dir = root.join("models").join("rules");
-    let rules_count = count_files(&rules_dir, "wfl");
-    if rules_count > 0 {
-        ok += 1;
-        println!("  ✓  rules/ ({rules_count} .wfl)");
-    } else {
-        eprintln!("  ✗  rules/ — directory not found or empty");
-    }
-
-    let schemas_dir = root.join("models").join("schemas");
-    let schemas_count = count_files(&schemas_dir, "wfs");
-    if schemas_count > 0 {
-        ok += 1;
-        println!("  ✓  schemas/ ({schemas_count} .wfs)");
-    } else {
-        eprintln!("  ✗  schemas/ — directory not found or empty");
-    }
-
-    let scenarios_dir = root.join("models").join("scenarios");
-    let scenarios_count = count_files(&scenarios_dir, "wfg");
-    if scenarios_count > 0 {
-        ok += 1;
-        println!("  ✓  scenarios/ ({scenarios_count} .wfg)");
-    } else {
-        // scenarios are optional, a missing dir is just INFO
-        println!("     scenarios/ — (none)");
+    let models_ok = check_models(root, &mut err);
+    if models_ok > 0 {
+        ok += models_ok;
     }
 
     // ── topology ──────────────────────────────────────────────────────
@@ -196,6 +174,165 @@ fn count_files(dir: &Path, ext: &str) -> usize {
         }
     }
     count
+}
+
+/// Recursively list files with a given extension.
+fn list_files(dir: &Path, ext: &str) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(list_files(&path, ext));
+            } else if path.extension().map(|e| e == ext).unwrap_or(false) {
+                files.push(path);
+            }
+        }
+    }
+    files
+}
+
+/// Deep validation: parse all .wfl, .wfs, .wfg files.
+fn check_models(root: &Path, err: &mut u32) -> u32 {
+    let mut ok = 0u32;
+
+    // ── WFL (rules/) ───────────────────────────────────────────────
+    let rules_dir = root.join("models").join("rules");
+    let wfl_files = list_files(&rules_dir, "wfl");
+    if wfl_files.is_empty() {
+        eprintln!("  ✗  rules/ — directory not found or empty");
+    } else {
+        let mut parsed = Vec::new();
+        let mut parse_errs = 0u32;
+        for f in &wfl_files {
+            match fs::read_to_string(f) {
+                Ok(content) => match parse_wfl(&content) {
+                    Ok(ast) => parsed.push((f, ast)),
+                    Err(e) => {
+                        parse_errs += 1;
+                        eprintln!(
+                            "  ✗  {} — parse error: {}",
+                            f.file_name().unwrap_or_default().to_string_lossy(),
+                            e
+                        );
+                    }
+                },
+                Err(e) => {
+                    parse_errs += 1;
+                    eprintln!(
+                        "  ✗  {} — read error: {e}",
+                        f.file_name().unwrap_or_default().to_string_lossy()
+                    );
+                }
+            }
+        }
+
+        // Lint parsed WFL files (schemas param is unused in current lint_wfl)
+        let mut lint_warnings = 0u32;
+        for (f, ast) in &parsed {
+            let warnings = lint_wfl(ast, &[]);
+            if !warnings.is_empty() {
+                lint_warnings += warnings.len() as u32;
+                for w in &warnings {
+                    let rule = w.rule.as_deref().unwrap_or("?");
+                    eprintln!(
+                        "  ⚠  {} ({rule}): {}",
+                        f.file_name().unwrap_or_default().to_string_lossy(),
+                        w.message
+                    );
+                }
+            }
+        }
+
+        if parse_errs == 0 {
+            ok += 1;
+            if lint_warnings > 0 {
+                println!(
+                    "  ✓  rules/ ({} .wfl, {} lint warning(s))",
+                    wfl_files.len(),
+                    lint_warnings
+                );
+            } else {
+                println!("  ✓  rules/ ({} .wfl)", wfl_files.len());
+            }
+        } else {
+            *err += 1;
+        }
+    }
+
+    // ── WFS (schemas/) ─────────────────────────────────────────────
+    let schemas_dir = root.join("models").join("schemas");
+    let wfs_files = list_files(&schemas_dir, "wfs");
+    if wfs_files.is_empty() {
+        eprintln!("  ✗  schemas/ — directory not found or empty");
+    } else {
+        let mut parse_errs = 0u32;
+        for f in &wfs_files {
+            match fs::read_to_string(f) {
+                Ok(content) => {
+                    if let Err(e) = parse_wfs(&content) {
+                        parse_errs += 1;
+                        eprintln!(
+                            "  ✗  {} — parse error: {e}",
+                            f.file_name().unwrap_or_default().to_string_lossy()
+                        );
+                    }
+                }
+                Err(e) => {
+                    parse_errs += 1;
+                    eprintln!(
+                        "  ✗  {} — read error: {e}",
+                        f.file_name().unwrap_or_default().to_string_lossy()
+                    );
+                }
+            }
+        }
+
+        if parse_errs == 0 {
+            ok += 1;
+            println!("  ✓  schemas/ ({} .wfs)", wfs_files.len());
+        } else {
+            *err += 1;
+        }
+    }
+
+    // ── WFG (scenarios/) ───────────────────────────────────────────
+    let scenarios_dir = root.join("models").join("scenarios");
+    let wfg_files = list_files(&scenarios_dir, "wfg");
+    if wfg_files.is_empty() {
+        println!("     scenarios/ — (none)");
+    } else {
+        let mut parse_errs = 0u32;
+        for f in &wfg_files {
+            match fs::read_to_string(f) {
+                Ok(content) => {
+                    if let Err(e) = parse_wfg(&content) {
+                        parse_errs += 1;
+                        eprintln!(
+                            "  ✗  {} — parse error: {e}",
+                            f.file_name().unwrap_or_default().to_string_lossy()
+                        );
+                    }
+                }
+                Err(e) => {
+                    parse_errs += 1;
+                    eprintln!(
+                        "  ✗  {} — read error: {e}",
+                        f.file_name().unwrap_or_default().to_string_lossy()
+                    );
+                }
+            }
+        }
+
+        if parse_errs == 0 {
+            ok += 1;
+            println!("  ✓  scenarios/ ({} .wfg)", wfg_files.len());
+        } else {
+            *err += 1;
+        }
+    }
+
+    ok
 }
 
 /// Validate all .toml files in a directory recursively.
