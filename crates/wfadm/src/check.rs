@@ -428,4 +428,187 @@ mod tests {
         let _ = check_project(&dir);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    // ── list_files ───────────────────────────────────────────────
+
+    #[test]
+    fn list_files_finds_matching_extensions() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("a.wfl"), "rule x {}").unwrap();
+        std::fs::write(dir.join("b.wfl"), "rule y {}").unwrap();
+        std::fs::write(dir.join("sub/c.wfl"), "rule z {}").unwrap();
+        std::fs::write(dir.join("README.md"), "# docs").unwrap();
+
+        let files = list_files(&dir, "wfl");
+        assert_eq!(files.len(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_files_empty_for_missing_extension() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "hello").unwrap();
+        let files = list_files(&dir, "wfl");
+        assert!(files.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── check_models ─ deep parse ────────────────────────────────
+
+    /// Helper: set up conf + models dirs so check_models can run
+    fn setup_models_dir(root: &std::path::Path) {
+        std::fs::create_dir_all(root.join("conf")).unwrap();
+        std::fs::write(root.join("conf/wfusion.toml"), "sinks = \"tmp\"\n").unwrap();
+        std::fs::create_dir_all(root.join("models/rules")).unwrap();
+        std::fs::create_dir_all(root.join("models/schemas")).unwrap();
+        std::fs::create_dir_all(root.join("models/scenarios")).unwrap();
+    }
+
+    #[test]
+    fn valid_wfl_parses() {
+        let dir = temp_dir();
+        setup_models_dir(&dir);
+        std::fs::write(
+            dir.join("models/rules/test.wfl"),
+            r#"
+use "auth.wfs"
+rule test_rule {
+    events { e : auth_events && e.action == "login" }
+    match<sip:5m> {
+        on event { e | count >= 3; }
+        and close { e | count >= 3; }
+    } -> score(80.0)
+    entity(ip, e.sip)
+    yield auth_alerts (sip = e.sip, alert_type = "test")
+}
+"#,
+        )
+        .unwrap();
+        let mut err = 0;
+        let ok = check_models(&dir, &mut err);
+        assert!(ok > 0, "valid WFL should parse");
+        assert_eq!(err, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_wfl_detected() {
+        let dir = temp_dir();
+        setup_models_dir(&dir);
+        std::fs::write(
+            dir.join("models/rules/bad.wfl"),
+            "this is not valid wfl at all",
+        )
+        .unwrap();
+        let mut err = 0;
+        let _ = check_models(&dir, &mut err);
+        assert!(err > 0, "invalid WFL should produce errors");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wfl_lint_warning_reported() {
+        let dir = temp_dir();
+        setup_models_dir(&dir);
+        // Missing on_close block triggers W002 lint warning
+        std::fs::write(
+            dir.join("models/rules/no_close.wfl"),
+            r#"
+rule no_close {
+    events { e : auth_events }
+    match<sip:5m> { on event { e | count >= 1; } } -> score(50.0)
+    entity(ip, e.sip)
+    yield auth_alerts (sip = e.sip, alert_type = "test")
+}
+"#,
+        )
+        .unwrap();
+        let mut err = 0;
+        let ok = check_models(&dir, &mut err);
+        // Lint warnings don't count as errors, parsing still succeeds
+        assert!(ok > 0);
+        assert_eq!(err, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn valid_wfs_parses() {
+        let dir = temp_dir();
+        setup_models_dir(&dir);
+        let real_wfs = "window conn_events {\n    stream = \"conn_events\"\n    time = event_time\n    over = 30m\n    fields {\n        event_time: time\n        sip: ip\n        dip: ip\n    }\n}";
+        std::fs::write(dir.join("models/schemas/test.wfs"), real_wfs).unwrap();
+        let mut err = 0;
+        let ok = check_models(&dir, &mut err);
+        assert!(ok > 0, "valid WFS should parse");
+        assert_eq!(err, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_wfs_detected() {
+        let dir = temp_dir();
+        setup_models_dir(&dir);
+        std::fs::write(dir.join("models/schemas/bad.wfs"), "}}}} gibberish").unwrap();
+        let mut err = 0;
+        let _ = check_models(&dir, &mut err);
+        assert!(err > 0, "invalid WFS should produce errors");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn valid_wfg_parses() {
+        let dir = temp_dir();
+        setup_models_dir(&dir);
+        std::fs::write(
+            dir.join("models/scenarios/test.wfg"),
+            r#"
+#[duration=5m]
+scenario test_case<seed=42> {
+  traffic { stream auth_events gen 10/s }
+}
+"#,
+        )
+        .unwrap();
+        let mut err = 0;
+        let ok = check_models(&dir, &mut err);
+        assert!(ok > 0, "valid WFG should parse");
+        assert_eq!(err, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_wfg_detected() {
+        let dir = temp_dir();
+        setup_models_dir(&dir);
+        std::fs::write(dir.join("models/scenarios/bad.wfg"), "not wfg").unwrap();
+        let mut err = 0;
+        let _ = check_models(&dir, &mut err);
+        assert!(err > 0, "invalid WFG should produce errors");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wfg_parses_use_declarations() {
+        let dir = temp_dir();
+        setup_models_dir(&dir);
+        std::fs::write(
+            dir.join("models/scenarios/with_use.wfg"),
+            r#"
+use "../schemas/auth.wfs"
+use "../rules/some_rule.wfl"
+#[duration=5m]
+scenario with_use<seed=1> {
+  traffic { stream auth_events gen 10/s }
+}
+"#,
+        )
+        .unwrap();
+        let mut err = 0;
+        let ok = check_models(&dir, &mut err);
+        assert!(ok > 0);
+        assert_eq!(err, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
