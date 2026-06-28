@@ -31,7 +31,7 @@ cd wparse && wproj init -m full && cd ..
 # 3. Generate data + parse → Kafka
 cd wparse
 wpgen sample -n 5000
-wparse batch -p -n 5000 -S 1
+wparse batch
 cd ..
 
 # 4. Start wfusion (consumes from Kafka, writes alerts to Kafka)
