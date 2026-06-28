@@ -12,7 +12,6 @@ pub fn run() -> Result<(), String> {
 pub(crate) fn check_project(root: &Path) -> Result<(), String> {
     let mut ok: u32 = 0;
     let mut err: u32 = 0;
-    let mut warn: u32 = 0;
 
     println!(
         "wfadm check: validating wf-rules project at {}",
@@ -31,157 +30,158 @@ pub(crate) fn check_project(root: &Path) -> Result<(), String> {
         registered_sources.len()
     );
 
-    // 1. conf/wfusion.toml
+    // ── conf ──────────────────────────────────────────────────────────
+    println!("\n  ── conf ──");
     let conf_path = root.join("conf").join("wfusion.toml");
     if conf_path.exists() {
         match fs::read_to_string(&conf_path) {
             Ok(content) => {
                 if content.parse::<toml::Value>().is_ok() {
                     ok += 1;
-                    println!("  [OK] conf/wfusion.toml: valid TOML");
+                    println!("  ✓  wfusion.toml");
                 } else {
                     err += 1;
-                    eprintln!("  [ERR] conf/wfusion.toml: invalid TOML");
+                    eprintln!("  ✗  wfusion.toml — invalid TOML");
                 }
             }
             Err(e) => {
                 err += 1;
-                eprintln!("  [ERR] conf/wfusion.toml: read error: {e}");
+                eprintln!("  ✗  wfusion.toml — read error: {e}");
             }
         }
     } else {
         err += 1;
-        eprintln!("  [ERR] conf/wfusion.toml: not found");
+        eprintln!("  ✗  wfusion.toml — not found");
     }
 
-    // 2. models/rules/
+    // ── models ────────────────────────────────────────────────────────
+    println!("  ── models ──");
+
     let rules_dir = root.join("models").join("rules");
-    if rules_dir.is_dir() {
-        let wfl_count = count_files(&rules_dir, "wfl");
-        if wfl_count > 0 {
-            ok += 1;
-            println!("  [OK] models/rules/: {wfl_count} .wfl file(s)");
-        } else {
-            warn += 1;
-            eprintln!("  [WARN] models/rules/: no .wfl files found");
-        }
+    let rules_count = count_files(&rules_dir, "wfl");
+    if rules_count > 0 {
+        ok += 1;
+        println!("  ✓  rules/ ({rules_count} .wfl)");
     } else {
-        warn += 1;
-        eprintln!("  [WARN] models/rules/: directory not found");
+        eprintln!("  ✗  rules/ — directory not found or empty");
     }
 
-    // 3. models/schemas/
     let schemas_dir = root.join("models").join("schemas");
-    if schemas_dir.is_dir() {
-        let wfs_count = count_files(&schemas_dir, "wfs");
-        if wfs_count > 0 {
-            ok += 1;
-            println!("  [OK] models/schemas/: {wfs_count} .wfs file(s)");
-        } else {
-            warn += 1;
-            eprintln!("  [WARN] models/schemas/: no .wfs files found");
-        }
+    let schemas_count = count_files(&schemas_dir, "wfs");
+    if schemas_count > 0 {
+        ok += 1;
+        println!("  ✓  schemas/ ({schemas_count} .wfs)");
     } else {
-        warn += 1;
-        eprintln!("  [WARN] models/schemas/: directory not found");
+        eprintln!("  ✗  schemas/ — directory not found or empty");
     }
 
-    // 4. models/scenarios/
     let scenarios_dir = root.join("models").join("scenarios");
-    if scenarios_dir.is_dir() {
-        let wfg_count = count_files(&scenarios_dir, "wfg");
-        if wfg_count > 0 {
-            ok += 1;
-            println!("  [OK] models/scenarios/: {wfg_count} .wfg file(s)");
-        } else {
-            println!("  [INFO] models/scenarios/: no .wfg files");
-        }
+    let scenarios_count = count_files(&scenarios_dir, "wfg");
+    if scenarios_count > 0 {
+        ok += 1;
+        println!("  ✓  scenarios/ ({scenarios_count} .wfg)");
+    } else {
+        // scenarios are optional, a missing dir is just INFO
+        println!("     scenarios/ — (none)");
     }
 
-    // 5. topology/sinks/ — directory structure + TOML validation
-    let sinks_dir = root.join("topology").join("sinks");
-    if sinks_dir.is_dir() {
+    // ── topology ──────────────────────────────────────────────────────
+    println!("  ── topology ──");
+
+    let topology_ok = check_topology(root, &mut err);
+    if topology_ok > 0 {
         ok += 1;
-        let parts = ["business.d", "infra.d"];
-        for part in &parts {
-            let sub_dir = sinks_dir.join(part);
-            if sub_dir.is_dir() {
-                let (n, errs) = validate_sink_dir(&sub_dir);
-                if errs == 0 {
-                    println!("  [OK] topology/sinks/{part}/: {n} file(s) ok");
-                } else {
-                    warn += 1;
-                }
-            } else {
-                warn += 1;
-                eprintln!("  [WARN] topology/sinks/{part}/: not found");
-            }
-        }
-        if sinks_dir.join("defaults.toml").exists() {
-            if let Err(e) = validate_sink_file(&sinks_dir.join("defaults.toml")) {
-                err += 1;
-                eprintln!("  [ERR] topology/sinks/defaults.toml: {e}");
-            } else {
-                println!("  [OK] topology/sinks/defaults.toml: valid");
-            }
+    }
+
+    // ── connectors ────────────────────────────────────────────────────
+    println!("  ── connectors ──");
+    let conn_dir = root.join("connectors").join("sink.d");
+    if conn_dir.is_dir() {
+        let (sink_count, sink_errs) = validate_sink_dir(&conn_dir, true);
+        if sink_errs == 0 {
+            ok += 1;
+            println!("  ✓  sink.d/ ({sink_count} .toml)");
         } else {
-            warn += 1;
-            eprintln!("  [WARN] topology/sinks/defaults.toml: not found");
-        }
-        // topology/sinks/connectors/sink.d/
-        let conn_dir = sinks_dir.join("connectors").join("sink.d");
-        if conn_dir.is_dir() {
-            let (n, errs) = validate_sink_dir(&conn_dir);
-            if errs == 0 {
-                println!("  [OK] topology/sinks/connectors/sink.d/: {n} file(s) ok");
-            }
+            err += 1;
         }
     } else {
-        warn += 1;
-        eprintln!("  [WARN] topology/sinks/: directory not found");
+        eprintln!("  ✗  sink.d/ — not found");
     }
 
-    // 6. topology/sources/
-    let sources_dir = root.join("topology").join("sources");
-    if sources_dir.is_dir() {
-        ok += 1;
-        println!("  [OK] topology/sources/: present");
-    }
-
-    // 7. connectors/ — directory + TOML validation
-    let connectors_dir = root.join("connectors");
-    if connectors_dir.is_dir() {
-        let sink_d = connectors_dir.join("sink.d");
-        if sink_d.is_dir() {
-            ok += 1;
-            let (n, errs) = validate_sink_dir(&sink_d);
-            if errs == 0 {
-                println!("  [OK] connectors/sink.d/: {n} file(s) ok");
-            }
-        } else {
-            warn += 1;
-            eprintln!("  [WARN] connectors/sink.d/: not found");
-        }
-    } else {
-        warn += 1;
-        eprintln!("  [WARN] connectors/: directory not found");
-    }
-
-    // Summary
+    // ── Result ────────────────────────────────────────────────────────
     println!();
     if err > 0 {
-        eprintln!("Result: {err} error(s), {warn} warning(s), {ok} ok");
+        eprintln!("  ── Result ──");
+        eprintln!("  ✗  {err} error(s)  |  {ok} ok");
         Err(format!("validation failed with {err} error(s)"))
-    } else if warn > 0 {
-        println!("Result: {warn} warning(s), {ok} ok (no errors)");
-        Ok(())
     } else {
-        println!("Result: all checks passed ({ok} ok)");
+        println!("  ── Result ──");
+        println!("  ✓  all checks passed ({ok} ok)");
         Ok(())
     }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────
+// ── topology validation ──────────────────────────────────────────────
+
+fn check_topology(root: &Path, err: &mut u32) -> u32 {
+    let mut ok = 0u32;
+    let sinks_dir = root.join("topology").join("sinks");
+
+    if sinks_dir.is_dir() {
+        // Validate each business.d / infra.d subdirectory
+        let parts = ["business.d", "infra.d"];
+        for part in &parts {
+            let sub_dir = sinks_dir.join(part);
+            if sub_dir.is_dir() {
+                let (count, errs) = validate_sink_dir(&sub_dir, true);
+                if errs == 0 {
+                    println!("  ✓  sinks/{part}/ ({count} .toml)");
+                    ok += 1;
+                } else {
+                    *err += 1;
+                }
+            } else {
+                eprintln!("  ✗  sinks/{part}/ — not found");
+            }
+        }
+
+        // defaults.toml
+        let defaults = sinks_dir.join("defaults.toml");
+        if defaults.exists() {
+            if let Err(e) = validate_sink_file(&defaults) {
+                *err += 1;
+                eprintln!("  ✗  sinks/defaults.toml — {e}");
+            } else {
+                println!("  ✓  sinks/defaults.toml");
+            }
+        }
+
+        // topology/sinks/connectors/sink.d/
+        let conn_dir = sinks_dir.join("connectors").join("sink.d");
+        if conn_dir.is_dir() {
+            let (count, errs) = validate_sink_dir(&conn_dir, true);
+            if errs == 0 {
+                println!("  ✓  sinks/connectors/sink.d/ ({count} .toml)");
+            } else {
+                *err += 1;
+            }
+        }
+    } else {
+        eprintln!("  ✗  sinks/ — directory not found");
+    }
+
+    // sources
+    let sources_dir = root.join("topology").join("sources");
+    if sources_dir.is_dir() {
+        let src_count = count_files(&sources_dir, "toml");
+        println!("  ✓  sources/ ({src_count} .toml)");
+        ok += 1;
+    }
+
+    ok
+}
+
+// ── helpers ──────────────────────────────────────────────────────────
 
 fn count_files(dir: &Path, ext: &str) -> usize {
     let mut count = 0;
@@ -198,23 +198,29 @@ fn count_files(dir: &Path, ext: &str) -> usize {
     count
 }
 
-fn validate_sink_dir(dir: &Path) -> (u32, u32) {
+/// Validate all .toml files in a directory recursively.
+///
+/// When `quiet` is true, individual file names are only printed on error.
+fn validate_sink_dir(dir: &Path, quiet: bool) -> (u32, u32) {
     let mut files = 0u32;
     let mut errors = 0u32;
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                let (n, e) = validate_sink_dir(&path);
+                let (n, e) = validate_sink_dir(&path, quiet);
                 files += n;
                 errors += e;
             } else if path.extension().map(|e| e == "toml").unwrap_or(false) {
                 files += 1;
                 if let Err(e) = validate_sink_file(&path) {
                     errors += 1;
-                    eprintln!("  [ERR] {}: {e}", path.display());
-                } else {
-                    println!("  [OK] {}", path.display());
+                    eprintln!("  ✗  {} — {e}", path.display());
+                } else if !quiet {
+                    println!(
+                        "  ✓  {}",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    );
                 }
             }
         }
@@ -282,7 +288,6 @@ mod tests {
             "invalid [[[ toml",
         )
         .unwrap();
-        // Without conf, it will error on missing conf, but we mainly check sink validation
         let _ = check_project(&dir);
         let _ = std::fs::remove_dir_all(&dir);
     }
