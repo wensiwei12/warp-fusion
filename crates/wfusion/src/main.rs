@@ -7,13 +7,11 @@ mod cli_config;
 mod error;
 mod register;
 
-use std::path::PathBuf;
-
 use clap::{Parser, Subcommand};
 use orion_error::report::DiagnosticReport;
 
 use cli_config::{ConfigLoadArgs, run_config_command, run_engine_command};
-use error::{CliResult, into_cli_error_from_wfl};
+use error::CliResult;
 use wf_config::FusionMode;
 
 // -- Top-level CLI -----------------------------------------------------------
@@ -59,89 +57,12 @@ enum Commands {
         #[command(subcommand)]
         command: cli_config::ConfigCommands,
     },
-    /// Rule authoring, testing & replay (wfl)
-    #[command(name = "rule")]
-    Rule {
-        #[command(subcommand)]
-        command: RuleCommands,
-    },
     /// Print version or check version requirement
     Version {
         /// Check if current version >= specified version (e.g. "0.1.0")
         /// Exits with code 0 if satisfied, 1 otherwise.
         #[arg(long)]
         ge: Option<String>,
-    },
-}
-
-// -- Rule subcommands (wfl) --------------------------------------------------
-
-#[derive(Subcommand)]
-enum RuleCommands {
-    Explain {
-        file: PathBuf,
-        #[arg(short, long, default_value = "schemas/*.wfs")]
-        schemas: Vec<String>,
-        #[arg(long)]
-        var: Vec<String>,
-    },
-    Lint {
-        file: PathBuf,
-        #[arg(short, long, default_value = "schemas/*.wfs")]
-        schemas: Vec<String>,
-        #[arg(long)]
-        var: Vec<String>,
-    },
-    Fmt {
-        files: Vec<PathBuf>,
-        #[arg(short, long)]
-        write: bool,
-        #[arg(long)]
-        check: bool,
-    },
-    Replay {
-        file: PathBuf,
-        #[arg(short, long, default_value = "schemas/*.wfs")]
-        schemas: Vec<String>,
-        #[arg(short, long)]
-        input: PathBuf,
-        #[arg(long)]
-        var: Vec<String>,
-    },
-    #[command(name = "verify")]
-    ReplayVerify {
-        file: Option<PathBuf>,
-        #[arg(long)]
-        case: Option<String>,
-        #[arg(long, default_value = "data")]
-        data_dir: PathBuf,
-        #[arg(short, long, default_value = "schemas/*.wfs")]
-        schemas: Vec<String>,
-        #[arg(short, long)]
-        input: Option<PathBuf>,
-        #[arg(long)]
-        var: Vec<String>,
-        #[arg(long)]
-        expected: Option<PathBuf>,
-        #[arg(long)]
-        score_tolerance: Option<f64>,
-        #[arg(long)]
-        time_tolerance: Option<f64>,
-        #[arg(long)]
-        meta: Option<PathBuf>,
-        #[arg(long, default_value = "markdown")]
-        format: String,
-    },
-    Test {
-        file: PathBuf,
-        #[arg(short, long, default_value = "schemas/*.wfs")]
-        schemas: Vec<String>,
-        #[arg(long)]
-        var: Vec<String>,
-        #[arg(long)]
-        shuffle: bool,
-        #[arg(long)]
-        runs: Option<usize>,
     },
 }
 
@@ -191,67 +112,6 @@ async fn run_cli() -> CliResult<()> {
             .await?
         }
         Commands::Config { command } => run_config_command(command).await?,
-        Commands::Rule { command } => match command {
-            RuleCommands::Explain { file, schemas, var } => {
-                wfl::cmd_explain::run(file, schemas, var).map_err(into_cli_error_from_wfl)?;
-            }
-            RuleCommands::Lint { file, schemas, var } => {
-                wfl::cmd_lint::run(file, schemas, var).map_err(into_cli_error_from_wfl)?;
-            }
-            RuleCommands::Fmt {
-                files,
-                write,
-                check,
-            } => {
-                wfl::cmd_fmt::run(files, write, check).map_err(into_cli_error_from_wfl)?;
-            }
-            RuleCommands::Replay {
-                file,
-                schemas,
-                input,
-                var,
-            } => {
-                wfl::cmd_replay::run(file, schemas, input, var).map_err(into_cli_error_from_wfl)?;
-            }
-            RuleCommands::ReplayVerify {
-                file,
-                case,
-                data_dir,
-                schemas,
-                input,
-                var,
-                expected,
-                score_tolerance,
-                time_tolerance,
-                meta,
-                format,
-            } => {
-                wfl::cmd_replay_verify::run(
-                    file,
-                    case,
-                    data_dir,
-                    schemas,
-                    input,
-                    var,
-                    expected,
-                    score_tolerance,
-                    time_tolerance,
-                    meta,
-                    format,
-                )
-                .map_err(into_cli_error_from_wfl)?;
-            }
-            RuleCommands::Test {
-                file,
-                schemas,
-                var,
-                shuffle,
-                runs,
-            } => {
-                wfl::cmd_test::run(file, schemas, var, shuffle, runs)
-                    .map_err(into_cli_error_from_wfl)?;
-            }
-        },
         Commands::Version { ge } => {
             let current = env!("CARGO_PKG_VERSION");
             match ge {

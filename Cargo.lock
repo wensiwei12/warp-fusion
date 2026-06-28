@@ -5445,7 +5445,6 @@ dependencies = [
  "tracing",
  "wf-config",
  "wf-runtime",
- "wfl",
  "wp-connectors",
  "wp-core-connectors",
 ]

@@ -13,7 +13,6 @@ tokio = { workspace = true }
 wf-runtime.workspace = true
 wp-connectors.workspace = true
 wp-core-connectors.workspace = true
-wfl = { path = "../wfl" }
 wf-config.workspace = true
 orion-error.workspace = true
 clap = { workspace = true }
