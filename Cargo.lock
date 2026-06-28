@@ -5386,6 +5386,7 @@ dependencies = [
  "toml 0.8.23",
  "ureq",
  "walkdir",
+ "wf-config",
  "wp-connector-api",
  "wp-core-connectors",
 ]

@@ -1,4 +1,5 @@
 mod check;
+mod config;
 mod connectors;
 mod init;
 pub(crate) mod init_tpl;
@@ -40,6 +41,11 @@ enum Commands {
         #[arg(long, requires = "repo")]
         version: Option<String>,
     },
+    /// Inspect and diff configuration
+    Config {
+        #[command(subcommand)]
+        command: config::ConfigCommands,
+    },
     /// Check project integrity
     Check,
     /// Validate sink configuration
@@ -60,6 +66,7 @@ fn main() {
             repo,
             version,
         } => cmd_init(name, dir, mode, repo, version),
+        Commands::Config { command } => config::run(command),
         Commands::Check => check::run(),
         Commands::Sink => sink::run(),
         Commands::SelfUpdate => self_update::run(),
