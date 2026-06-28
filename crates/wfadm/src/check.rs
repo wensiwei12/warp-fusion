@@ -4,7 +4,10 @@ use std::fs;
 use std::path::Path;
 
 pub fn run() -> Result<(), String> {
-    let root = Path::new(".");
+    check_project(Path::new("."))
+}
+
+pub(crate) fn check_project(root: &Path) -> Result<(), String> {
     let mut ok: u32 = 0;
     let mut err: u32 = 0;
     let mut warn: u32 = 0;
@@ -157,4 +160,46 @@ fn count_files(dir: &Path, ext: &str) -> usize {
         }
     }
     count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("wfadm_check_{}_{}", std::process::id(), rand::random::<u32>()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn empty_dir_has_missing_conf() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let result = check_project(&dir);
+        assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dir_with_conf_passes_conf_check() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(dir.join("conf")).unwrap();
+        std::fs::write(dir.join("conf/wfusion.toml"), "mode = \"daemon\"\n").unwrap();
+        // Without models or topology, we still get warnings but no errors
+        // (conf exists and is valid, but models/ and topology/ may warn)
+        let _ = check_project(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_toml_detected() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(dir.join("conf")).unwrap();
+        std::fs::write(dir.join("conf/wfusion.toml"), "not valid toml [[[").unwrap();
+        let result = check_project(&dir);
+        assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

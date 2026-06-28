@@ -5380,6 +5380,7 @@ version = "0.1.13"
 dependencies = [
  "clap",
  "flate2",
+ "rand 0.9.0",
  "serde",
  "serde_json",
  "tar",

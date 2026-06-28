@@ -115,6 +115,7 @@ fn resolve_load(
 
 // ── Diff ──────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_diff(
     config: &Path,
     overlays: &[PathBuf],
@@ -208,4 +209,32 @@ fn path_matches_prefix(path: &str, prefix: &str) -> bool {
         || path
             .strip_prefix(prefix)
             .is_some_and(|rest| rest.starts_with('.') || rest.starts_with('['))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn match_exact_path() {
+        assert!(path_matches_prefix("mode", "mode"));
+        assert!(matches_any_prefix("mode", &["mode".into()]));
+    }
+
+    #[test]
+    fn match_child_path() {
+        assert!(path_matches_prefix("runtime.executor", "runtime"));
+        assert!(path_matches_prefix("window[0].name", "window"));
+    }
+
+    #[test]
+    fn no_match_unrelated() {
+        assert!(!path_matches_prefix("mode", "runtime"));
+        assert!(!path_matches_prefix("runtime", "mode"));
+    }
+
+    #[test]
+    fn empty_prefixes_match_all() {
+        assert!(matches_any_prefix("anything", &[]));
+    }
 }

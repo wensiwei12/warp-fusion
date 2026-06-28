@@ -155,3 +155,102 @@ fn slugify(raw: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "wfadm_conn_{}_{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn registration_does_not_panic() {
+        ensure_factories_registered();
+        // Calling twice is safe
+        ensure_factories_registered();
+    }
+
+    #[test]
+    fn registered_sinks_non_empty() {
+        ensure_factories_registered();
+        let sinks = registry::registered_sink_defs();
+        assert!(!sinks.is_empty(), "should have registered sink factories");
+        let kinds = registry::list_sink_kinds();
+        assert!(kinds.iter().any(|k| k == "file"));
+    }
+
+    #[test]
+    fn registered_sources_non_empty() {
+        ensure_factories_registered();
+        let sources = registry::registered_source_defs();
+        assert!(
+            !sources.is_empty(),
+            "should have registered source factories"
+        );
+        let kinds = registry::list_source_kinds();
+        assert!(kinds.iter().any(|k| k == "file"));
+    }
+
+    #[test]
+    fn generates_connector_templates() {
+        ensure_factories_registered();
+        let dir = temp_dir();
+        generate_connector_templates(&dir).expect("generate connectors");
+
+        let sink_d = dir.join("connectors/sink.d");
+        assert!(sink_d.is_dir(), "sink.d should exist");
+        let sink_files: Vec<_> = std::fs::read_dir(&sink_d)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(!sink_files.is_empty(), "sink.d should have files");
+
+        let source_d = dir.join("connectors/source.d");
+        assert!(source_d.is_dir(), "source.d should exist");
+        let source_files: Vec<_> = std::fs::read_dir(&source_d)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(!source_files.is_empty(), "source.d should have files");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn generate_does_not_overwrite_existing() {
+        ensure_factories_registered();
+        let dir = temp_dir();
+        generate_connector_templates(&dir).expect("first gen");
+
+        // Modify a generated file
+        let first_sink = std::fs::read_dir(dir.join("connectors/sink.d"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| e.path().extension().map(|x| x == "toml").unwrap_or(false))
+            .expect("at least one .toml file in sink.d")
+            .path();
+        let _original = std::fs::read_to_string(&first_sink).unwrap();
+        std::fs::write(&first_sink, "modified").unwrap();
+
+        // Second generation should NOT overwrite
+        generate_connector_templates(&dir).expect("second gen");
+        assert_eq!(std::fs::read_to_string(&first_sink).unwrap(), "modified");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn slugify_replaces_special_chars() {
+        let result = slugify("my connector!");
+        assert_eq!(result, "my_connector_");
+    }
+}

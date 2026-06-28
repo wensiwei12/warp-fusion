@@ -25,3 +25,30 @@ impl FromStr for Scope {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_normal_and_full() {
+        assert_eq!("normal".parse::<Scope>().unwrap(), Scope::Normal);
+        assert_eq!("full".parse::<Scope>().unwrap(), Scope::Normal);
+    }
+
+    #[test]
+    fn parse_rules() {
+        assert_eq!("rules".parse::<Scope>().unwrap(), Scope::Rules);
+    }
+
+    #[test]
+    fn parse_conf() {
+        assert_eq!("conf".parse::<Scope>().unwrap(), Scope::Conf);
+    }
+
+    #[test]
+    fn parse_invalid() {
+        assert!("".parse::<Scope>().is_err());
+        assert!("unknown".parse::<Scope>().is_err());
+    }
+}

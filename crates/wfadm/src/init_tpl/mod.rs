@@ -199,3 +199,43 @@ const CONF_ONLY: &[TemplateFile] = &[
     SCRIPT_SMOKE,
     TEST_BATCH_CONFIG,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn templates_for_normal() {
+        let files = templates_for(Scope::Normal);
+        assert!(!files.is_empty(), "normal scope should have files");
+        assert!(files.iter().any(|(p, _)| *p == "conf/wfusion.toml"));
+        assert!(files.iter().any(|(p, _)| p.starts_with("models/")));
+        assert!(files.iter().any(|(p, _)| p.starts_with("topology/")));
+        assert!(files.iter().any(|(p, _)| *p == "smoke.sh"));
+    }
+
+    #[test]
+    fn templates_for_rules() {
+        let files = templates_for(Scope::Rules);
+        assert!(!files.is_empty());
+        assert!(files.iter().any(|(p, _)| *p == "conf/wfusion.toml"));
+        assert!(files.iter().any(|(p, _)| p.starts_with("models/")));
+        assert!(!files.iter().any(|(p, _)| p.starts_with("topology/")));
+    }
+
+    #[test]
+    fn templates_for_conf() {
+        let files = templates_for(Scope::Conf);
+        assert!(!files.is_empty());
+        assert!(files.iter().any(|(p, _)| *p == "conf/wfusion.toml"));
+        assert!(files.iter().any(|(p, _)| p.starts_with("topology/")));
+        assert!(!files.iter().any(|(p, _)| p.starts_with("models/")));
+    }
+
+    #[test]
+    fn templates_all_have_content() {
+        for &(path, content) in templates_for(Scope::Normal) {
+            assert!(!content.is_empty(), "template {path} is empty");
+        }
+    }
+}
