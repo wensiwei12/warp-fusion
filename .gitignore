@@ -29,3 +29,9 @@ examples/wp-pipeline/kafka/data/
 examples/wp-pipeline/kafka/wfusion/data/
 examples/wp-pipeline/kafka/wparse/data/
 examples/wp-pipeline/streaming/data/
+
+# docker/default_setting is generated on demand by `wfadm init --dir docker/default_setting`
+# (templates live in crates/wfadm/templates/, embedded into the wfadm binary).
+# The Docker image bootstraps /data via `wfadm init` at build time, so this
+# directory is a local-only artifact and must not be committed.
+docker/default_setting/

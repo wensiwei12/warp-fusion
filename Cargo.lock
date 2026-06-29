@@ -276,9 +276,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "arc-swap"
@@ -672,9 +672,9 @@ dependencies = [
 
 [[package]]
 name = "bstr"
-version = "1.12.2"
+version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4e308e67087593070530a666f7fe8815cbd2e61d8f5b7313b71b7d721d1dfde"
+checksum = "5cee35f73844aa3014bb606320a6c1f010249dbdf43342fe54b5a4f6a8ed4b79"
 dependencies = [
  "memchr",
 ]
@@ -1226,18 +1226,18 @@ dependencies = [
 
 [[package]]
 name = "enum-ordinalize"
-version = "4.3.2"
+version = "4.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a1091a7bb1f8f2c4b28f1fe2cef4980ca2d410a3d727d67ecc3178c9b0800f0"
+checksum = "07f808d588c10e464ea6f7d3eaed500049eff30aaac103460f61828c2d65b3eb"
 dependencies = [
  "enum-ordinalize-derive",
 ]
 
 [[package]]
 name = "enum-ordinalize-derive"
-version = "4.3.2"
+version = "4.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ca9601fb2d62598ee17836250842873a413586e5d7ed88b356e38ddbb0ec631"
+checksum = "42e528e2d34ba8a67a1a650b86beae8ef69fc5fdb638016f386b973226590432"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1808,9 +1808,9 @@ checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
 
 [[package]]
 name = "hybrid-array"
-version = "0.4.12"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9155a582abd142abc056962c29e3ce5ff2ad5469f4246b537ed42c5deba857da"
+checksum = "818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c"
 dependencies = [
  "typenum",
 ]
@@ -1829,6 +1829,7 @@ dependencies = [
  "http 1.4.2",
  "http-body",
  "httparse",
+ "httpdate",
  "itoa",
  "pin-project-lite",
  "smallvec",
@@ -1849,6 +1850,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]
@@ -2111,13 +2113,12 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.97"
+version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1840c94c045fbcf8ba2812c95db44499f7c64910a912551aaaa541decebcacf"
+checksum = "53b44bfcdb3f8d5837a46dae1ca9660a837176eee74a28b229bc626816589102"
 dependencies = [
  "cfg-if",
  "futures-util",
- "once_cell",
  "wasm-bindgen",
 ]
 
@@ -2409,8 +2410,8 @@ checksum = "9bb517913cfcfb9eeda59f36020269075a152701a01606c612f547e4890be399"
 
 [[package]]
 name = "moju-derive"
-version = "0.1.1"
-source = "git+https://github.com/dayu-sec/moju-derive.git?branch=main#d44b32e1549d39fd6b6e9feee76098ec3f92e5aa"
+version = "0.1.2"
+source = "git+https://github.com/dayu-sec/moju-derive.git?branch=main#6ca6f268d68d3058e04c995e1610a17bc900a76e"
 dependencies = [
  "moju-derive-macros",
 ]
@@ -2418,7 +2419,7 @@ dependencies = [
 [[package]]
 name = "moju-derive-macros"
 version = "0.1.0"
-source = "git+https://github.com/dayu-sec/moju-derive.git?branch=main#d44b32e1549d39fd6b6e9feee76098ec3f92e5aa"
+source = "git+https://github.com/dayu-sec/moju-derive.git?branch=main#6ca6f268d68d3058e04c995e1610a17bc900a76e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2754,9 +2755,9 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "openssl"
-version = "0.10.79"
+version = "0.10.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf0b434746ee2832f4f0baf10137e1cabb18cbe6912c69e2e33263c45250f542"
+checksum = "77823a27f0babb03091cb9ed9ef80af3b39dbc82f97e8fa530374b7dafd87a45"
 dependencies = [
  "bitflags",
  "cfg-if",
@@ -3442,6 +3443,44 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reqwest"
+version = "0.12.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
+dependencies = [
+ "base64",
+ "bytes",
+ "futures-core",
+ "http 1.4.2",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "js-sys",
+ "log",
+ "percent-encoding",
+ "pin-project-lite",
+ "quinn",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sync_wrapper",
+ "tokio",
+ "tokio-rustls",
+ "tower",
+ "tower-http",
+ "tower-service",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "webpki-roots 1.0.8",
+]
+
+[[package]]
+name = "reqwest"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
@@ -3574,9 +3613,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-native-certs"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "612460d5f7bea540c490b2b6395d8e34a953e52b491accd6c86c8164c5932a63"
+checksum = "dab5152771c58876a2146916e53e35057e1a4dfa2b9df0f0305b07f611fdea4d"
 dependencies = [
  "openssl-probe",
  "rustls-pki-types",
@@ -4932,9 +4971,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.26.9"
+version = "0.26.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4dab76d0b724ba557954125188cf0633a1ca43199ced82d95c7b9c32cc3de1f3"
+checksum = "3c343ed63e3f5c64d1acdecb5d2c13d4e169cb5fde0052106ebaa6c6f27f9e55"
 dependencies = [
  "cc",
  "regex",
@@ -4953,7 +4992,7 @@ checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 [[package]]
 name = "tree-sitter-wfl"
 version = "0.0.1"
-source = "git+https://github.com/wp-labs/tree-sitter-wfl.git?branch=main#19e3e575b06ba2d78bb3fc57b9fbb322b83d16cd"
+source = "git+https://github.com/wp-labs/tree-sitter-wfl.git?branch=main#413002066fce33af8afc663c89143f2d2c73d6e4"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -5177,9 +5216,9 @@ checksum = "b8dad83b4f25e74f184f64c43b150b91efe7647395b42289f38e50566d82855b"
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.120"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df52b6d9b87e0c74c9edfa1eb2d9bf85e5d63515474513aa50fa181b3c4f5db1"
+checksum = "4b067c0c11094aef6b7a801c1e34a26affafdf3d051dba08456b868789aaf9a4"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -5190,9 +5229,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.70"
+version = "0.4.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af934872acec734c2d80e6617bbb5ff4f12b052dd8e6332b0817bce889516084"
+checksum = "c62df1340f32221cb9c54d6a27b030e3dba64361d4a95bed55f9aacb44da291d"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -5200,9 +5239,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.120"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78b1041f495fb322e64aca85f5756b2172e35cd459376e67f2a6c9dffcedb103"
+checksum = "167ce5e579f6bcf889c4f7175a8a5a585de84e8ff93976ce393efa5f2837aab1"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -5210,9 +5249,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.120"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dcd0ff20416988a18ac686d4d4d0f6aae9ebf08a389ff5d29012b05af2a1b41"
+checksum = "f3997c7839262f4ef12cf90b818d6340c18e80f263f1a94bf157d0ec4420380e"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -5223,18 +5262,18 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.120"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49757b3c82ebf16c57d69365a142940b384176c24df52a087fb748e2085359ea"
+checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "web-sys"
-version = "0.3.97"
+version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eadbac71025cd7b0834f20d1fe8472e8495821b4e9801eb0a60bd1f19827602"
+checksum = "8622dcb61c0bcc9fffa6938bed81210af2da9a7e4a1a834b2e37a59b6dfb6141"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -5252,9 +5291,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.7"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f31141ce3fc3e300ae89b78c0dd67f9708061d1d2eda54b8209346fd6be9a92c"
+checksum = "0d46a5a140e6f7afeccd8eae97eff335163939eac8b929834875168b29b3d267"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -5280,6 +5319,7 @@ dependencies = [
 [[package]]
 name = "wf-config"
 version = "0.1.21"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.21#eac616348ef3fe0bf35fbab14aff1c7c29d7b300"
 dependencies = [
  "glob",
  "moju-derive",
@@ -5287,7 +5327,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml 1.1.2+spec-1.1.0",
- "wf-lang",
+ "wf-lang 0.1.21 (git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.21)",
  "wildmatch",
  "wp-connector-api",
 ]
@@ -5306,6 +5346,7 @@ dependencies = [
 [[package]]
 name = "wf-engine"
 version = "0.1.21"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.21#eac616348ef3fe0bf35fbab14aff1c7c29d7b300"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5321,7 +5362,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "wf-config",
- "wf-lang",
+ "wf-lang 0.1.21 (git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.21)",
  "wp-connector-api",
  "wp-model-core",
 ]
@@ -5337,8 +5378,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wf-lang"
+version = "0.1.21"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.21#eac616348ef3fe0bf35fbab14aff1c7c29d7b300"
+dependencies = [
+ "moju-derive",
+ "orion-error",
+ "regex-syntax",
+ "winnow 1.0.3",
+]
+
+[[package]]
 name = "wf-runtime"
 version = "0.1.21"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.21#eac616348ef3fe0bf35fbab14aff1c7c29d7b300"
 dependencies = [
  "arrow",
  "async-broadcast",
@@ -5362,7 +5415,7 @@ dependencies = [
  "wf-config",
  "wf-connector-api",
  "wf-engine",
- "wf-lang",
+ "wf-lang 0.1.21 (git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.21)",
  "wp-arrow",
  "wp-connector-api",
  "wp-core-connectors",
@@ -5384,14 +5437,14 @@ dependencies = [
  "ureq",
  "walkdir",
  "wf-config",
- "wf-lang",
+ "wf-lang 0.1.21",
  "wp-connector-api",
  "wp-core-connectors",
 ]
 
 [[package]]
 name = "wfgen"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "arrow",
  "chrono",
@@ -5406,7 +5459,7 @@ dependencies = [
  "tracing-subscriber",
  "wf-config",
  "wf-engine",
- "wf-lang",
+ "wf-lang 0.1.21 (git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.21)",
  "wf-runtime",
  "winnow 1.0.3",
  "wp-arrow",
@@ -5416,7 +5469,7 @@ dependencies = [
 
 [[package]]
 name = "wfl"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "chrono",
  "clap",
@@ -5426,20 +5479,29 @@ dependencies = [
  "tree-sitter-wfl",
  "wf-config",
  "wf-engine",
- "wf-lang",
+ "wf-lang 0.1.21 (git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.21)",
  "wfgen",
 ]
 
 [[package]]
 name = "wfusion"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "moju-derive",
  "orion-error",
+ "reqwest 0.12.28",
+ "rustls",
+ "serde_json",
  "tempfile",
  "tokio",
+ "tokio-rustls",
+ "tokio-util",
  "tracing",
+ "uuid",
  "wf-config",
  "wf-runtime",
  "wp-connectors",
@@ -5933,7 +5995,7 @@ dependencies = [
  "prometheus",
  "rdkafka-wrap",
  "regex",
- "reqwest",
+ "reqwest 0.13.4",
  "sea-orm",
  "serde",
  "serde_json",
