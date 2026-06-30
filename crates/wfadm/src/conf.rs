@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
-use wf_config::FusionConfig;
+use wf_config::{ConfigVarContext, FusionConfig};
 
 use crate::project_remote::{
     self, acquire_project_remote_lock, capture_project_remote_snapshot_with_group,
@@ -174,14 +174,15 @@ fn run_conf_update(args: ConfUpdateArgs) -> Result<(), String> {
 
 /// Load `conf/wfusion.toml` and return the `[project_remote]` config.
 /// Errors if the config is missing or `[project_remote]` is disabled.
+///
+/// `work_dir` is set to `work_root` so that relative paths in the config
+/// (e.g. `sources_dir`, `rules`) resolve against the project root, not the
+/// process cwd.
 fn load_project_remote_conf(work_root: &Path) -> Result<wf_config::project_remote::ProjectRemoteConf, String> {
     let conf_path = work_root.join(CONF_REL_PATH);
-    let config = FusionConfig::load(&conf_path).map_err(|e| {
-        format!(
-            "load {} failed: {e}",
-            conf_path.display()
-        )
-    })?;
+    let config =
+        FusionConfig::load_with_context(&conf_path, &ConfigVarContext::new(), Some(work_root))
+            .map_err(|e| format!("load {} failed: {e}", conf_path.display()))?;
     Ok(config.project_remote)
 }
 
@@ -193,7 +194,7 @@ fn load_project_remote_conf(work_root: &Path) -> Result<wf_config::project_remot
 /// entry point (not yet public) and is tracked as a follow-up.
 fn validate_config_loads(work_root: &Path) -> Result<(), String> {
     let conf_path = work_root.join(CONF_REL_PATH);
-    FusionConfig::load(&conf_path)
+    FusionConfig::load_with_context(&conf_path, &ConfigVarContext::new(), Some(work_root))
         .map(|_| ())
         .map_err(|e| format!("validate {} failed: {e}", conf_path.display()))
 }
