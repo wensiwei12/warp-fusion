@@ -53,12 +53,59 @@ fn run_conf_update(args: ConfUpdateArgs) -> Result<(), String> {
     let work_root = resolve_work_root(&args.work_root)?;
     let group = parse_group(args.group.as_deref())?;
 
+    // Load config (env-expanded) and extract [project_remote].
+    let remote_conf = load_project_remote_conf(&work_root)?;
+    let version = args.version.as_deref();
+    let json = args.json;
+
+    run_conf_update_with_sync(&work_root, version, json, group, |wr, ver, _group| {
+        match group {
+            Some(g) => project_remote::sync_project_remote_group(wr, g, &remote_conf, ver),
+            None => project_remote::sync_project_remote(wr, &remote_conf, ver),
+        }
+    })
+}
+
+/// `init --repo` bootstrap: sync managed dirs from an explicit repo URL
+/// (not from `[project_remote]` config), then validate + rollback like a
+/// normal update. Mirrors wparse `run_conf_update_from_repo`.
+pub fn run_conf_update_from_repo(
+    work_root: &Path,
+    repo_url: &str,
+    requested_version: Option<&str>,
+) -> Result<(), String> {
+    let work_root = resolve_work_root(&work_root.to_string_lossy())?;
+    tracing::info!(
+        domain = "sys",
+        "wfadm init --repo bootstrap work_root={} requested_version={} repo={}",
+        work_root.display(),
+        requested_version.unwrap_or("(auto)"),
+        repo_url
+    );
+    run_conf_update_with_sync(&work_root, requested_version, false, None, |wr, ver, _group| {
+        project_remote::sync_project_remote_from_repo(wr, repo_url, ver)
+    })
+}
+
+/// Shared update orchestration: lock → snapshot → sync → validate → rollback
+/// (on failure) → output. `sync_fn` decides how managed dirs are synced
+/// (from `[project_remote]` config or from an explicit `--repo` URL).
+fn run_conf_update_with_sync<F>(
+    work_root: &Path,
+    requested_version: Option<&str>,
+    json: bool,
+    group: Option<RemoteGroup>,
+    sync_fn: F,
+) -> Result<(), String>
+where
+    F: Fn(&Path, Option<&str>, Option<RemoteGroup>) -> Result<project_remote::ProjectRemoteUpdateResult, String>,
+{
     tracing::info!(
         domain = "sys",
         "wfadm conf update start work_root={} requested_version={} json={} group={}",
         work_root.display(),
-        args.version.as_deref().unwrap_or("(auto)"),
-        args.json,
+        requested_version.unwrap_or("(auto)"),
+        json,
         group
             .map(|g| match g {
                 RemoteGroup::Models => "models",
@@ -67,25 +114,10 @@ fn run_conf_update(args: ConfUpdateArgs) -> Result<(), String> {
             .unwrap_or("-")
     );
 
-    // Load config (env-expanded) and extract [project_remote].
-    let remote_conf = load_project_remote_conf(&work_root)?;
+    let _lock_guard = acquire_project_remote_lock(work_root)?;
+    let rollback_snapshot = capture_project_remote_snapshot_with_group(work_root, group)?;
 
-    let _lock_guard = acquire_project_remote_lock(&work_root)?;
-    let rollback_snapshot = capture_project_remote_snapshot_with_group(&work_root, group)?;
-
-    let result = match group {
-        Some(g) => project_remote::sync_project_remote_group(
-            &work_root,
-            g,
-            &remote_conf,
-            args.version.as_deref(),
-        )?,
-        None => project_remote::sync_project_remote(
-            &work_root,
-            &remote_conf,
-            args.version.as_deref(),
-        )?,
-    };
+    let result = sync_fn(work_root, requested_version, group)?;
     tracing::info!(
         domain = "sys",
         "wfadm conf update synced work_root={} current_version={} resolved_tag={} from_revision={} to_revision={} changed={}",
@@ -104,7 +136,7 @@ fn run_conf_update(args: ConfUpdateArgs) -> Result<(), String> {
         work_root.display(),
         result.current_version
     );
-    if let Err(check_err) = validate_config_loads(&work_root) {
+    if let Err(check_err) = validate_config_loads(work_root) {
         tracing::warn!(
             domain = "sys",
             "wfadm conf update validate failed work_root={} current_version={} resolved_tag={} error={}",
@@ -113,11 +145,9 @@ fn run_conf_update(args: ConfUpdateArgs) -> Result<(), String> {
             result.resolved_tag,
             check_err
         );
-        if let Err(rollback_err) = restore_project_remote_update(
-            &work_root,
-            &rollback_snapshot,
-            result.changed,
-        ) {
+        if let Err(rollback_err) =
+            restore_project_remote_update(work_root, &rollback_snapshot, result.changed)
+        {
             tracing::warn!(
                 domain = "sys",
                 "wfadm conf update rollback failed work_root={} error={}",
@@ -135,10 +165,7 @@ fn run_conf_update(args: ConfUpdateArgs) -> Result<(), String> {
             work_root.display(),
             result.current_version
         );
-        return Err(format!(
-            "project check failed after update: {}",
-            check_err
-        ));
+        return Err(format!("project check failed after update: {}", check_err));
     }
     tracing::info!(
         domain = "sys",
@@ -148,7 +175,7 @@ fn run_conf_update(args: ConfUpdateArgs) -> Result<(), String> {
         result.resolved_tag
     );
 
-    if args.json {
+    if json {
         let body = serde_json::to_string_pretty(&result)
             .map_err(|e| format!("encode update result: {e}"))?;
         println!("{body}");

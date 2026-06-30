@@ -1,11 +1,19 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use rand::RngCore;
 
 use crate::init_tpl::{Scope, templates_for};
 
 // =====================================================================
 // Init
 // =====================================================================
+
+/// Default admin API token location: a per-user file under `$HOME/.warp_fusion/`.
+/// Kept outside the project so a single token can be shared across projects
+/// and so it is never committed accidentally.
+const DEFAULT_TOKEN_DIR: &str = ".warp_fusion";
+const DEFAULT_TOKEN_FILE: &str = "admin_api.token";
 
 pub fn init_project(project_dir: &str, _name: &str, scope: &str) -> Result<(), String> {
     let root = Path::new(project_dir);
@@ -63,20 +71,100 @@ pub fn init_project(project_dir: &str, _name: &str, scope: &str) -> Result<(), S
         root.canonicalize().unwrap_or(root.to_path_buf()).display()
     );
     println!("  cd {} && wfusion run", project_dir);
+
+    // 3. Ensure a bearer token exists for the admin API. The default config
+    //    points admin_api.auth.token_file at $HOME/.warp_fusion/admin_api.token;
+    //    generate it (owner-only) if missing so `wfusion daemon` can start
+    //    with admin_api enabled out of the box.
+    match ensure_admin_api_token() {
+        Ok(path) => {
+            println!("  admin api token: {}", path.display());
+        }
+        Err(e) => {
+            // Token generation is best-effort: a missing token only prevents
+            // admin_api from starting, not the project itself.
+            println!("  warning: could not generate admin api token: {e}");
+        }
+    }
+
     Ok(())
 }
 
+/// Resolve the default admin API token path: `$HOME/.warp_fusion/admin_api.token`.
+/// Returns None if `$HOME` is not set.
+fn default_token_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| {
+        PathBuf::from(home)
+            .join(DEFAULT_TOKEN_DIR)
+            .join(DEFAULT_TOKEN_FILE)
+    })
+}
+
+/// Ensure the default admin API token file exists. If it does, leave it
+/// untouched (so multiple projects share one token); otherwise generate a
+/// fresh random token with owner-only permissions (0o600 on Unix).
+fn ensure_admin_api_token() -> Result<PathBuf, String> {
+    let path = default_token_path()
+        .ok_or_else(|| "$HOME is not set; cannot resolve admin api token path".to_string())?;
+
+    if path.exists() {
+        return Ok(path);
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+    }
+
+    // 32 random bytes → 64 hex chars.
+    let mut raw = [0u8; 32];
+    rand::rng().fill_bytes(&mut raw);
+    let token: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+    fs::write(&path, format!("{token}\n"))
+        .map_err(|e| format!("write token {}: {e}", path.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&path)
+            .map_err(|e| format!("stat token {}: {e}", path.display()))?
+            .permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(&path, perms)
+            .map_err(|e| format!("chmod token {}: {e}", path.display()))?;
+    }
+
+    Ok(path)
+}
+
 // =====================================================================
-// Remote bootstrap (stub)
+// Remote bootstrap (`init --repo`)
 // =====================================================================
 
+/// Bootstrap a project from a remote git repo: build a local skeleton, then
+/// sync managed dirs (conf/models/topology/connectors) from the remote repo
+/// at the requested version via `conf update`. Mirrors wparse `wproj init
+/// --repo` (WarpProject::init + run_conf_update_from_repo).
 pub fn init_from_remote(
     project_dir: &str,
     repo_url: &str,
     version: Option<&str>,
 ) -> Result<(), String> {
-    let _ = (project_dir, repo_url, version);
-    Err("remote bootstrap not yet implemented (TODO)".to_string())
+    if repo_url.trim().is_empty() {
+        return Err("remote bootstrap requires a non-empty --repo URL".to_string());
+    }
+
+    let project_name = std::path::Path::new(project_dir)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "wf-rules".to_string());
+
+    // 1. Build a local skeleton (conf/topology/connectors/models + .run +
+    //    admin token). Managed dirs will be replaced by the remote sync.
+    init_project(project_dir, &project_name, "normal")?;
+
+    // 2. Sync managed dirs from the remote repo at the requested version,
+    //    validate, and roll back on failure.
+    crate::conf::run_conf_update_from_repo(std::path::Path::new(project_dir), repo_url, version)
 }
 
 #[cfg(test)]
