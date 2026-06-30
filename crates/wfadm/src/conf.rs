@@ -10,8 +10,8 @@ use clap::{Args, Subcommand};
 use wf_config::{ConfigVarContext, FusionConfig};
 
 use crate::project_remote::{
-    self, acquire_project_remote_lock, capture_project_remote_snapshot_with_group,
-    restore_project_remote_update, RemoteGroup,
+    self, RemoteGroup, acquire_project_remote_lock, capture_project_remote_snapshot_with_group,
+    restore_project_remote_update,
 };
 
 const CONF_REL_PATH: &str = "conf/wfusion.toml";
@@ -20,7 +20,7 @@ const CONF_REL_PATH: &str = "conf/wfusion.toml";
 pub enum ConfCmd {
     /// Update managed dirs (models/conf/topology/connectors) from the remote
     /// git repo configured in `[project_remote]`, at a given version tag.
-    #[command(visible_alias = "更新")]
+    #[command(visible_alias = "更新", disable_version_flag = true)]
     Update(ConfUpdateArgs),
 }
 
@@ -58,12 +58,16 @@ fn run_conf_update(args: ConfUpdateArgs) -> Result<(), String> {
     let version = args.version.as_deref();
     let json = args.json;
 
-    run_conf_update_with_sync(&work_root, version, json, group, |wr, ver, _group| {
-        match group {
+    run_conf_update_with_sync(
+        &work_root,
+        version,
+        json,
+        group,
+        |wr, ver, _group| match group {
             Some(g) => project_remote::sync_project_remote_group(wr, g, &remote_conf, ver),
             None => project_remote::sync_project_remote(wr, &remote_conf, ver),
-        }
-    })
+        },
+    )
 }
 
 /// `init --repo` bootstrap: sync managed dirs from an explicit repo URL
@@ -82,9 +86,13 @@ pub fn run_conf_update_from_repo(
         requested_version.unwrap_or("(auto)"),
         repo_url
     );
-    run_conf_update_with_sync(&work_root, requested_version, false, None, |wr, ver, _group| {
-        project_remote::sync_project_remote_from_repo(wr, repo_url, ver)
-    })
+    run_conf_update_with_sync(
+        &work_root,
+        requested_version,
+        false,
+        None,
+        |wr, ver, _group| project_remote::sync_project_remote_from_repo(wr, repo_url, ver),
+    )
 }
 
 /// Shared update orchestration: lock → snapshot → sync → validate → rollback
@@ -98,7 +106,11 @@ fn run_conf_update_with_sync<F>(
     sync_fn: F,
 ) -> Result<(), String>
 where
-    F: Fn(&Path, Option<&str>, Option<RemoteGroup>) -> Result<project_remote::ProjectRemoteUpdateResult, String>,
+    F: Fn(
+        &Path,
+        Option<&str>,
+        Option<RemoteGroup>,
+    ) -> Result<project_remote::ProjectRemoteUpdateResult, String>,
 {
     tracing::info!(
         domain = "sys",
@@ -205,7 +217,9 @@ where
 /// `work_dir` is set to `work_root` so that relative paths in the config
 /// (e.g. `sources_dir`, `rules`) resolve against the project root, not the
 /// process cwd.
-fn load_project_remote_conf(work_root: &Path) -> Result<wf_config::project_remote::ProjectRemoteConf, String> {
+fn load_project_remote_conf(
+    work_root: &Path,
+) -> Result<wf_config::project_remote::ProjectRemoteConf, String> {
     let conf_path = work_root.join(CONF_REL_PATH);
     let config =
         FusionConfig::load_with_context(&conf_path, &ConfigVarContext::new(), Some(work_root))
@@ -234,6 +248,5 @@ fn parse_group(raw: Option<&str>) -> Result<Option<RemoteGroup>, String> {
 }
 
 fn resolve_work_root(raw: &str) -> Result<PathBuf, String> {
-    std::fs::canonicalize(raw)
-        .map_err(|e| format!("resolve work root '{}' failed: {e}", raw))
+    std::fs::canonicalize(raw).map_err(|e| format!("resolve work root '{}' failed: {e}", raw))
 }
