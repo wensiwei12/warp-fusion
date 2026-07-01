@@ -28,12 +28,15 @@ COPY ${TARGETARCH}/wfgen /usr/local/bin/
 COPY ${TARGETARCH}/wfl /usr/local/bin/
 COPY ${TARGETARCH}/wfadm /usr/local/bin/
 
-# Create data directory and bootstrap it via `wfadm init`.
-# Templates are embedded in the wfadm binary, so no external default_setting/ is needed.
+# Create data directory and seed it with the vendored default setting.
+# default_setting/ is committed (generated from `wfadm init` templates) so the
+# image build does not need to execute wfadm — which would break under
+# multi-arch cross-builds (cannot run a foreign-arch binary at build time).
 RUN chmod 0755 /usr/local/bin/wfusion /usr/local/bin/wfgen /usr/local/bin/wfl /usr/local/bin/wfadm \
     && mkdir -p /data \
-    && chown wfusion:wfusion /data \
-    && cd /data && wfadm init --dir . --mode normal
+    && chown wfusion:wfusion /data
+
+COPY --chown=wfusion:wfusion default_setting/ /data/
 
 USER wfusion
 WORKDIR /data

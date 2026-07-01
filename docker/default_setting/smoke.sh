@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
-SCENARIO="${SCENARIO:-scenarios/port_scan_quick.wfg}"
+SCENARIO="${SCENARIO:-models/scenarios/port_scan_quick.wfg}"
 CASE_NAME="$(basename "$SCENARIO" .wfg)"
 GENERATED_DIR="data/generated"
 ALERT_DIR="data/alerts"

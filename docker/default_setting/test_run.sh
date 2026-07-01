@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # wf-rules/test/run.sh — 有限时长 TCP daemon 联调脚本
-# 从 test/ 目录运行，引用上层的 schemas/ + rules/
+# 从项目根目录运行
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."  # cd to wf-rules/
+cd "$(dirname "${BASH_SOURCE[0]}")"  # cd to project root/
 
 DURATION="${1:-${DURATION:-5m}}"
 INTERVAL="${INTERVAL:-5}"
@@ -45,6 +45,7 @@ trap cleanup EXIT
 
 # ── helpers ──
 
+# kill with grace period, force SIGKILL if needed
 kill_wait() {
     local pid="$1"
     local timeout="${2:-15}"
@@ -68,7 +69,7 @@ rm -f data/alerts/*.ndjson data/logs/wfusion.log data/logs/wfgen.log
 # 1. Start wfusion (loads schemas + rules from wf-rules/)
 echo "1> wfusion: starting daemon..."
 echo "   log=data/logs/wfusion.log"
-wfusion daemon --config test/wfusion.toml --work-dir . >data/logs/wfusion.log 2>&1 &
+wfusion daemon --config conf/wfusion.toml --work-dir . >data/logs/wfusion.log 2>&1 &
 WFUSION_PID=$!
 sleep 2
 if ! kill -0 "$WFUSION_PID" 2>/dev/null; then
@@ -85,10 +86,10 @@ echo "   running for $DURATION"
 echo "   log=data/logs/wfgen.log"
 echo ""
 WFL_ARGS=()
-for f in rules/*/*.wfl; do WFL_ARGS+=(--wfl "$f"); done
+for f in models/rules/*/*.wfl; do WFL_ARGS+=(--wfl "$f"); done
 wfgen stream \
-    --scenario-dir scenarios/ \
-    --ws schemas/network.wfs --ws schemas/auth.wfs --ws schemas/http.wfs --ws schemas/dns.wfs --ws schemas/management.wfs --ws schemas/data.wfs \
+    --scenario-dir models/scenarios/ \
+    --ws models/schemas/network.wfs --ws models/schemas/auth.wfs --ws models/schemas/http.wfs --ws models/schemas/dns.wfs --ws models/schemas/management.wfs --ws models/schemas/data.wfs \
     "${WFL_ARGS[@]}" \
     --addr 127.0.0.1:9800 \
     --interval "$INTERVAL" \

@@ -1,14 +1,23 @@
-# wf-rules 内置 wfusion 配置 — 可直接运行完整管道
-# mode 由 CLI 控制: wfusion daemon | wfusion batch
+# wf-rules smoke test config.
+#
+# This config intentionally uses batch/file replay instead of TCP so it can be
+# used as a deterministic availability check for the rule set.
+# mode 由 CLI 控制: wfusion batch
 
-sources_dir = "topology/sources"
 sinks = "topology/sinks"
+
+[[sources]]
+connect = "file_src"
+name = "seed_conn_events"
+path = "data/generated/port_scan_quick.jsonl"
+stream = "conn_events"
+data_format = "ndjson"
 
 [runtime]
 executor_parallelism = 4
 rule_exec_timeout = "30s"
 schemas = "models/schemas/*.wfs"
-rules = "models/rules/*/*.wfl"
+rules = "models/rules/01-recon/port_scan.wfl"
 
 [window_defaults]
 evict_interval = "30s"
@@ -19,31 +28,26 @@ watermark = "5s"
 allowed_lateness = "30m"
 late_policy = "drop"
 
-# conn_events
 [window.conn_events]
 mode = "local"
 max_window_bytes = "256MB"
 over_cap = "30m"
 
-# auth_events
 [window.auth_events]
 mode = "local"
 max_window_bytes = "128MB"
 over_cap = "10m"
 
-# http_events
 [window.http_events]
 mode = "local"
 max_window_bytes = "128MB"
 over_cap = "5m"
 
-# dns_events
 [window.dns_events]
 mode = "local"
 max_window_bytes = "64MB"
 over_cap = "10m"
 
-# 告警窗口（over=0）
 [window.network_alerts]
 mode = "local"
 max_window_bytes = "16MB"
@@ -74,7 +78,6 @@ mode = "local"
 max_window_bytes = "16MB"
 over_cap = "0s"
 
-# management.wfs — data windows
 [window.ad_change_events]
 mode = "local"
 max_window_bytes = "64MB"
@@ -85,25 +88,12 @@ mode = "local"
 max_window_bytes = "64MB"
 over_cap = "10m"
 
-# data.wfs — data windows
 [window.data_access_events]
 mode = "local"
 max_window_bytes = "64MB"
 over_cap = "10m"
 
-# Admin API — runtime status & (future) reload. `wfadm init` generates a
-# bearer token at ${HOME}/.warp_fusion/admin_api.token (owner-only, shared
-# across projects); ${HOME} is expanded by wf-config at load time.
-# Only the fields you want to override need to be set — the rest
-# (request_timeout_ms, max_body_bytes, tls, auth.mode) use sane defaults.
-[admin_api]
-enabled = true
-bind = "127.0.0.1:19080"
-
-[admin_api.auth]
-token_file = "${HOME}/.warp_fusion/admin_api.token"
-
 [logging]
-level = "debug"
+level = "info"
 format = "plain"
 file = "data/wfusion.log"
