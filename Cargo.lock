@@ -5376,7 +5376,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml 1.1.2+spec-1.1.0",
- "wf-lang 0.1.23 (git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.23)",
+ "wf-lang 0.1.23",
  "wildmatch",
  "wp-connector-api",
 ]
@@ -5411,7 +5411,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "wf-config",
- "wf-lang 0.1.23 (git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.23)",
+ "wf-lang 0.1.23",
  "wp-connector-api",
  "wp-model-core",
 ]
@@ -5419,6 +5419,7 @@ dependencies = [
 [[package]]
 name = "wf-lang"
 version = "0.1.23"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.23#13aa6a877abf478c4b78391c2574134cb60438a0"
 dependencies = [
  "moju-derive",
  "orion-error",
@@ -5428,8 +5429,7 @@ dependencies = [
 
 [[package]]
 name = "wf-lang"
-version = "0.1.23"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.23#13aa6a877abf478c4b78391c2574134cb60438a0"
+version = "0.1.24"
 dependencies = [
  "moju-derive",
  "orion-error",
@@ -5464,7 +5464,7 @@ dependencies = [
  "wf-config",
  "wf-connector-api",
  "wf-engine",
- "wf-lang 0.1.23 (git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.23)",
+ "wf-lang 0.1.23",
  "wp-arrow",
  "wp-connector-api",
  "wp-core-connectors",
@@ -5491,7 +5491,7 @@ dependencies = [
  "ureq",
  "walkdir",
  "wf-config",
- "wf-lang 0.1.23",
+ "wf-lang 0.1.24",
  "wp-connector-api",
  "wp-core-connectors",
 ]
@@ -5513,7 +5513,7 @@ dependencies = [
  "tracing-subscriber",
  "wf-config",
  "wf-engine",
- "wf-lang 0.1.23 (git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.23)",
+ "wf-lang 0.1.23",
  "wf-runtime",
  "winnow 1.0.3",
  "wp-arrow",
@@ -5533,7 +5533,7 @@ dependencies = [
  "tree-sitter-wfl",
  "wf-config",
  "wf-engine",
- "wf-lang 0.1.23 (git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.23)",
+ "wf-lang 0.1.23",
  "wfgen",
 ]
 
