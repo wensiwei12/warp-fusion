@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g \
     libsasl2-2 \
     libzstd1 \
+    libgit2-1.7 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -r -s /bin/false wfusion
 
