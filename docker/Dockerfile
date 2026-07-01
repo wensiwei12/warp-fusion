@@ -2,7 +2,7 @@
 # Warp Fusion - Runtime Docker Image (Multi-arch)
 # ===========================================================================
 
-FROM --platform=$TARGETPLATFORM ubuntu:24.04
+FROM ubuntu:24.04
 
 ARG TARGETARCH=amd64
 
