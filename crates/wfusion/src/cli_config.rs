@@ -9,11 +9,11 @@ use std::str::FromStr;
 use clap::Args;
 use orion_error::conversion::{ConvErr, ConvStructError, SourceErr, ToStructError};
 
-use wf_config::{ConfigVarContext, FusionConfig, FusionMode, HumanDuration, parse_vars};
+use wf_config::{ConfigVarContext, FusionConfigLoader, FusionMode, HumanDuration, parse_vars};
 use wf_runtime::{
     cli::error::{EngineError, EngineReason, EngineResult},
     error::{RuntimeError, RuntimeReason},
-    lifecycle::{Reactor, ShutdownTrigger, wait_for_signal},
+    lifecycle::{RESTART_EXIT_CODE, Reactor, RunOutcome},
     tracing_init::init_tracing,
 };
 
@@ -131,13 +131,19 @@ async fn run_engine_inner(
     metrics_listen: Option<String>,
 ) -> EngineResult<()> {
     let resolved = resolve_config_load(load)?;
-    let mut fusion_config = FusionConfig::load_with_overlays(
+    // Build a loader once so we can obtain both the raw config tree (the reload
+    // baseline) and the effective config.
+    let loader = FusionConfigLoader::new(
         &resolved.config_path,
         &resolved.overlay_paths,
         &resolved.config_ctx,
         Some(&resolved.runtime_base_dir),
-    )
-    .conv_err()?;
+    );
+    let mut fusion_config = loader.load().conv_err()?;
+    // Remember whether any CLI metrics flag was passed (before the local
+    // `metrics_interval`/`metrics_listen` names get shadowed by config values).
+    let has_metrics_cli_override =
+        metrics || metrics_interval.is_some() || metrics_listen.is_some();
     // Override mode from CLI command (daemon/batch always explicit)
     if let Some(m) = mode {
         fusion_config.mode = m;
@@ -154,6 +160,13 @@ async fn run_engine_inner(
     let metrics_enabled = fusion_config.metrics.enabled;
     let metrics_interval = fusion_config.metrics.report_interval;
     let metrics_listen = fusion_config.metrics.prometheus_listen.clone();
+    // Snapshot the post-override metrics config for reload re-application.
+    // (Computed before `metrics_listen`/`metrics_interval` are shadowed above.)
+    let metrics_cli_override = if has_metrics_cli_override {
+        Some(fusion_config.metrics.clone())
+    } else {
+        None
+    };
 
     let _guard = init_tracing(&fusion_config.logging, &resolved.runtime_base_dir).conv_err()?;
 
@@ -163,17 +176,39 @@ async fn run_engine_inner(
     // Extract admin_api config before fusion_config is moved into Reactor
     let admin_api_config = fusion_config.admin_api.clone();
 
-    let reactor = match Reactor::start(fusion_config, &resolved.runtime_base_dir).await {
+    // Build the raw config tree alongside the effective config so the Reactor
+    // has a reload baseline to diff against.
+    let raw = loader.load_raw().conv_err()?;
+    let reactor = match Reactor::start(fusion_config, raw, &resolved.runtime_base_dir).await {
         Ok(reactor) => reactor,
         Err(err) => return Err(render_runtime_error(err)),
     };
     tracing::info!(domain = "sys", "WarpFusion reactor started");
 
-    // Start admin API if enabled
+    // Hand the admin API a control handle (reload + status) instead of a bare
+    // cancel token. Capture the exact config source so reloads re-read the same
+    // `--config`/`--overlay`/`--var` the engine booted with (not a guessed
+    // `wfusion.toml`).
+    let control = reactor.control_handle();
+    let mut config_source = crate::admin_api::ReloadConfigSource::new(
+        resolved.config_path.clone(),
+        resolved.overlay_paths.clone(),
+        resolved.config_ctx.clone(),
+        resolved.runtime_base_dir.clone(),
+    );
+    // Carry the CLI overrides so reloads re-apply them to the freshly-loaded
+    // config (otherwise `--mode`/`--metrics*` would look like a change → 409).
+    if let Some(mode) = mode {
+        config_source = config_source.with_mode_override(mode);
+    }
+    if let Some(metrics_override) = metrics_cli_override {
+        config_source = config_source.with_metrics_override(metrics_override);
+    }
     let _admin_api = crate::admin_api::start_if_enabled(
         &resolved.runtime_base_dir,
         &admin_api_config,
-        reactor.cancel_token(),
+        control,
+        config_source,
     )
     .await
     .map_err(|e| render_runtime_error(RuntimeReason::core_conf().to_err().with_detail(e)))?;
@@ -186,11 +221,19 @@ async fn run_engine_inner(
         );
     }
 
-    if wait_for_signal(reactor.cancel_token()).await == ShutdownTrigger::Signal {
-        reactor.shutdown();
-    }
-    if let Err(err) = reactor.wait().await {
-        return Err(render_runtime_error(err));
+    // Drive the reactor (signal handling + reload control loop + graceful
+    // shutdown) until it exits.
+    match reactor.run().await {
+        Ok(RunOutcome::RestartRequested) => {
+            tracing::info!(
+                domain = "sys",
+                "restart requested — exiting with code {}",
+                RESTART_EXIT_CODE
+            );
+            std::process::exit(RESTART_EXIT_CODE);
+        }
+        Ok(RunOutcome::Normal) => {}
+        Err(err) => return Err(render_runtime_error(err)),
     }
     Ok(())
 }

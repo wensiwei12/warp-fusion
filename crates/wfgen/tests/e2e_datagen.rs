@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, fmt};
-use wf_config::FusionConfig;
+use wf_config::{FusionConfig, RawFusionConfigTree};
 use wf_runtime::lifecycle::Reactor;
 use wf_runtime::tracing_init::{DomainFormat, FileFields};
 use wfgen::verify::ActualAlert;
@@ -198,6 +198,9 @@ FAIL_THRESHOLD = "3"
         source_path.display()
     );
     let config: FusionConfig = toml_str.parse().expect("failed to parse config TOML");
+    // Raw tree is the reload baseline; these e2e tests never reload, so a
+    // minimal tree parsed from the same toml is sufficient.
+    let raw = RawFusionConfigTree::from_toml_str(&toml_str, &base_dir).expect("parse raw toml");
 
     // ---- Convert GenEvents → typed Arrow batches → framed Arrow file ----
     let batches = wfgen::output::arrow_ipc::events_to_typed_batches(&events, &loaded.schemas)
@@ -217,7 +220,7 @@ FAIL_THRESHOLD = "3"
         .unwrap_or_else(|e| panic!("failed to write source file {}: {e}", source_path.display()));
 
     // ---- Start engine ----
-    let reactor = Reactor::start(config, &base_dir)
+    let reactor = Reactor::start(config, raw, &base_dir)
         .await
         .expect("Reactor::start failed");
 

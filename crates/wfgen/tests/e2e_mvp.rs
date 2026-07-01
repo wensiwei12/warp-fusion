@@ -15,7 +15,7 @@ use tokio::net::TcpStream;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, fmt};
-use wf_config::FusionConfig;
+use wf_config::{FusionConfig, RawFusionConfigTree};
 use wf_runtime::lifecycle::Reactor;
 use wf_runtime::tracing_init::{DomainFormat, FileFields};
 
@@ -128,8 +128,12 @@ FAIL_THRESHOLD = "3"
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let base_dir = manifest_dir.join("examples");
 
+    // Raw tree is the reload baseline; these e2e tests never reload, so a
+    // minimal tree parsed from the same toml is sufficient.
+    let raw = RawFusionConfigTree::from_toml_str(&toml_str, &base_dir).expect("parse raw toml");
+
     // -- Start reactor --
-    let reactor = Reactor::start(config, &base_dir)
+    let reactor = Reactor::start(config, raw, &base_dir)
         .await
         .expect("Reactor::start failed");
     let addr: std::net::SocketAddr = format!("127.0.0.1:{}", TCP_PORT).parse().unwrap();

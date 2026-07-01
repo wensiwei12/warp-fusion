@@ -17,7 +17,7 @@ rand = { workspace = true }
 wp-core-connectors = { workspace = true }
 wp-connector-api = { workspace = true }
 wf-config = { workspace = true }
-wf-lang = { path = "../../../wp-reactor/crates/wf-lang" }
+wf-lang = { workspace = true }
 ureq = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
