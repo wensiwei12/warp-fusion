@@ -1,0 +1,13 @@
+# cargo-audit advisory ignore list
+# See: https://docs.rs/cargo-audit/latest/cargo_audit/config/index.html
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071: rsa — Marvin Attack (timing sidechannel)
+    # No patched version available. Deep transitive dependency via:
+    #   rsa → sqlx-mysql → sqlx → wp-knowledge → wf-runtime → wfusion
+    # The attack requires network-level timing observation which does not
+    # apply to wp-knowledge's Redis usage (not MySQL). Re-evaluate when a
+    # patched `rsa` release is published.
+    "RUSTSEC-2023-0071",
+]
