@@ -448,20 +448,27 @@ async fn handle_reload(
     remote_addr: SocketAddr,
     state: Arc<AppState>,
 ) -> Response<Full<Bytes>> {
-    // Drain & discard the request body, but cap it (the body is unused) so a
-    // client can't exhaust memory by streaming a huge payload.
-    const RELOAD_BODY_LIMIT: usize = 1024 * 1024; // 1 MiB
-    if Limited::new(req.into_body(), RELOAD_BODY_LIMIT)
+    // Read the body (capped at 1 MiB), then look for `"full": true`.
+    const RELOAD_BODY_LIMIT: usize = 1024 * 1024;
+    let full = match Limited::new(req.into_body(), RELOAD_BODY_LIMIT)
         .collect()
         .await
-        .is_err()
-    {
-        let body = format!(
-            r#"{{"request_id":"{}","accepted":false,"result":"error","error":"request body exceeds {} bytes"}}"#,
-            request_id, RELOAD_BODY_LIMIT
-        );
-        return json_response(StatusCode::PAYLOAD_TOO_LARGE, &body);
-    }
+        .map(|collected| {
+            let bytes = collected.to_bytes();
+            std::str::from_utf8(&bytes)
+                .ok()
+                .map(|s| s.contains("\"full\": true") || s.contains("\"full\":true"))
+                .unwrap_or(false)
+        }) {
+        Ok(full) => full,
+        Err(_) => {
+            let body = format!(
+                r#"{{"request_id":"{}","accepted":false,"result":"error","error":"request body exceeds {} bytes"}}"#,
+                request_id, RELOAD_BODY_LIMIT
+            );
+            return json_response(StatusCode::PAYLOAD_TOO_LARGE, &body);
+        }
+    };
 
     tracing::info!(
         domain = "sys",
@@ -513,6 +520,37 @@ async fn handle_reload(
             json_response(StatusCode::OK, &body)
         }
         Ok(ReloadOutcome::Blocked(plan)) => {
+            if full {
+                // L4: full reload requested. Verify the new config compiles
+                // (prevent crash loop), then request a graceful shutdown with
+                // restart exit code.
+                if compile_reload_check(&loader, &state.config_source).is_err() {
+                    let body = format!(
+                        r#"{{"request_id":"{}","accepted":false,"result":"error","error":"full reload refused: new config fails to compile"}}"#,
+                        request_id
+                    );
+                    return json_response(StatusCode::UNPROCESSABLE_ENTITY, &body);
+                }
+                tracing::info!(
+                    domain = "sys",
+                    "reload blocked request_id={} full=true — requesting restart",
+                    request_id
+                );
+                if let Err(e) = state.control.request_restart().await {
+                    tracing::warn!(domain = "sys", "restart request failed: {e}");
+                    let body = format!(
+                        r#"{{"request_id":"{}","accepted":false,"result":"error","error":"failed to initiate restart"}}"#,
+                        request_id
+                    );
+                    return json_response(StatusCode::INTERNAL_SERVER_ERROR, &body);
+                }
+                let blockers = plan.requires_restart.len();
+                let body = format!(
+                    r#"{{"request_id":"{}","accepted":true,"result":"restarting","requires_restart":{}}}"#,
+                    request_id, blockers
+                );
+                return json_response(StatusCode::ACCEPTED, &body);
+            }
             let blockers = plan.requires_restart.len();
             tracing::info!(
                 domain = "sys",
@@ -541,6 +579,19 @@ async fn handle_reload(
             json_response(StatusCode::INTERNAL_SERVER_ERROR, &body)
         }
     }
+}
+
+/// Quick compile-check: can the loader successfully produce a valid config?
+/// Used by L4 `full=true` reload before committing to a restart, to avoid
+/// a crash loop (restart → broken config → crash → restart → …).
+fn compile_reload_check(
+    loader: &FusionConfigLoader<'_>,
+    _source: &ReloadConfigSource,
+) -> Result<(), String> {
+    // Re-use the same loader that already read the on-disk config.
+    let _raw = loader.load_raw().map_err(|e| e.to_string())?;
+    let _config = loader.load().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Escape a string for safe embedding in a JSON string literal.
@@ -1309,7 +1360,9 @@ file = "all.jsonl"
     /// Owns the background reactor run-task + its cancel token; `shutdown`
     /// cancels and joins.
     struct RuntimeServant {
-        run_task: tokio::task::JoinHandle<wf_runtime::error::RuntimeResult<()>>,
+        run_task: tokio::task::JoinHandle<
+            wf_runtime::error::RuntimeResult<wf_runtime::lifecycle::RunOutcome>,
+        >,
         cancel: tokio_util::sync::CancellationToken,
     }
     impl RuntimeServant {
@@ -1346,9 +1399,9 @@ file = "all.jsonl"
     }
 
     #[tokio::test]
-    async fn reload_blocked_returns_409() {
-        // Point the rules glob at a dir with a pipeline rule — a topology
-        // change → reload is Blocked (409). Seed v1 and v2 dirs up front.
+    async fn reload_pipeline_returns_200() {
+        // Point the rules glob at a dir with a pipeline rule — under L3
+        // pipeline windows are pure additions, so the reload succeeds (200).
         let temp = tempfile::tempdir().unwrap();
         write_engine_fixture(temp.path(), BRUTE_FORCE_RULE, "rules/v1/*.wfl");
         // Move the seeded rule into v1 and add a pipeline rule in v2.
@@ -1425,10 +1478,10 @@ rule repeated_fail_bursts {
             .send()
             .await
             .expect("post");
-        assert_eq!(resp.status(), reqwest::StatusCode::CONFLICT);
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
         let body: serde_json::Value = resp.json().await.expect("json");
-        assert_eq!(body["accepted"], false);
-        assert_eq!(body["result"], "blocked");
+        assert_eq!(body["accepted"], true);
+        assert_eq!(body["result"], "applied");
 
         cancel.cancel();
         let _ = run_task.await;
@@ -1607,5 +1660,89 @@ rule repeated_fail_bursts {
         );
 
         let _ = std::fs::remove_dir_all(temp.path());
+    }
+
+    // -- L4: full=true restart -------------------------------------------------
+
+    /// With `full=true`, a hot-reloadable change still returns 200 — don't
+    /// waste a restart when rule-only changes suffice.
+    #[tokio::test]
+    async fn reload_full_true_hot_applied_returns_200() {
+        let (temp, base, servant) = boot_engine_with_admin(BRUTE_FORCE_RULE).await;
+        std::fs::write(
+            temp.path().join("rules/brute_force.wfl"),
+            BRUTE_FORCE_RULE_V2,
+        )
+        .unwrap();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let resp = client
+            .post(format!("{base}/admin/v1/reloads/model"))
+            .bearer_auth("test-token")
+            .body(r#"{"full": true}"#)
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+        let body: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(body["accepted"], true);
+        assert_eq!(body["result"], "applied");
+        servant.shutdown().await;
+    }
+
+    /// With `full=true` and a change that requires restart (changing mode in
+    /// wfusion.toml), the reload returns 202 `restarting` and the reactor
+    /// begins graceful shutdown.
+    #[tokio::test]
+    async fn reload_full_true_blocked_returns_202() {
+        let (temp, base, servant) = boot_engine_with_admin(BRUTE_FORCE_RULE).await;
+        // Change mode from daemon to batch — a raw-diff restart-required field.
+        let toml = std::fs::read_to_string(temp.path().join("wfusion.toml")).unwrap();
+        std::fs::write(
+            temp.path().join("wfusion.toml"),
+            toml.replace("mode = \"daemon\"", "mode = \"batch\""),
+        )
+        .unwrap();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let resp = client
+            .post(format!("{base}/admin/v1/reloads/model"))
+            .bearer_auth("test-token")
+            .body(r#"{"full": true}"#)
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), reqwest::StatusCode::ACCEPTED);
+        let body: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(body["accepted"], true);
+        assert_eq!(body["result"], "restarting");
+        // The reactor was asked to restart; wait for the run task to finish.
+        servant.shutdown().await;
+    }
+
+    /// With `full=true` and a broken config, the reload is rejected (5xx)
+    /// WITHOUT triggering a restart — crash-loop prevention. (Future work:
+    /// return 422 after `compile_reload_check` does full compilation.)
+    #[tokio::test]
+    async fn reload_full_true_broken_config_returns_error_not_restart() {
+        let (temp, base, servant) = boot_engine_with_admin(BRUTE_FORCE_RULE).await;
+        std::fs::write(
+            temp.path().join("wfusion.toml"),
+            "this is = = not valid toml {{{",
+        )
+        .unwrap();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let resp = client
+            .post(format!("{base}/admin/v1/reloads/model"))
+            .bearer_auth("test-token")
+            .body(r#"{"full": true}"#)
+            .send()
+            .await
+            .expect("post");
+        // Must NOT be 202 (no restart), must be an error (5xx).
+        assert_ne!(resp.status(), reqwest::StatusCode::ACCEPTED);
+        assert!(resp.status().is_server_error());
+        let body: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(body["accepted"], false);
+        assert_eq!(body["result"], "error");
+        servant.shutdown().await;
     }
 }

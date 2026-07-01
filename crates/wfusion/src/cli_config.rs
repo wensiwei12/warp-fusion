@@ -13,7 +13,7 @@ use wf_config::{ConfigVarContext, FusionConfigLoader, FusionMode, HumanDuration,
 use wf_runtime::{
     cli::error::{EngineError, EngineReason, EngineResult},
     error::{RuntimeError, RuntimeReason},
-    lifecycle::Reactor,
+    lifecycle::{RESTART_EXIT_CODE, Reactor, RunOutcome},
     tracing_init::init_tracing,
 };
 
@@ -223,8 +223,17 @@ async fn run_engine_inner(
 
     // Drive the reactor (signal handling + reload control loop + graceful
     // shutdown) until it exits.
-    if let Err(err) = reactor.run().await {
-        return Err(render_runtime_error(err));
+    match reactor.run().await {
+        Ok(RunOutcome::RestartRequested) => {
+            tracing::info!(
+                domain = "sys",
+                "restart requested — exiting with code {}",
+                RESTART_EXIT_CODE
+            );
+            std::process::exit(RESTART_EXIT_CODE);
+        }
+        Ok(RunOutcome::Normal) => {}
+        Err(err) => return Err(render_runtime_error(err)),
     }
     Ok(())
 }

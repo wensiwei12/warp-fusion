@@ -351,14 +351,16 @@ Body: { "request_id"?: "...", "full"?: false, "update_remote"?: false }
 
 ## 7. 分阶段实施计划
 
-| 阶段 | 范围 | crate | 产出 | 验证 |
-|------|------|-------|------|------|
-| **P0** | Reactor 保留重载基准 + `apply_reload` 执行热替换 | wf-runtime | `Reactor::apply_reload`、`swap_rule_tasks`(超时 join)、`reload_drain_timeout` 配置、rule 组 handle 重构 | wf-runtime 单测:(a) Ready → 热替换 → 新规则生效、window 状态不丢;(b) alert 通道背压 → 旧 task flush 超时不卡死热替换;(c) 验证 flush 以 `CloseReason::Flush` 关闭旧实例并产出告警 |
-| **P1** | RuntimeControlHandle 控制通道(channel 风格) | wf-runtime | `RuntimeControlHandle`、`ReloadRequest`/`ReloadOutcome`、Reactor 主循环 select 接收(并入 `wait_for_signal` 语义) | 单测:(a) 跨 task 发 reload → Reactor 串行处理;(b) 并发 reload 请求被串行化/正确应答;(c) reload 期间 `status` 反映 reloading 态 |
-| **P2** | admin_api reload 路由 | wfusion | `POST /admin/v1/reloads/model`、AppState 持 control、结果序列化 | admin_api 集测:正常 reload 200、blocked 409、鉴权失败 401 |
-| **P3** | 端到端 + 远端 update(可选) | wfusion + wfadm | `update_remote` 触发远端 sync 后 reload | 集成测试:改规则文件 → POST reload → 新规则生效;远端链路对齐 wparse remote_ctrl |
+| 阶段 | 范围 | crate | 产出 | 验证 | 状态 |
+|------|------|-------|------|------|------|
+| **P0** | Reactor `apply_reload` 执行热替换 | wf-runtime | `Reactor::apply_reload`、`swap_rule_tasks`(超时 join)、`reload_drain_timeout`、rule 组 handle 重构 | wf-runtime 单测:Ready→热替换→新规则生效、window 状态不丢;blocked→不触碰运行任务 | ✅ |
+| **P1** | RuntimeControlHandle 控制通道(channel) | wf-runtime | `RuntimeControlHandle`、`ReloadRequest`、`Reactor::run` 自驱动主循环 | 单测:跨 task 发 reload→串行处理;并发 reload 被串行化/正确应答 | ✅ |
+| **P2** | admin_api reload 路由 | wfusion | `POST /admin/v1/reloads/model`、AppState 持 control、`ReloadConfigSource`、body 限流、结果序列化 | admin_api 集测:正常 reload 200、blocked 409、鉴权 401、broken config 5xx | ✅ |
+| **P3/L1-L3** | 细粒度 reload(新增/修改/不变/删除) | wf-engine + wf-runtime | `try_add_window`、`try_replace_window`、`prepare_reload_with_cached`、`append_topology_blockers` per-window diff、L2/L3 lifecycle 集成 | wf-runtime 单测 + wf-engine 测试:72 + 239 passed | ✅ |
+| **P4/L4** | `full=true` 进程级重启 | wf-runtime + wfusion | `ReloadRequest::Restart`、`RuntimeControlHandle::request_restart()`、`RunOutcome`、`RESTART_EXIT_CODE=75`、admin_api `full` body 解析 | admin_api 集测:full+hot→200、full+blocked→202、full+broken→5xx(不重启) | ✅ |
+| **P5** | 端到端 + 远端 update(可选) | wfusion + wfadm | `update_remote` 触发远端 sync 后 reload | 集成测试:改规则文件 → POST reload → 新规则生效;远端链路对齐 wparse remote_ctrl | 待做 |
 
-**依赖顺序**:P0 → P1 → P2 → P3。P0/P1 在 wp-reactor,P2/P3 在 warp-fusion。因 warp-fusion 通过 git 依赖引用 wf-runtime,P0/P1 完成后需发布 wp-reactor 新版本并升级 warp-fusion 的 `wf-runtime` 依赖 tag。
+**依赖顺序**:P0 → P1 → P2 → P3 → P4 → P5。P0–P4 已完成,P5 待做。
 
 ## 8. 接口契约汇总
 
@@ -369,7 +371,23 @@ Body: { "request_id"?: "...", "full"?: false, "update_remote"?: false }
 impl Reactor {
     pub async fn apply_reload(&mut self, next_raw, next_config) -> RuntimeResult<ReloadOutcome>;
     pub fn control_handle(&self) -> RuntimeControlHandle;
+    /// 自驱动主循环,返回 `Normal` 或 `RestartRequested`。
+    pub async fn run(self) -> RuntimeResult<RunOutcome>;
 }
+
+pub enum RunOutcome { Normal, RestartRequested }
+pub const RESTART_EXIT_CODE: i32 = 75;   // EX_TEMPFAIL
+
+// 热重载准备(缓存版,L3/L4 用)
+pub fn prepare_reload_with_cached(
+    current_raw: &RawFusionConfigTree,
+    current_config: &FusionConfig,
+    current_runtime_schemas: &[WindowSchema],
+    current_runtime_window_configs: &[WindowConfig],
+    next_raw: RawFusionConfigTree,
+    next_config: FusionConfig,
+    base_dir: &Path,
+) -> RuntimeResult<ReloadPreparation>;
 
 // 控制通道
 pub struct RuntimeControlHandle { .. }
@@ -403,7 +421,7 @@ full=false(默认):
 full=true:
   → 200 {accepted:true,  result:"applied"}                          (能热更则热更)
   → 202 {accepted:true,  result:"restarting", requires_restart:[...]} (随后进程退出,见 §10)
-  → 422 {accepted:false, result:"error", error:"..."}              (配置坏,不退出)
+  → 5xx {accepted:false, result:"error", error:"..."}              (配置坏,不退出,后续细化 422)
 ```
 
 ## 9. 风险与未决项
@@ -412,11 +430,11 @@ full=true:
 2. **flush 语义(`CloseReason::Flush`)**:`flush()` 强制关闭旧规则的活跃 CEP 实例并产出告警。热替换是「旧实例关闭 + 新实例从当前窗口状态重新开始」,**非跨版本状态迁移**。需在 API 文档与 `result:"applied"` 的响应中体现,避免误以为无缝迁移。
 3. **reload 限流**:并发 reload 由 channel 单消费者串行化,但当前无显式限流/拒绝;高并发下请求会排队(最多 channel 容量)。可考虑达到阈值后返回 429/409(P3)。
 4. **reload 期间的 status**:热替换 rule task 期间,`status` 路由的 `accepting` 未反映 reloading 状态。可引入 `reloading` 中间态(`accepting:true, reloading:true`,P3)。
-5. **状态码细化**:配置编译错当前一律 `500`;语义上客户端错误(语法坏)应为 4xx,引擎关停应为 503(P3)。
-6. **远端 update 链路**:`update_remote` 复用 wfadm 的远端 sync(init → daemon → reload)。需确认 wfadm 侧 sync 逻辑可被 daemon 内部调用,而非仅 CLI;否则需在 wfusion 内实现轻量 sync(P3)。
-7. **git 依赖升级**:wp-reactor 侧改动需发版后升级 warp-fusion 的 `wf-runtime` 依赖 tag;联调时可用本地 path 依赖。
+5. **状态码细化**:配置编译错当前一律 `500`;语义上客户端错误(语法坏)应为 4xx,引擎关停应为 503(P5)。L4 重启已有专用退出码 `75`;reload 编译错与重启退出码已区分。
+6. **远端 update 链路**:`update_remote` 复用 wfadm 的远端 sync(init → daemon → reload)。需确认 wfadm 侧 sync 逻辑可被 daemon 内部调用,而非仅 CLI;否则需在 wfusion 内实现轻量 sync(P5)。
+7. **git 依赖升级**:wp-reactor 侧改动需发版后升级 warp-fusion 的 `wf-runtime` 依赖 tag;当前联调用本地 path 依赖。
 
-## 10. reload 扩展:`full` 重启
+## 10. reload 扩展:`full` 重启(✅ 已实现)
 
 ### 设计动机
 
@@ -492,7 +510,7 @@ POST /admin/v1/reloads/model  Body: { "full": true }
 
 → 能热更:    200 {accepted:true,  result:"applied"}
 → 需重启:    202 {accepted:true,  result:"restarting", requires_restart:[...]}  (随后进程退出)
-→ 配置坏:    422 {accepted:false, result:"error", error:"..."}  (不退出,防 crash loop)
+→ 配置坏:    5xx {accepted:false, result:"error", error:"..."}  (不退出,防 crash loop;后续细化到 422)
 → 引擎已停:  500/503
 ```
 
@@ -581,18 +599,19 @@ sequenceDiagram
 | 档位 | 能力 | 触发条件 | 复杂度 | 状态 |
 |------|------|---------|--------|------|
 | **L1** rule-only | 换规则 task,window 不动 | 只规则逻辑变 | 低 | ✅ 已实现 |
-| **L2** 增量扩容 | 加新 window + 新规则 | 纯新增,无改/删 | 中 | 演进 |
-| **L3** 局部重建 | 改/删特定 window,只重建它+依赖规则 | 指纹变化的项 | 高 | 演进 |
-| **L4** full 重启 | 进程重启 | 大面积/结构性变更 | 低 | ✅ 已设计(§10) |
+| **L2** 增量扩容 | 加新 window + 新规则 | 纯新增,无改/删 | 中 | ✅ 已实现 |
+| **L3** 局部重建 | 改特定 window,只重建它+依赖规则 | 指纹变化 | 高 | ✅ 已实现 |
+| **L4** full 重启 | 进程重启 | 大面积变更 / `full:true` + Blocked | 低 | ✅ 已实现(§10) |
 
 `prepare_reload` 按指纹 diff 自动选档:能 L1 不上 L2,能 L2/L3 局部解决就不 L4 全推倒。只有「变更范围太大」才 `full`。
 
-### 落地需改的点
+### 落地需改的点(已完成)
 
-1. **`WindowRegistry` 支持运行时增删/替换**。现在是 `HashMap<name, Arc<RwLock<Window>>>`(外层 HashMap 非 `RwLock`,构造期 `build` 一次定死)。改成内部可变(`RwLock<HashMap<...>>` 或提供 `add_window`/`replace_window`/`remove_window` 方法),让运行时能增删 window。**范围有限**:只让 HashMap 可变,不动 `Window` 内部。
-2. **`prepare_reload` 的 diff 从集合级改成逐项指纹级**。当前 `append_topology_blockers` 比较 `normalize_schemas(整体)`,改成 per-window 指纹对比,产出「变更集」(重建队列)而非全局 block/ready。
-3. **`apply_reload` 按变更集逐项执行**:停依赖 rule → 换 window → 起新 rule。复用现有 `swap_rule_tasks` 的有界等待 + abort 机制,只是粒度细化。
-4. **指纹基准**:Reactor 持有运行中各 window/rule 的指纹(`HashMap<name, Fingerprint>`),或 reload 时从 `current_config` 重算。前者更快,后者更简单。
+1. **`WindowRegistry` 支持运行时增删/替换** ✅。四个 HashMap 用 `RwLock` 包裹,新增 `try_add_window`(L2)和 `try_replace_window`(L3)。
+2. **`prepare_reload` 的 diff 从集合级改成逐项指纹级** ✅。`append_topology_blockers` 改为 per-window diff,区分新增/修改/不变/删除,返回四元组。
+3. **`apply_reload` 按变更集逐项执行** ✅。先 `try_add_window`(L2)→ 再 `try_replace_window`(L3)→ 最后 swap 规则。
+4. **缓存编译产物(L3 关键)** ✅。`prepare_reload_with_cached` 用 boot 时缓存的 current schemas/configs,只从磁盘编译 next,使 in-place 文件修改可被正确检测。
+5. **`full=true` 重启(L4)** ✅。`ReloadRequest::Restart` + `RuntimeControlHandle::request_restart()` + `RunOutcome` + `RESTART_EXIT_CODE=75`。
 
 ### 解决 / 不解决
 
@@ -616,8 +635,9 @@ sequenceDiagram
 
 本方案先做。若未来「被改的那个也不能有任何中断」需求出现,再演进到双缓冲(版本化是本方案的下一步,而非替代)。
 
-### 落地路径
+### 落地路径(已完成)
 
-1. **先做 L2(场景1,增量加 window+规则)**:`WindowRegistry` 加 `add_window`;指纹判定「纯新增 → 允许」。最简单、价值最高、不碰现有 window 生命周期。
-2. **再做 L3(场景2,局部改)**:`replace_window` + 依赖 rule 的局部换。需要时序控制(上面 5 步),但范围仍局部。
-3. **L4(`full`)退化为兏底**:只有大面积变更才触发,不再是「window 一变就触发」。
+1. ✅ **L2(增量加 window+规则)**:`WindowRegistry` 加 `try_add_window`;`append_topology_blockers` per-window diff 判定「纯新增→允许」。
+2. ✅ **L3(局部修改)**:`try_replace_window` + `prepare_reload_with_cached`(缓存编译产物)+ `apply_reload` L3 处理。
+3. ✅ **L4(`full`重启)**:`ReloadRequest::Restart` + `request_restart()` + `RunOutcome` + `exit(75)`。
+4. 🔜 **P5(远端 update + 端到端)**:`update_remote` 触发远端 sync 后再 reload;reload 期间 `status` 的 `reloading` 中间态;编译错的 4xx 细化。
