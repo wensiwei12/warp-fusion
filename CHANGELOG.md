@@ -1,5 +1,52 @@
 # Changelog
 
+All notable changes to wfusion will be documented in this file.
+
+## [0.1.17] — 2026-07-01
+
+### wfusion — admin API 在线热重载
+
+- **新增**: `POST /admin/v1/reloads/model` — 运行中引擎的在线热重载端点，支持 L1-L4 四级重载能力。
+  - **L1 规则热替换**: 新编译的规则 task 替换旧的，保留 window/router/sink/evictor/metrics。
+  - **L2 增量新增**: 新增 window 定义在 reload 时注册到运行中 registry，无需重启。
+  - **L3 局部重建**: 修改现有 window 定义时，旧 window 被原子替换为新 window。
+  - **L4 全量重启**: `full=true` 时，Reactor 以退出码 75 退出，由外部 supervisor 重启进程。
+- **重构**: `RuntimeServant` 从 bare `CancellationToken` 升级为 `RuntimeControlHandle`（mpsc + oneshot channel），支持序列化 reload 请求。
+- **新增**: `ReloadConfigSource` — 记录 boot 时的 `--config` / `--overlay` / `--var` 来源，reload 时用相同参数重新加载配置，而非硬编码 `wfusion.toml`。
+- **新增**: body 限流（1 MB），防止 oversized reload payload。
+- **测试**: 25 个 admin_api 测试（含 reload 序列化、L1-L4 场景、blocked 结果、full 重启）。
+
+### wfusion CLI — 生命周期重构
+
+- **Break**: 移除 `wfusion config` 子命令（功能已迁移到 `wfadm config`）。
+- **重构**: CLI daemon/batch 生命周期从 `wait_for_signal()` + `reactor.shutdown()` + `reactor.wait()` 替换为 `reactor.run()`（内建 signal 处理 + reload control loop）。
+- **重构**: `FusionConfigLoader` 改为 raw + effective config 双输出，reload 时重用 raw config 做 diff。
+
+### wfadm — project_remote 远程规则源管理（实验性）
+
+- **新增**: `wfadm conf update` — 从远程 git 仓库（`[project_remote]` 配置）同步 managed directories（`models/` / `conf/` / `topology/` / `connectors/`）到指定版本 tag。
+  - 支持 `--version` / `--group` / `--json` 参数。
+  - 自动锁定 → 快照 → 同步 → 校验 → 失败回滚。
+- **新增**: `wfadm init --repo` — 从远程模板仓库初始化项目。
+- **新增**: `crates/wfadm/src/project_remote/` 模块（`managed.rs` / `state.rs` / `repo.rs` / `test_support.rs`，共 2276 行），含完整 test_support 基础设施。
+
+### wfadm — 修复
+
+- `conf update` panic fix：禁用 Update subcommand 的 auto `--version` flag（与 clap 全局 version 冲突）。
+- Clippy fix：`map_or(true, |u| u.is_empty())` → `is_none_or(|u| u.is_empty())`。
+
+### 设计文档
+
+- **新增**: `docs/design/admin_api_reload_design.md` — reload 完整方案设计，包含分层架构（L1-L4）、channel-style 控制通道、per-window diff 指纹方案、分阶段实现计划。
+- **新增**: `docs/design/project_remote_alignment.md` — project_remote 对齐设计，与 wparse `wproj conf update` 对标。
+
+### 依赖
+
+- **新增**: `git2` 0.19、`semver` 1、`libc` 0.2（wfadm project_remote）。
+- **新增**: `tempfile` 3（wfadm dev-dependencies，test_support）。
+- **wf-runtime**: 本地 path 依赖（开发中），对应 wp-reactor `v0.1.24`（含 hot-reload RuntimeControlHandle + apply_reload）。
+- **wfusion crate**: 版本号 0.1.15 → 0.1.16（crate version bump）。
+
 ## [0.1.16] — 2026-06-28
 
 ### wfusion — daemon / batch CLI + admin API
