@@ -123,6 +123,22 @@ pub(crate) fn check_project(root: &Path) -> Result<(), String> {
         } else {
             err += 1;
         }
+    } else if let Some((up_dir, depth)) = find_upward(root, "connectors/sink.d") {
+        let (sink_count, sink_errs) = validate_sink_dir(&up_dir, true);
+        if sink_errs == 0 {
+            ok += 1;
+            let rel = if depth == 0 {
+                "connectors/sink.d".to_string()
+            } else {
+                format!("{}connectors/sink.d", "../".repeat(depth))
+            };
+            println!(
+                "  {}  sink.d/ → {rel} ({sink_count} .toml, upstream)",
+                green("✓")
+            );
+        } else {
+            err += 1;
+        }
     } else {
         eprintln!("  {}  sink.d/ — not found", red("✗"));
     }
@@ -234,6 +250,81 @@ fn list_files(dir: &Path, ext: &str) -> Vec<std::path::PathBuf> {
 }
 
 /// Deep validation: parse all .wfl, .wfs, .wfg files.
+/// Result of trying to find model files (local or external).
+struct ResolvedFiles {
+    files: Vec<PathBuf>,
+    is_external: bool,
+    /// Config-relative display path (only set when is_external).
+    display_path: Option<String>,
+}
+
+/// Try to find model files: local `models/{dir_name}/` first, then fall back
+/// to the config-specified path.  Returns `ResolvedFiles` on success.
+fn resolve_model_dir(
+    label: &str,
+    ext: &str,
+    local_dir: &Path,
+    cfg_path: &Option<String>,
+    conf_dir: &Path,
+) -> Option<ResolvedFiles> {
+    let local_files = list_files(local_dir, ext);
+    if !local_files.is_empty() {
+        return Some(ResolvedFiles {
+            files: local_files,
+            is_external: false,
+            display_path: None,
+        });
+    }
+
+    // Try external path from config
+    let ext_path = cfg_path.as_deref()?;
+    let ext_dir = resolve_config_dir(conf_dir, ext_path)?;
+    let ext_files = list_files(&ext_dir, ext);
+    if ext_files.is_empty() {
+        eprintln!(
+            "  {}  {label}/ — directory exists but has no .{ext} files (config: {ext_path})",
+            red("✗")
+        );
+        return None;
+    }
+    Some(ResolvedFiles {
+        files: ext_files,
+        is_external: true,
+        display_path: Some(strip_glob(ext_path).to_string()),
+    })
+}
+
+/// Print the success line for a model group and increment `ok`.
+fn report_model_ok(label: &str, ext: &str, count: usize, resolved: &ResolvedFiles, ok: &mut u32) {
+    *ok += 1;
+    if resolved.is_external {
+        let dp = resolved.display_path.as_deref().unwrap_or("?");
+        println!(
+            "  {}  {label}/ → {dp} ({count} .{ext}, external)",
+            green("✓")
+        );
+    } else {
+        println!("  {}  {label}/ ({count} .{ext})", green("✓"));
+    }
+}
+
+/// Print the success line for WFL with lint warning count, increment `ok`.
+fn report_wfl_ok(count: usize, lint_count: u32, resolved: &ResolvedFiles, ok: &mut u32) {
+    *ok += 1;
+    if resolved.is_external {
+        let dp = resolved.display_path.as_deref().unwrap_or("?");
+        println!(
+            "  {}  rules/ → {dp} ({count} .wfl, {lint_count} lint warning(s), external)",
+            green("✓")
+        );
+    } else {
+        println!(
+            "  {}  rules/ ({count} .wfl, {lint_count} lint warning(s))",
+            green("✓")
+        );
+    }
+}
+
 fn check_models(
     root: &Path,
     conf_dir: &Path,
@@ -245,159 +336,115 @@ fn check_models(
 
     // ── WFL (rules/) ───────────────────────────────────────────────
     let rules_dir = root.join("models").join("rules");
-    let wfl_files = list_files(&rules_dir, "wfl");
-    if wfl_files.is_empty() {
-        // Try external path from config
-        if let Some(ext_path) = cfg_rules_path {
-            if let Some(ext_dir) = resolve_config_dir(conf_dir, ext_path) {
-                let ext_files = list_files(&ext_dir, "wfl");
-                if !ext_files.is_empty() {
-                    ok += 1;
-                    let display_path = strip_glob(ext_path);
-                    println!(
-                        "  {}  rules/ → {display_path} ({} .wfl, external)",
-                        green("✓"),
-                        ext_files.len()
-                    );
-                } else {
-                    eprintln!(
-                        "  {}  rules/ — directory not found or empty (config: {ext_path})",
-                        red("✗")
-                    );
-                }
-            } else {
-                eprintln!(
-                    "  {}  rules/ — directory not found or empty (config: {ext_path})",
-                    red("✗")
-                );
-            }
-        } else {
-            eprintln!("  {}  rules/ — directory not found or empty", red("✗"));
-        }
-    } else {
-        let mut parsed = Vec::new();
-        let mut parse_errs = 0u32;
-        for f in &wfl_files {
-            match fs::read_to_string(f) {
-                Ok(content) => match parse_wfl(&content) {
-                    Ok(ast) => parsed.push((f, ast)),
+    match resolve_model_dir("rules", "wfl", &rules_dir, cfg_rules_path, conf_dir) {
+        Some(resolved) => {
+            let mut parsed = Vec::new();
+            let mut parse_errs = 0u32;
+            for f in &resolved.files {
+                match fs::read_to_string(f) {
+                    Ok(content) => match parse_wfl(&content) {
+                        Ok(ast) => parsed.push((f, ast)),
+                        Err(e) => {
+                            parse_errs += 1;
+                            eprintln!(
+                                "  {}  {} — parse error: {}",
+                                red("✗"),
+                                f.file_name().unwrap_or_default().to_string_lossy(),
+                                e
+                            );
+                        }
+                    },
                     Err(e) => {
                         parse_errs += 1;
                         eprintln!(
-                            "  {}  {} — parse error: {}",
-                            red("✗"),
-                            f.file_name().unwrap_or_default().to_string_lossy(),
-                            e
-                        );
-                    }
-                },
-                Err(e) => {
-                    parse_errs += 1;
-                    eprintln!(
-                        "  {}  {} — read error: {e}",
-                        red("✗"),
-                        f.file_name().unwrap_or_default().to_string_lossy()
-                    );
-                }
-            }
-        }
-
-        // Lint parsed WFL files (schemas param is unused in current lint_wfl)
-        let mut lint_warnings = 0u32;
-        for (f, ast) in &parsed {
-            let warnings = lint_wfl(ast, &[]);
-            if !warnings.is_empty() {
-                lint_warnings += warnings.len() as u32;
-                for w in &warnings {
-                    let rule = w.rule.as_deref().unwrap_or("?");
-                    eprintln!(
-                        "  {}  {} ({rule}): {}",
-                        yellow("⚠"),
-                        f.file_name().unwrap_or_default().to_string_lossy(),
-                        w.message
-                    );
-                }
-            }
-        }
-
-        if parse_errs == 0 {
-            ok += 1;
-            if lint_warnings > 0 {
-                println!(
-                    "  {}  rules/ ({} .wfl, {} lint warning(s))",
-                    green("✓"),
-                    wfl_files.len(),
-                    lint_warnings
-                );
-            } else {
-                println!("  {}  rules/ ({} .wfl)", green("✓"), wfl_files.len());
-            }
-        } else {
-            *err += 1;
-        }
-    }
-
-    // ── WFS (schemas/) ─────────────────────────────────────────────
-    let schemas_dir = root.join("models").join("schemas");
-    let wfs_files = list_files(&schemas_dir, "wfs");
-    if wfs_files.is_empty() {
-        // Try external path from config
-        if let Some(ext_path) = cfg_schemas_path {
-            if let Some(ext_dir) = resolve_config_dir(conf_dir, ext_path) {
-                let ext_files = list_files(&ext_dir, "wfs");
-                if !ext_files.is_empty() {
-                    ok += 1;
-                    let display_path = strip_glob(ext_path);
-                    println!(
-                        "  {}  schemas/ → {display_path} ({} .wfs, external)",
-                        green("✓"),
-                        ext_files.len()
-                    );
-                } else {
-                    eprintln!(
-                        "  {}  schemas/ — directory not found or empty (config: {ext_path})",
-                        red("✗")
-                    );
-                }
-            } else {
-                eprintln!(
-                    "  {}  schemas/ — directory not found or empty (config: {ext_path})",
-                    red("✗")
-                );
-            }
-        } else {
-            eprintln!("  {}  schemas/ — directory not found or empty", red("✗"));
-        }
-    } else {
-        let mut parse_errs = 0u32;
-        for f in &wfs_files {
-            match fs::read_to_string(f) {
-                Ok(content) => {
-                    if let Err(e) = parse_wfs(&content) {
-                        parse_errs += 1;
-                        eprintln!(
-                            "  {}  {} — parse error: {e}",
+                            "  {}  {} — read error: {e}",
                             red("✗"),
                             f.file_name().unwrap_or_default().to_string_lossy()
                         );
                     }
                 }
-                Err(e) => {
-                    parse_errs += 1;
-                    eprintln!(
-                        "  {}  {} — read error: {e}",
-                        red("✗"),
-                        f.file_name().unwrap_or_default().to_string_lossy()
-                    );
+            }
+
+            // Lint parsed WFL files
+            let mut lint_warnings = 0u32;
+            for (f, ast) in &parsed {
+                let warnings = lint_wfl(ast, &[]);
+                if !warnings.is_empty() {
+                    lint_warnings += warnings.len() as u32;
+                    for w in &warnings {
+                        let rule = w.rule.as_deref().unwrap_or("?");
+                        eprintln!(
+                            "  {}  {} ({rule}): {}",
+                            yellow("⚠"),
+                            f.file_name().unwrap_or_default().to_string_lossy(),
+                            w.message
+                        );
+                    }
                 }
             }
-        }
 
-        if parse_errs == 0 {
-            ok += 1;
-            println!("  {}  schemas/ ({} .wfs)", green("✓"), wfs_files.len());
-        } else {
-            *err += 1;
+            if parse_errs > 0 {
+                *err += 1;
+            } else if lint_warnings > 0 {
+                report_wfl_ok(resolved.files.len(), lint_warnings, &resolved, &mut ok);
+            } else {
+                report_model_ok("rules", "wfl", resolved.files.len(), &resolved, &mut ok);
+            }
+        }
+        None => {
+            if let Some(ext_path) = cfg_rules_path {
+                eprintln!(
+                    "  {}  rules/ — directory not found (config: {ext_path})",
+                    red("✗")
+                );
+            } else {
+                eprintln!("  {}  rules/ — directory not found or empty", red("✗"));
+            }
+        }
+    }
+
+    // ── WFS (schemas/) ─────────────────────────────────────────────
+    let schemas_dir = root.join("models").join("schemas");
+    match resolve_model_dir("schemas", "wfs", &schemas_dir, cfg_schemas_path, conf_dir) {
+        Some(resolved) => {
+            let mut parse_errs = 0u32;
+            for f in &resolved.files {
+                match fs::read_to_string(f) {
+                    Ok(content) => {
+                        if let Err(e) = parse_wfs(&content) {
+                            parse_errs += 1;
+                            eprintln!(
+                                "  {}  {} — parse error: {e}",
+                                red("✗"),
+                                f.file_name().unwrap_or_default().to_string_lossy()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        parse_errs += 1;
+                        eprintln!(
+                            "  {}  {} — read error: {e}",
+                            red("✗"),
+                            f.file_name().unwrap_or_default().to_string_lossy()
+                        );
+                    }
+                }
+            }
+            if parse_errs > 0 {
+                *err += 1;
+            } else {
+                report_model_ok("schemas", "wfs", resolved.files.len(), &resolved, &mut ok);
+            }
+        }
+        None => {
+            if let Some(ext_path) = cfg_schemas_path {
+                eprintln!(
+                    "  {}  schemas/ — directory not found (config: {ext_path})",
+                    red("✗")
+                );
+            } else {
+                eprintln!("  {}  schemas/ — directory not found or empty", red("✗"));
+            }
         }
     }
 
@@ -447,18 +494,11 @@ fn check_models(
 /// to get the actual directory path.
 fn resolve_config_dir(conf_dir: &Path, glob_path: &str) -> Option<PathBuf> {
     let dir_pattern = strip_glob(glob_path);
-    let resolved = conf_dir.join(dir_pattern);
-    // Canonicalize to check existence and resolve ..
-    if let Ok(canonical) = resolved.canonicalize() {
-        if canonical.is_dir() {
-            return Some(canonical);
-        }
-    }
-    // Fallback: try without canonicalize (for paths that don't exist yet)
-    if resolved.is_dir() {
-        return Some(resolved);
-    }
-    None
+    conf_dir
+        .join(dir_pattern)
+        .canonicalize()
+        .ok()
+        .filter(|p| p.is_dir())
 }
 
 /// Strip the trailing glob pattern (e.g. "/*.wfl") from a config path,
@@ -469,6 +509,28 @@ fn strip_glob(glob_path: &str) -> &str {
     } else {
         glob_path
     }
+}
+
+/// Search upward from `root` through parent directories for `relative_path`.
+/// Returns the found directory and how many parent levels up it was found.
+fn find_upward(root: &Path, relative_path: &str) -> Option<(PathBuf, usize)> {
+    let mut current = if let Ok(canon) = root.canonicalize() {
+        canon
+    } else {
+        root.to_path_buf()
+    };
+    let mut depth = 0usize;
+    loop {
+        let candidate = current.join(relative_path);
+        if candidate.is_dir() {
+            return Some((candidate, depth));
+        }
+        if !current.pop() {
+            break;
+        }
+        depth += 1;
+    }
+    None
 }
 
 /// Validate all .toml files in a directory recursively.
@@ -744,6 +806,152 @@ scenario with_use<seed=1> {
         let mut err = 0;
         let ok = check_models(&dir, &dir.join("conf"), &None, &None, &mut err);
         assert!(ok > 0);
+        assert_eq!(err, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── strip_glob ───────────────────────────────────────────────
+
+    #[test]
+    fn strip_glob_removes_trailing_pattern() {
+        assert_eq!(strip_glob("../../models/wfl/*.wfl"), "../../models/wfl");
+        assert_eq!(strip_glob("../schemas/*.wfs"), "../schemas");
+        assert_eq!(strip_glob("rules/wfl/*.wfl"), "rules/wfl");
+    }
+
+    #[test]
+    fn strip_glob_no_slash_returns_unchanged() {
+        assert_eq!(strip_glob("*.wfl"), "*.wfl");
+        assert_eq!(strip_glob("network.wfs"), "network.wfs");
+    }
+
+    // ── resolve_config_dir ───────────────────────────────────────
+
+    #[test]
+    fn resolve_config_dir_finds_existing_directory() {
+        let dir = temp_dir();
+        let models = dir.join("shared/models/rules/wfl");
+        std::fs::create_dir_all(&models).unwrap();
+        std::fs::write(models.join("test.wfl"), "rule x {}").unwrap();
+
+        let conf_dir = dir.join("project/conf");
+        std::fs::create_dir_all(&conf_dir).unwrap();
+
+        let result = resolve_config_dir(&conf_dir, "../../shared/models/rules/wfl/*.wfl");
+        assert!(result.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_config_dir_returns_none_for_missing_directory() {
+        let dir = temp_dir();
+        let conf_dir = dir.join("project/conf");
+        std::fs::create_dir_all(&conf_dir).unwrap();
+
+        let result = resolve_config_dir(&conf_dir, "../../nonexistent/path/*.wfl");
+        assert!(result.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── find_upward ──────────────────────────────────────────────
+
+    #[test]
+    fn find_upward_finds_sibling_directory() {
+        let dir = temp_dir();
+        let project = dir.join("a/b/project");
+        let shared = dir.join("a/b/shared/connectors/sink.d");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(shared.join("test.toml"), "key = \"val\"").unwrap();
+
+        let (found, depth) = find_upward(&project, "shared/connectors/sink.d").unwrap();
+        assert_eq!(depth, 1); // project → a/b → found at a/b/shared/connectors/sink.d
+        assert!(found.is_dir());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_upward_returns_none_when_not_found() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let result = find_upward(&dir, "connectors/sink.d");
+        assert!(result.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_upward_depth_zero_when_local() {
+        let dir = temp_dir();
+        let local = dir.join("connectors/sink.d");
+        std::fs::create_dir_all(&local).unwrap();
+
+        let (found, depth) = find_upward(&dir, "connectors/sink.d").unwrap();
+        assert_eq!(depth, 0);
+        assert!(found.is_dir());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── check_models with external config paths ────────────────────
+
+    #[test]
+    fn check_models_resolves_external_rules_from_config() {
+        let dir = temp_dir();
+        setup_models_dir(&dir);
+        // Remove local rules — force external path resolution
+        std::fs::remove_dir_all(dir.join("models/rules")).unwrap();
+
+        // Create external rules directory
+        let ext = dir.join("shared/rules");
+        std::fs::create_dir_all(&ext).unwrap();
+        std::fs::write(
+            ext.join("test.wfl"),
+            "use \"auth.wfs\"\nrule test_rule { events { e : auth_events } on each e where true -> score(1.0) entity(ip, e.sip) yield auth_alerts (sip = e.sip, alert_type = \"t\") }\n",
+        )
+        .unwrap();
+
+        let cfg_rules = Some("../shared/rules/*.wfl".to_string());
+        let mut err = 0;
+        let ok = check_models(&dir, &dir.join("conf"), &cfg_rules, &None, &mut err);
+        assert!(ok > 0, "external WFL should be resolved and parsed");
+        assert_eq!(err, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_models_errors_on_missing_external_rules_path() {
+        let dir = temp_dir();
+        setup_models_dir(&dir);
+        std::fs::remove_dir_all(dir.join("models/rules")).unwrap();
+
+        let cfg_rules = Some("../nonexistent/*.wfl".to_string());
+        let mut err = 0;
+        let ok = check_models(&dir, &dir.join("conf"), &cfg_rules, &None, &mut err);
+        // ok is still 0 (rules not found), but err is not incremented
+        // because missing directory is a warning, not an error
+        assert_eq!(ok, 0, "missing external rules should not count as ok");
+        assert_eq!(err, 0, "missing external rules is a warning, not an error");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_models_resolves_external_schemas_from_config() {
+        let dir = temp_dir();
+        setup_models_dir(&dir);
+        std::fs::remove_dir_all(dir.join("models/schemas")).unwrap();
+
+        let ext = dir.join("shared/schemas");
+        std::fs::create_dir_all(&ext).unwrap();
+        std::fs::write(
+            ext.join("test.wfs"),
+            "window conn_events {\n    stream = \"conn_events\"\n    time = event_time\n    over = 30m\n    fields { event_time: time  sip: ip }\n}",
+        )
+        .unwrap();
+
+        let cfg_schemas = Some("../shared/schemas/*.wfs".to_string());
+        let mut err = 0;
+        let ok = check_models(&dir, &dir.join("conf"), &None, &cfg_schemas, &mut err);
+        assert!(ok > 0, "external WFS should be resolved and parsed");
         assert_eq!(err, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
