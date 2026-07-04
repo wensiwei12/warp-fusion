@@ -5,6 +5,8 @@ LINE_CNT=${LINE_CNT:-3000}
 
 # ---- pre-check ----
 source "$(dirname "${BASH_SOURCE[0]}")/../deps-check.sh"
+echo "0> wfadm check wfusion..."
+(cd wfusion && wfadm check) || { echo "  ✗ wfusion check failed, abort"; exit 1; }
 # -------------------
 
 cleanup() {

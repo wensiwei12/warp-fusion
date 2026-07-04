@@ -1,10 +1,28 @@
 // wfadm check — validate wf-rules project integrity
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::connectors;
 use wf_lang::{lint_wfl, parse_wfg, parse_wfl, parse_wfs};
+
+// ── ANSI color helpers ────────────────────────────────────────────────
+const RED: &str = "\x1b[31m";
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const RESET: &str = "\x1b[0m";
+
+fn red(s: &str) -> String {
+    format!("{RED}{s}{RESET}")
+}
+
+fn green(s: &str) -> String {
+    format!("{GREEN}{s}{RESET}")
+}
+
+fn yellow(s: &str) -> String {
+    format!("{YELLOW}{s}{RESET}")
+}
 
 pub fn run() -> Result<(), String> {
     check_project(Path::new("."))
@@ -34,31 +52,54 @@ pub(crate) fn check_project(root: &Path) -> Result<(), String> {
     // ── conf ──────────────────────────────────────────────────────────
     println!("\n  ── conf ──");
     let conf_path = root.join("conf").join("wfusion.toml");
+    let mut cfg_rules_path: Option<String> = None;
+    let mut cfg_schemas_path: Option<String> = None;
     if conf_path.exists() {
         match fs::read_to_string(&conf_path) {
             Ok(content) => {
-                if content.parse::<toml::Value>().is_ok() {
-                    ok += 1;
-                    println!("  ✓  wfusion.toml");
-                } else {
-                    err += 1;
-                    eprintln!("  ✗  wfusion.toml — invalid TOML");
+                match content.parse::<toml::Value>() {
+                    Ok(toml_val) => {
+                        ok += 1;
+                        println!("  {}  wfusion.toml", green("✓"));
+                        // Extract rules/schemas paths from runtime section
+                        if let Some(runtime) = toml_val.get("runtime") {
+                            cfg_rules_path = runtime
+                                .get("rules")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            cfg_schemas_path = runtime
+                                .get("schemas")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                        }
+                    }
+                    Err(e) => {
+                        err += 1;
+                        eprintln!("  {}  wfusion.toml — invalid TOML: {}", red("✗"), e);
+                    }
                 }
             }
             Err(e) => {
                 err += 1;
-                eprintln!("  ✗  wfusion.toml — read error: {e}");
+                eprintln!("  {}  wfusion.toml — read error: {}", red("✗"), e);
             }
         }
     } else {
         err += 1;
-        eprintln!("  ✗  wfusion.toml — not found");
+        eprintln!("  {}  wfusion.toml — not found", red("✗"));
     }
 
     // ── models ────────────────────────────────────────────────────────
     println!("  ── models ──");
 
-    let models_ok = check_models(root, &mut err);
+    let conf_dir = root.join("conf");
+    let models_ok = check_models(
+        root,
+        &conf_dir,
+        &cfg_rules_path,
+        &cfg_schemas_path,
+        &mut err,
+    );
     if models_ok > 0 {
         ok += models_ok;
     }
@@ -78,23 +119,23 @@ pub(crate) fn check_project(root: &Path) -> Result<(), String> {
         let (sink_count, sink_errs) = validate_sink_dir(&conn_dir, true);
         if sink_errs == 0 {
             ok += 1;
-            println!("  ✓  sink.d/ ({sink_count} .toml)");
+            println!("  {}  sink.d/ ({sink_count} .toml)", green("✓"));
         } else {
             err += 1;
         }
     } else {
-        eprintln!("  ✗  sink.d/ — not found");
+        eprintln!("  {}  sink.d/ — not found", red("✗"));
     }
 
     // ── Result ────────────────────────────────────────────────────────
     println!();
     if err > 0 {
         eprintln!("  ── Result ──");
-        eprintln!("  ✗  {err} error(s)  |  {ok} ok");
+        eprintln!("  {}  {err} error(s)  |  {ok} ok", red("✗"));
         Err(format!("validation failed with {err} error(s)"))
     } else {
         println!("  ── Result ──");
-        println!("  ✓  all checks passed ({ok} ok)");
+        println!("  {}  all checks passed ({ok} ok)", green("✓"));
         Ok(())
     }
 }
@@ -113,13 +154,13 @@ fn check_topology(root: &Path, err: &mut u32) -> u32 {
             if sub_dir.is_dir() {
                 let (count, errs) = validate_sink_dir(&sub_dir, true);
                 if errs == 0 {
-                    println!("  ✓  sinks/{part}/ ({count} .toml)");
+                    println!("  {}  sinks/{part}/ ({count} .toml)", green("✓"));
                     ok += 1;
                 } else {
                     *err += 1;
                 }
             } else {
-                eprintln!("  ✗  sinks/{part}/ — not found");
+                eprintln!("  {}  sinks/{part}/ — not found", red("✗"));
             }
         }
 
@@ -128,9 +169,9 @@ fn check_topology(root: &Path, err: &mut u32) -> u32 {
         if defaults.exists() {
             if let Err(e) = validate_sink_file(&defaults) {
                 *err += 1;
-                eprintln!("  ✗  sinks/defaults.toml — {e}");
+                eprintln!("  {}  sinks/defaults.toml — {e}", red("✗"));
             } else {
-                println!("  ✓  sinks/defaults.toml");
+                println!("  {}  sinks/defaults.toml", green("✓"));
             }
         }
 
@@ -139,20 +180,20 @@ fn check_topology(root: &Path, err: &mut u32) -> u32 {
         if conn_dir.is_dir() {
             let (count, errs) = validate_sink_dir(&conn_dir, true);
             if errs == 0 {
-                println!("  ✓  sinks/connectors/sink.d/ ({count} .toml)");
+                println!("  {}  sinks/connectors/sink.d/ ({count} .toml)", green("✓"));
             } else {
                 *err += 1;
             }
         }
     } else {
-        eprintln!("  ✗  sinks/ — directory not found");
+        eprintln!("  {}  sinks/ — directory not found", red("✗"));
     }
 
     // sources
     let sources_dir = root.join("topology").join("sources");
     if sources_dir.is_dir() {
         let src_count = count_files(&sources_dir, "toml");
-        println!("  ✓  sources/ ({src_count} .toml)");
+        println!("  {}  sources/ ({src_count} .toml)", green("✓"));
         ok += 1;
     }
 
@@ -193,14 +234,46 @@ fn list_files(dir: &Path, ext: &str) -> Vec<std::path::PathBuf> {
 }
 
 /// Deep validation: parse all .wfl, .wfs, .wfg files.
-fn check_models(root: &Path, err: &mut u32) -> u32 {
+fn check_models(
+    root: &Path,
+    conf_dir: &Path,
+    cfg_rules_path: &Option<String>,
+    cfg_schemas_path: &Option<String>,
+    err: &mut u32,
+) -> u32 {
     let mut ok = 0u32;
 
     // ── WFL (rules/) ───────────────────────────────────────────────
     let rules_dir = root.join("models").join("rules");
     let wfl_files = list_files(&rules_dir, "wfl");
     if wfl_files.is_empty() {
-        eprintln!("  ✗  rules/ — directory not found or empty");
+        // Try external path from config
+        if let Some(ext_path) = cfg_rules_path {
+            if let Some(ext_dir) = resolve_config_dir(conf_dir, ext_path) {
+                let ext_files = list_files(&ext_dir, "wfl");
+                if !ext_files.is_empty() {
+                    ok += 1;
+                    let display_path = strip_glob(ext_path);
+                    println!(
+                        "  {}  rules/ → {display_path} ({} .wfl, external)",
+                        green("✓"),
+                        ext_files.len()
+                    );
+                } else {
+                    eprintln!(
+                        "  {}  rules/ — directory not found or empty (config: {ext_path})",
+                        red("✗")
+                    );
+                }
+            } else {
+                eprintln!(
+                    "  {}  rules/ — directory not found or empty (config: {ext_path})",
+                    red("✗")
+                );
+            }
+        } else {
+            eprintln!("  {}  rules/ — directory not found or empty", red("✗"));
+        }
     } else {
         let mut parsed = Vec::new();
         let mut parse_errs = 0u32;
@@ -211,7 +284,8 @@ fn check_models(root: &Path, err: &mut u32) -> u32 {
                     Err(e) => {
                         parse_errs += 1;
                         eprintln!(
-                            "  ✗  {} — parse error: {}",
+                            "  {}  {} — parse error: {}",
+                            red("✗"),
                             f.file_name().unwrap_or_default().to_string_lossy(),
                             e
                         );
@@ -220,7 +294,8 @@ fn check_models(root: &Path, err: &mut u32) -> u32 {
                 Err(e) => {
                     parse_errs += 1;
                     eprintln!(
-                        "  ✗  {} — read error: {e}",
+                        "  {}  {} — read error: {e}",
+                        red("✗"),
                         f.file_name().unwrap_or_default().to_string_lossy()
                     );
                 }
@@ -236,7 +311,8 @@ fn check_models(root: &Path, err: &mut u32) -> u32 {
                 for w in &warnings {
                     let rule = w.rule.as_deref().unwrap_or("?");
                     eprintln!(
-                        "  ⚠  {} ({rule}): {}",
+                        "  {}  {} ({rule}): {}",
+                        yellow("⚠"),
                         f.file_name().unwrap_or_default().to_string_lossy(),
                         w.message
                     );
@@ -248,12 +324,13 @@ fn check_models(root: &Path, err: &mut u32) -> u32 {
             ok += 1;
             if lint_warnings > 0 {
                 println!(
-                    "  ✓  rules/ ({} .wfl, {} lint warning(s))",
+                    "  {}  rules/ ({} .wfl, {} lint warning(s))",
+                    green("✓"),
                     wfl_files.len(),
                     lint_warnings
                 );
             } else {
-                println!("  ✓  rules/ ({} .wfl)", wfl_files.len());
+                println!("  {}  rules/ ({} .wfl)", green("✓"), wfl_files.len());
             }
         } else {
             *err += 1;
@@ -264,7 +341,33 @@ fn check_models(root: &Path, err: &mut u32) -> u32 {
     let schemas_dir = root.join("models").join("schemas");
     let wfs_files = list_files(&schemas_dir, "wfs");
     if wfs_files.is_empty() {
-        eprintln!("  ✗  schemas/ — directory not found or empty");
+        // Try external path from config
+        if let Some(ext_path) = cfg_schemas_path {
+            if let Some(ext_dir) = resolve_config_dir(conf_dir, ext_path) {
+                let ext_files = list_files(&ext_dir, "wfs");
+                if !ext_files.is_empty() {
+                    ok += 1;
+                    let display_path = strip_glob(ext_path);
+                    println!(
+                        "  {}  schemas/ → {display_path} ({} .wfs, external)",
+                        green("✓"),
+                        ext_files.len()
+                    );
+                } else {
+                    eprintln!(
+                        "  {}  schemas/ — directory not found or empty (config: {ext_path})",
+                        red("✗")
+                    );
+                }
+            } else {
+                eprintln!(
+                    "  {}  schemas/ — directory not found or empty (config: {ext_path})",
+                    red("✗")
+                );
+            }
+        } else {
+            eprintln!("  {}  schemas/ — directory not found or empty", red("✗"));
+        }
     } else {
         let mut parse_errs = 0u32;
         for f in &wfs_files {
@@ -273,7 +376,8 @@ fn check_models(root: &Path, err: &mut u32) -> u32 {
                     if let Err(e) = parse_wfs(&content) {
                         parse_errs += 1;
                         eprintln!(
-                            "  ✗  {} — parse error: {e}",
+                            "  {}  {} — parse error: {e}",
+                            red("✗"),
                             f.file_name().unwrap_or_default().to_string_lossy()
                         );
                     }
@@ -281,7 +385,8 @@ fn check_models(root: &Path, err: &mut u32) -> u32 {
                 Err(e) => {
                     parse_errs += 1;
                     eprintln!(
-                        "  ✗  {} — read error: {e}",
+                        "  {}  {} — read error: {e}",
+                        red("✗"),
                         f.file_name().unwrap_or_default().to_string_lossy()
                     );
                 }
@@ -290,7 +395,7 @@ fn check_models(root: &Path, err: &mut u32) -> u32 {
 
         if parse_errs == 0 {
             ok += 1;
-            println!("  ✓  schemas/ ({} .wfs)", wfs_files.len());
+            println!("  {}  schemas/ ({} .wfs)", green("✓"), wfs_files.len());
         } else {
             *err += 1;
         }
@@ -309,7 +414,8 @@ fn check_models(root: &Path, err: &mut u32) -> u32 {
                     if let Err(e) = parse_wfg(&content) {
                         parse_errs += 1;
                         eprintln!(
-                            "  ✗  {} — parse error: {e}",
+                            "  {}  {} — parse error: {e}",
+                            red("✗"),
                             f.file_name().unwrap_or_default().to_string_lossy()
                         );
                     }
@@ -317,7 +423,8 @@ fn check_models(root: &Path, err: &mut u32) -> u32 {
                 Err(e) => {
                     parse_errs += 1;
                     eprintln!(
-                        "  ✗  {} — read error: {e}",
+                        "  {}  {} — read error: {e}",
+                        red("✗"),
                         f.file_name().unwrap_or_default().to_string_lossy()
                     );
                 }
@@ -326,13 +433,42 @@ fn check_models(root: &Path, err: &mut u32) -> u32 {
 
         if parse_errs == 0 {
             ok += 1;
-            println!("  ✓  scenarios/ ({} .wfg)", wfg_files.len());
+            println!("  {}  scenarios/ ({} .wfg)", green("✓"), wfg_files.len());
         } else {
             *err += 1;
         }
     }
 
     ok
+}
+
+/// Resolve a glob-like path from config (e.g. "../../models/rules/wfl/*.wfl")
+/// relative to the conf directory, stripping the trailing /*.ext glob pattern
+/// to get the actual directory path.
+fn resolve_config_dir(conf_dir: &Path, glob_path: &str) -> Option<PathBuf> {
+    let dir_pattern = strip_glob(glob_path);
+    let resolved = conf_dir.join(dir_pattern);
+    // Canonicalize to check existence and resolve ..
+    if let Ok(canonical) = resolved.canonicalize() {
+        if canonical.is_dir() {
+            return Some(canonical);
+        }
+    }
+    // Fallback: try without canonicalize (for paths that don't exist yet)
+    if resolved.is_dir() {
+        return Some(resolved);
+    }
+    None
+}
+
+/// Strip the trailing glob pattern (e.g. "/*.wfl") from a config path,
+/// returning the directory portion for display.
+fn strip_glob(glob_path: &str) -> &str {
+    if let Some(pos) = glob_path.rfind('/') {
+        &glob_path[..pos]
+    } else {
+        glob_path
+    }
 }
 
 /// Validate all .toml files in a directory recursively.
@@ -352,10 +488,11 @@ fn validate_sink_dir(dir: &Path, quiet: bool) -> (u32, u32) {
                 files += 1;
                 if let Err(e) = validate_sink_file(&path) {
                     errors += 1;
-                    eprintln!("  ✗  {} — {e}", path.display());
+                    eprintln!("  {}  {} — {e}", red("✗"), path.display());
                 } else if !quiet {
                     println!(
-                        "  ✓  {}",
+                        "  {}  {}",
+                        green("✓"),
                         path.file_name().unwrap_or_default().to_string_lossy()
                     );
                 }
@@ -487,7 +624,7 @@ rule test_rule {
         )
         .unwrap();
         let mut err = 0;
-        let ok = check_models(&dir, &mut err);
+        let ok = check_models(&dir, &dir.join("conf"), &None, &None, &mut err);
         assert!(ok > 0, "valid WFL should parse");
         assert_eq!(err, 0);
         let _ = std::fs::remove_dir_all(&dir);
@@ -503,7 +640,7 @@ rule test_rule {
         )
         .unwrap();
         let mut err = 0;
-        let _ = check_models(&dir, &mut err);
+        let _ = check_models(&dir, &dir.join("conf"), &None, &None, &mut err);
         assert!(err > 0, "invalid WFL should produce errors");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -526,7 +663,7 @@ rule no_close {
         )
         .unwrap();
         let mut err = 0;
-        let ok = check_models(&dir, &mut err);
+        let ok = check_models(&dir, &dir.join("conf"), &None, &None, &mut err);
         assert!(ok > 0);
         assert_eq!(err, 0);
         let _ = std::fs::remove_dir_all(&dir);
@@ -539,7 +676,7 @@ rule no_close {
         let real_wfs = "window conn_events {\n    stream = \"conn_events\"\n    time = event_time\n    over = 30m\n    fields {\n        event_time: time\n        sip: ip\n        dip: ip\n    }\n}";
         std::fs::write(dir.join("models/schemas/test.wfs"), real_wfs).unwrap();
         let mut err = 0;
-        let ok = check_models(&dir, &mut err);
+        let ok = check_models(&dir, &dir.join("conf"), &None, &None, &mut err);
         assert!(ok > 0, "valid WFS should parse");
         assert_eq!(err, 0);
         let _ = std::fs::remove_dir_all(&dir);
@@ -551,7 +688,7 @@ rule no_close {
         setup_models_dir(&dir);
         std::fs::write(dir.join("models/schemas/bad.wfs"), "}}}} gibberish").unwrap();
         let mut err = 0;
-        let _ = check_models(&dir, &mut err);
+        let _ = check_models(&dir, &dir.join("conf"), &None, &None, &mut err);
         assert!(err > 0, "invalid WFS should produce errors");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -571,7 +708,7 @@ scenario test_case<seed=42> {
         )
         .unwrap();
         let mut err = 0;
-        let ok = check_models(&dir, &mut err);
+        let ok = check_models(&dir, &dir.join("conf"), &None, &None, &mut err);
         assert!(ok > 0, "valid WFG should parse");
         assert_eq!(err, 0);
         let _ = std::fs::remove_dir_all(&dir);
@@ -583,7 +720,7 @@ scenario test_case<seed=42> {
         setup_models_dir(&dir);
         std::fs::write(dir.join("models/scenarios/bad.wfg"), "not wfg").unwrap();
         let mut err = 0;
-        let _ = check_models(&dir, &mut err);
+        let _ = check_models(&dir, &dir.join("conf"), &None, &None, &mut err);
         assert!(err > 0, "invalid WFG should produce errors");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -605,7 +742,7 @@ scenario with_use<seed=1> {
         )
         .unwrap();
         let mut err = 0;
-        let ok = check_models(&dir, &mut err);
+        let ok = check_models(&dir, &dir.join("conf"), &None, &None, &mut err);
         assert!(ok > 0);
         assert_eq!(err, 0);
         let _ = std::fs::remove_dir_all(&dir);
