@@ -92,10 +92,10 @@ pub(crate) fn check_project(root: &Path) -> Result<(), String> {
     // ── models ────────────────────────────────────────────────────────
     println!("  ── models ──");
 
-    let conf_dir = root.to_path_buf();
+    let base_dir = root.to_path_buf();
     let models_ok = check_models(
         root,
-        &conf_dir,
+        &base_dir,
         &cfg_rules_path,
         &cfg_schemas_path,
         &mut err,
@@ -265,7 +265,7 @@ fn resolve_model_dir(
     ext: &str,
     local_dir: &Path,
     cfg_path: &Option<String>,
-    conf_dir: &Path,
+    base_dir: &Path,
 ) -> Option<ResolvedFiles> {
     let local_files = list_files(local_dir, ext);
     if !local_files.is_empty() {
@@ -278,7 +278,7 @@ fn resolve_model_dir(
 
     // Try external path from config
     let ext_path = cfg_path.as_deref()?;
-    let ext_dir = resolve_config_dir(conf_dir, ext_path)?;
+    let ext_dir = resolve_config_dir(base_dir, ext_path)?;
     let ext_files = list_files(&ext_dir, ext);
     if ext_files.is_empty() {
         eprintln!(
@@ -327,7 +327,7 @@ fn report_wfl_ok(count: usize, lint_count: u32, resolved: &ResolvedFiles, ok: &m
 
 fn check_models(
     root: &Path,
-    conf_dir: &Path,
+    base_dir: &Path,
     cfg_rules_path: &Option<String>,
     cfg_schemas_path: &Option<String>,
     err: &mut u32,
@@ -336,7 +336,7 @@ fn check_models(
 
     // ── WFL (rules/) ───────────────────────────────────────────────
     let rules_dir = root.join("models").join("rules");
-    match resolve_model_dir("rules", "wfl", &rules_dir, cfg_rules_path, conf_dir) {
+    match resolve_model_dir("rules", "wfl", &rules_dir, cfg_rules_path, base_dir) {
         Some(resolved) => {
             let mut parsed = Vec::new();
             let mut parse_errs = 0u32;
@@ -405,7 +405,7 @@ fn check_models(
 
     // ── WFS (schemas/) ─────────────────────────────────────────────
     let schemas_dir = root.join("models").join("schemas");
-    match resolve_model_dir("schemas", "wfs", &schemas_dir, cfg_schemas_path, conf_dir) {
+    match resolve_model_dir("schemas", "wfs", &schemas_dir, cfg_schemas_path, base_dir) {
         Some(resolved) => {
             let mut parse_errs = 0u32;
             for f in &resolved.files {
