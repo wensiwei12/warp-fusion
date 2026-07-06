@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, fmt};
-use wf_config::{FusionConfig, RawFusionConfigTree};
+use wf_config::{ConfigVarContext, FusionConfig, FusionConfigLoader, RawFusionConfigTree};
 use wf_runtime::lifecycle::Reactor;
 use wf_runtime::tracing_init::{DomainFormat, FileFields};
 use wfgen::verify::ActualAlert;
@@ -153,25 +153,13 @@ async fn e2e_datagen_brute_force() {
         .unwrap_or_default();
 
     // ---- Build FusionConfig (inline TOML, file source, connector-based sinks) ----
-    let toml_str = format!(
+    // Write window config to a separate file.
+    let windows_dir = artifact_dir.join("models");
+    std::fs::create_dir_all(&windows_dir).unwrap();
+    let windows_path = windows_dir.join("windows.toml");
+    std::fs::write(
+        &windows_path,
         r#"
-mode = "batch"
-sinks = "sinks"
-work_root = "{}"
-
-[[sources]]
-type = "file"
-name = "ingress"
-path = "{}"
-data_format = "arrow_framed"
-stream = ""
-
-[runtime]
-executor_parallelism = 2
-rule_exec_timeout = "30s"
-schemas = "count/schemas/*.wfs"
-rules   = "count/rules/*.wfl"
-
 [window_defaults]
 evict_interval = "30s"
 max_window_bytes = "256MB"
@@ -190,6 +178,29 @@ over_cap = "30m"
 mode = "local"
 max_window_bytes = "64MB"
 over_cap = "1h"
+"#,
+    )
+    .unwrap();
+
+    let toml_str = format!(
+        r#"
+mode = "batch"
+windows = "models/windows.toml"
+sinks = "sinks"
+work_root = "{}"
+
+[[sources]]
+type = "file"
+name = "ingress"
+path = "{}"
+data_format = "arrow_framed"
+stream = ""
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "count/schemas/*.wfs"
+rules   = "count/rules/*.wfl"
 
 [vars]
 FAIL_THRESHOLD = "3"
@@ -197,7 +208,16 @@ FAIL_THRESHOLD = "3"
         artifact_dir.display(),
         source_path.display()
     );
-    let config: FusionConfig = toml_str.parse().expect("failed to parse config TOML");
+    let config_path = artifact_dir.join("wfusion.toml");
+    std::fs::write(&config_path, &toml_str).unwrap();
+    let config = FusionConfigLoader::new(
+        &config_path,
+        &[],
+        &ConfigVarContext::new(),
+        Some(&artifact_dir),
+    )
+    .load()
+    .expect("failed to parse config TOML");
     // Raw tree is the reload baseline; these e2e tests never reload, so a
     // minimal tree parsed from the same toml is sufficient.
     let raw = RawFusionConfigTree::from_toml_str(&toml_str, &base_dir).expect("parse raw toml");

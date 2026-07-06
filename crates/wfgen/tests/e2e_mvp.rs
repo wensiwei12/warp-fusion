@@ -15,7 +15,7 @@ use tokio::net::TcpStream;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, fmt};
-use wf_config::{FusionConfig, RawFusionConfigTree};
+use wf_config::{ConfigVarContext, FusionConfig, FusionConfigLoader, RawFusionConfigTree};
 use wf_runtime::lifecycle::Reactor;
 use wf_runtime::tracing_init::{DomainFormat, FileFields};
 
@@ -73,9 +73,39 @@ async fn e2e_brute_force_alert() {
     // `data_format = "arrow_framed"` tells our BatchSource adapter how to decode
     // each framed payload.
     const TCP_PORT: u16 = 17900;
+
+    // Write window config to a separate file.
+    let windows_dir = artifact_dir.join("models");
+    std::fs::create_dir_all(&windows_dir).unwrap();
+    std::fs::write(
+        windows_dir.join("windows.toml"),
+        r#"
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "0s"
+late_policy = "drop"
+
+[window.auth_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "30m"
+
+[window.security_alerts]
+mode = "local"
+max_window_bytes = "64MB"
+over_cap = "1h"
+"#,
+    )
+    .unwrap();
+
     let toml_str = format!(
         r#"
 mode = "daemon"
+windows = "models/windows.toml"
 sinks = "sinks"
 work_root = "{}"
 
@@ -95,25 +125,6 @@ rule_exec_timeout = "30s"
 schemas = "count/schemas/*.wfs"
 rules   = "count/rules/*.wfl"
 
-[window_defaults]
-evict_interval = "30s"
-max_window_bytes = "256MB"
-max_total_bytes = "2GB"
-evict_policy = "time_first"
-watermark = "5s"
-allowed_lateness = "0s"
-late_policy = "drop"
-
-[window.auth_events]
-mode = "local"
-max_window_bytes = "256MB"
-over_cap = "30m"
-
-[window.security_alerts]
-mode = "local"
-max_window_bytes = "64MB"
-over_cap = "1h"
-
 [vars]
 FAIL_THRESHOLD = "3"
 "#,
@@ -122,7 +133,16 @@ FAIL_THRESHOLD = "3"
         TCP_PORT
     );
 
-    let config: FusionConfig = toml_str.parse().expect("failed to parse config TOML");
+    let config_path = artifact_dir.join("wfusion.toml");
+    std::fs::write(&config_path, &toml_str).unwrap();
+    let config = FusionConfigLoader::new(
+        &config_path,
+        &[],
+        &ConfigVarContext::new(),
+        Some(&artifact_dir),
+    )
+    .load()
+    .expect("failed to parse config TOML");
 
     // base_dir points to the examples/ directory so .wfs/.wfl are resolved.
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
