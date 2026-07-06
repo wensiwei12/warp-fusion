@@ -70,7 +70,10 @@ pub fn init_project(project_dir: &str, _name: &str, scope: &str) -> Result<(), S
         "wf-rules project created at {} (scope: {scope:?})",
         root.canonicalize().unwrap_or(root.to_path_buf()).display()
     );
-    println!("  cd {} && wfusion run", project_dir);
+    println!(
+        "  cd {} && wfusion daemon --config conf/wfusion.toml",
+        project_dir
+    );
 
     // 3. Ensure a bearer token exists for the admin API. The default config
     //    points admin_api.auth.token_file at $HOME/.warp_fusion/admin_api.token;
