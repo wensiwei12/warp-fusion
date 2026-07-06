@@ -12,10 +12,6 @@ pub(crate) const CONF_WFUSION: TemplateFile = (
     "conf/wfusion.toml",
     include_str!("../../templates/conf/wfusion.toml"),
 );
-pub(crate) const CONF_WINDOWS: TemplateFile = (
-    "models/schemas/windows.toml",
-    include_str!("../../templates/models/schemas/windows.toml"),
-);
 
 // ── models / rules ─────────────────────────────────────────────────────
 
