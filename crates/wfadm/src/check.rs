@@ -92,7 +92,7 @@ pub(crate) fn check_project(root: &Path) -> Result<(), String> {
     // ── models ────────────────────────────────────────────────────────
     println!("  ── models ──");
 
-    let conf_dir = root.join("conf");
+    let conf_dir = root.to_path_buf();
     let models_ok = check_models(
         root,
         &conf_dir,

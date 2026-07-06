@@ -76,9 +76,8 @@ fn resolve_config_load_parts(
             )
         })
         .collect::<Result<_, _>>()?;
-    let default_base_dir = config_path
-        .parent()
-        .expect("config path must have a parent directory");
+    let default_base_dir =
+        std::env::current_dir().source_err(EngineReason::Cli, "current working directory")?;
     let runtime_base_dir = if let Some(work_dir) = work_dir {
         let path = work_dir.canonicalize().source_err(
             EngineReason::Cli,

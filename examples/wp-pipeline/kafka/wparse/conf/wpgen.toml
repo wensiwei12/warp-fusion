@@ -5,6 +5,9 @@ count = 5000
 speed = 5000
 parallel = 1
 
+[models]
+wpl = "../../models/wpl"
+
 [output]
 connect = "tcp_sink"
 

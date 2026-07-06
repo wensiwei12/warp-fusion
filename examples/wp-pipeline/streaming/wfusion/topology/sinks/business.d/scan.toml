@@ -6,5 +6,5 @@ windows = ["scan_alerts"]
 connect = "file_json_sink"
 name = "scan_json"
 [sink_group.sinks.params]
-base = "../../data/alerts"
+base = "../data/alerts"
 file = "scan.ndjson"

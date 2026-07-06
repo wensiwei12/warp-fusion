@@ -1,12 +1,12 @@
 
-sources_dir = "../topology/sources"
-sinks = "../topology/sinks"
+sources_dir = "topology/sources"
+sinks = "topology/sinks"
 
 [runtime]
 executor_parallelism = 4
 rule_exec_timeout = "30s"
-schemas = "../../../models/schemas/*.wfs"
-rules = "../../../models/wfl/*.wfl"
+schemas = "../../models/schemas/*.wfs"
+rules = "../../models/wfl/*.wfl"
 
 [window_defaults]
 evict_interval = "30s"

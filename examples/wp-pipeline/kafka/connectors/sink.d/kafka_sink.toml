@@ -1,9 +1,0 @@
-[[connectors]]
-id = "kafka_sink"
-type = "kafka"
-allow_override = ["brokers", "topic", "fmt"]
-
-[connectors.params]
-brokers = "localhost:9092"
-fmt = "json"
-topic = "wp_events"
