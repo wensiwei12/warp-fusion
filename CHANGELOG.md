@@ -2,6 +2,26 @@
 
 All notable changes to wfusion will be documented in this file.
 
+## [Unreleased]
+
+### wfusion — 路径基准从 config-file-relative 改为 working-dir-relative
+
+- **Break**: `runtime_base_dir` 默认值从 `config_path.parent()`（配置文件所在 `conf/` 目录）改为 `current_dir()`（进程工作目录）。`wfadm check` 同步修正。
+- 影响：`wfusion.toml` 中所有相对路径（`sources_dir` / `sinks` / `schemas` / `rules`）均需去掉一层 `..`。
+  - 旧: `"../topology/sources"` → 新: `"topology/sources"`
+  - 旧: `"../../../models/schemas/"` → 新: `"../../models/schemas/"`
+- `business.d/*.toml` 中的 `base` 路径同样需去掉一层 `..`（`"../../data/alerts"` → `"../data/alerts"`）。
+- 与 wparse 的路径基准统一（均为 working-dir-relative），消除同项目内路径层数不一致的问题。
+- `--work-dir` CLI 参数逻辑不受影响（显式指定时优先级高于默认值）。
+
+### 示例管线修复
+
+- **streaming**: 修复 `parsed_netflow.toml` 缺少 `protocol = "arrow"` 导致 Arrow IPC 解码失败。
+- **streaming**: `wpgen.toml` 增加 `[models].wpl` 配置，与 `wparse.toml` 共享 models 目录。
+- **streaming / kafka**: `run.sh` 中 `wpgen sample` 发送端口改为整数（避免 connector 参数类型不匹配），启动顺序增加 `wait_port` 就绪探针替代固定 `sleep`。
+- **kafka**: wfusion source `data_format` 从 `arrow_framed` 改为 `ndjson`，匹配 wparse kafka sink 的 JSON 输出。
+- **kafka**: 删除 `demo.toml`（调试 sink，与 kafka sink 同配 `oml = ["*"]` 导致 first-match-wins 路由到 kafka sink 失败）。
+
 ## [0.1.17] — 2026-07-01
 
 ### wfusion — admin API 在线热重载

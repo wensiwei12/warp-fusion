@@ -1,5 +1,25 @@
 # Changelog (English)
 
+## [Unreleased] — 2026-07-06
+
+### wfusion — path base changed from config-file-relative to working-dir-relative
+
+- **Break**: Default `runtime_base_dir` changed from `config_path.parent()` (the `conf/` dir containing the config file) to `current_dir()` (process working directory). `wfadm check` updated accordingly.
+- Impact: all relative paths in `wfusion.toml` (`sources_dir` / `sinks` / `schemas` / `rules`) must remove one `..` level.
+  - Before: `"../topology/sources"` → After: `"topology/sources"`
+  - Before: `"../../../models/schemas/"` → After: `"../../models/schemas/"`
+- `base` paths in `business.d/*.toml` also remove one `..` level (`"../../data/alerts"` → `"../data/alerts"`).
+- Unifies path resolution with wparse (both now working-dir-relative), eliminating inconsistent `..` counts within the same project.
+- `--work-dir` CLI flag behavior unchanged (explicit override takes priority).
+
+### Example pipelines — fixed
+
+- **streaming**: Added missing `protocol = "arrow"` in `parsed_netflow.toml` to fix Arrow IPC decode errors.
+- **streaming**: Added `[models].wpl` in `wpgen.toml` to share models directory with `wparse.toml`.
+- **streaming / kafka**: Changed `wpgen sample` output port to integer (avoids connector param type mismatch), replaced fixed `sleep` with `wait_port` readiness probes in `run.sh`.
+- **kafka**: Changed wfusion source `data_format` from `arrow_framed` to `ndjson` to match wparse kafka sink's JSON output.
+- **kafka**: Removed `demo.toml` (debug sink whose `oml = ["*"]` matched first in OML routing, preventing kafka sink from receiving records).
+
 ## [Unreleased] — 2026-06-22
 
 ### Dependencies — Centralized & Upgraded
