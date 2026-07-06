@@ -200,7 +200,7 @@ pub(super) fn resolve_tag_for_version(
     let names = repo
         .tag_names(None)
         .map_err(|e| conf_err_source("list tags failed", e))?;
-    for name in names.iter().filter_map(|s| s) {
+    for name in names.iter().flatten() {
         let Some((normalized, _)) = parse_tag_version(name) else {
             continue;
         };
