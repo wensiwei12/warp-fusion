@@ -5,7 +5,12 @@ use clap::{Parser, Subcommand};
 use wfgen::error::WfgenResult;
 
 #[derive(Parser)]
-#[command(name = "wfgen", about = "WarpFusion test data generator")]
+#[command(
+    name = "wfgen",
+    version,
+    about = "WarpFusion test data generator",
+    propagate_version = true
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -218,5 +223,23 @@ async fn run_cli() -> WfgenResult<()> {
             interval,
             rate_sleep,
         } => wfgen::cmd_stream::run(scenario_dir, ws, wfl, addr, interval, rate_sleep).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::error::ErrorKind;
+
+    use super::*;
+
+    #[test]
+    fn top_level_version_flag_is_available() {
+        let result = Cli::try_parse_from(["wfgen", "--version"]);
+        let err = match result {
+            Ok(_) => panic!("--version should stop parsing with version output"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), ErrorKind::DisplayVersion);
+        assert!(err.to_string().contains(env!("CARGO_PKG_VERSION")));
     }
 }
