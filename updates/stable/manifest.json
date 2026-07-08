@@ -1,9 +1,9 @@
 {
   "version": "0.1.22",
   "channel": "stable",
-  "published_at": "2026-07-07T02:44:05Z",
+  "published_at": "2026-07-08T07:04:44Z",
   "git_ref": "v0.1.22",
-  "git_commit": "6712999da573505124937cd756e22d3ba8c0d449",
+  "git_commit": "2b0ee48154aff563767cc22c7634c0991a571b8f",
   "assets": {
     "aarch64-apple-darwin": {
       "url": "https://github.com/wp-labs/warp-fusion/releases/download/v0.1.22/warp-fusion-v0.1.22-aarch64-apple-darwin.tar.gz",

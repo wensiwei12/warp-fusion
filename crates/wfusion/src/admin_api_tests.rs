@@ -1081,7 +1081,10 @@ async fn status_includes_reloading_field() {
         .expect("get status");
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let body: serde_json::Value = resp.json().await.expect("json");
-    assert!(body.get("reloading").is_some(), "status must include reloading");
+    assert!(
+        body.get("reloading").is_some(),
+        "status must include reloading"
+    );
     assert_eq!(body["reloading"], false);
     servant.shutdown().await;
 }
@@ -1148,4 +1151,211 @@ fn append_project_remote(root: &Path, repo_url: &str, init_version: &str) {
         "\n[project_remote]\nenabled = true\nrepo = '{repo_url}'\ninit_version = '{init_version}'\n"
     ));
     std::fs::write(&path, content).unwrap();
+}
+
+// ── e2e: remote sync → daemon reload (full success path) ─────────────
+
+/// Create a local git remote with two releases:
+///   v1.0.0 — initial rule (score 70)
+///   v1.0.1 — updated rule (score 99)
+///
+/// The remote carries `models/schemas/security.wfs`, `models/rules/v1/brute_force.wfl`,
+/// and `models/version.txt`, so a `sync_project_remote` into the work root
+/// populates the same paths the engine reads.
+fn create_rule_remote_fixture() -> wf_project_remote::test_support::RemoteFixture {
+    use wf_project_remote::test_support::RemoteFixture;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = git2::Repository::init(temp.path()).expect("init remote repo");
+
+    // The remote's wfusion.toml must contain ALL sections the engine needs,
+    // including admin_api and project_remote. Since the sync overwrites
+    // conf/wfusion.toml, the reloaded config must match the booted config
+    // (except for rules/models content which lives outside conf/).
+    let remote_url = temp.path().to_str().expect("path utf8");
+
+    // v1.0.0 — initial release
+    let models = temp.path().join("models");
+    std::fs::create_dir_all(models.join("schemas")).unwrap();
+    std::fs::create_dir_all(models.join("rules/v1")).unwrap();
+    std::fs::create_dir_all(temp.path().join("conf")).unwrap();
+    std::fs::create_dir_all(temp.path().join("topology")).unwrap();
+    std::fs::create_dir_all(temp.path().join("connectors")).unwrap();
+    std::fs::write(models.join("version.txt"), "1.0.0\n").unwrap();
+    std::fs::write(models.join("schemas/security.wfs"), SECURITY_SCHEMA).unwrap();
+    std::fs::write(models.join("rules/v1/brute_force.wfl"), BRUTE_FORCE_RULE).unwrap();
+    // Full config — identical across releases (only models/ content changes).
+    std::fs::write(
+        temp.path().join("conf/wfusion.toml"),
+        remote_config_toml(remote_url),
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("models/windows.toml"),
+        AUTH_SECURITY_WINDOWS_TOML,
+    )
+    .unwrap();
+    git_commit_all(&repo, "release 1.0.0");
+    git_tag_head(&repo, "v1.0.0");
+
+    // v1.0.1 — updated rule (different score → rule-only change, hot-reloadable)
+    std::fs::write(models.join("version.txt"), "1.0.1\n").unwrap();
+    std::fs::write(models.join("rules/v1/brute_force.wfl"), BRUTE_FORCE_RULE_V2).unwrap();
+    git_commit_all(&repo, "release 1.0.1");
+    git_tag_head(&repo, "v1.0.1");
+
+    let remote_path = temp.path().to_path_buf();
+    RemoteFixture::from_parts(temp, remote_path)
+}
+
+/// The remote's wfusion.toml — must be byte-identical across releases so
+/// sync doesn't cause a config diff. Contains all sections including
+/// admin_api and project_remote (pointing at the remote's own path).
+fn remote_config_toml(remote_url: &str) -> String {
+    format!(
+        r#"mode = "daemon"
+windows = "models/windows.toml"
+sinks = "sinks"
+
+[[sources]]
+type = "file"
+name = "seed"
+path = "seed.ndjson"
+stream = "syslog"
+data_format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/v1/*.wfl"
+
+[vars]
+FAIL_THRESHOLD = "3"
+
+[admin_api]
+enabled = true
+bind = "127.0.0.1:0"
+
+[admin_api.auth]
+token_file = "runtime/admin_api.token"
+
+[project_remote]
+enabled = true
+repo = '{remote_url}'
+init_version = '1.0.0'
+"#
+    )
+}
+
+fn git_commit_all(repo: &git2::Repository, message: &str) {
+    let mut index = repo.index().expect("open index");
+    index
+        .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+        .expect("add all");
+    index.write().expect("write index");
+    let tree_id = index.write_tree().expect("write tree");
+    let tree = repo.find_tree(tree_id).expect("find tree");
+    let sig = git2::Signature::now("e2e-test", "e2e@test.local").expect("signature");
+    let parent = repo
+        .head()
+        .ok()
+        .and_then(|head| head.target())
+        .and_then(|oid| repo.find_commit(oid).ok());
+    match parent.as_ref() {
+        Some(parent) => repo
+            .commit(Some("HEAD"), &sig, &sig, message, &tree, &[parent])
+            .expect("commit"),
+        None => repo
+            .commit(Some("HEAD"), &sig, &sig, message, &tree, &[])
+            .expect("initial commit"),
+    };
+}
+
+fn git_tag_head(repo: &git2::Repository, tag: &str) {
+    let obj = repo
+        .head()
+        .expect("head")
+        .peel(git2::ObjectType::Commit)
+        .expect("peel head");
+    repo.tag_lightweight(tag, &obj, false).expect("create tag");
+}
+
+/// Boot a real engine whose `models/` directory is managed by
+/// `[project_remote]`. The work root is synced from the remote at v1.0.0
+/// before boot, so the engine loads the initial rules. A subsequent
+/// `update_remote` reload fetches v1.0.1 (different rule score) and the
+/// daemon applies the hot swap.
+async fn boot_engine_with_remote_rules() -> (tempfile::TempDir, String, RuntimeServant) {
+    let remote = create_rule_remote_fixture();
+    let work = tempfile::tempdir().unwrap();
+    let work_root = work.path();
+
+    // Sync initial release (v1.0.0) into the work root.
+    let conf = wf_project_remote::test_support::single_conf(remote.repo_url(), "1.0.0");
+    wf_project_remote::sync_project_remote(work_root, &conf, None).expect("initial sync");
+
+    // Write sink layout + token + seed (not in the remote repo).
+    write_sink_layout(work_root);
+    std::fs::create_dir_all(work_root.join("runtime")).unwrap();
+    write_token(work_root, "runtime/admin_api.token");
+    std::fs::write(work_root.join("seed.ndjson"), "").unwrap();
+
+    // The synced conf/wfusion.toml already contains admin_api + project_remote
+    // (from the remote repo). Boot the engine directly.
+    use wf_config::{ConfigVarContext, FusionConfigLoader};
+    use wf_runtime::lifecycle::Reactor;
+    let cfg_path = work_root.join("conf/wfusion.toml");
+    let ctx = ConfigVarContext::new();
+    let loader = FusionConfigLoader::new(&cfg_path, &[], &ctx, Some(work_root));
+    let raw = loader.load_raw().expect("raw");
+    let mut fusion_config = loader.load().expect("config");
+    // Override bind to ephemeral port (remote config has 127.0.0.1:0 but
+    // FusionConfig may have resolved it differently).
+    fusion_config.admin_api.bind = "127.0.0.1:0".to_string();
+    let admin_conf = fusion_config.admin_api.clone();
+    let reactor = Reactor::start(fusion_config, raw, work_root)
+        .await
+        .expect("start");
+    let control = reactor.control_handle();
+    let cancel = control.cancel_token();
+    let config_source = ReloadConfigSource::new(cfg_path, Vec::new(), ctx, work_root.to_path_buf());
+    let admin = start_if_enabled(work_root, &admin_conf, control, config_source)
+        .await
+        .expect("start admin")
+        .expect("admin enabled");
+    let base = format!("http://{}", admin.local_addr());
+    std::mem::forget(admin);
+    // Keep the remote alive for the duration of the test.
+    std::mem::forget(remote);
+    let run_task = tokio::spawn(async move { reactor.run().await });
+    (work, base, RuntimeServant { run_task, cancel })
+}
+
+#[tokio::test]
+async fn reload_update_remote_success_applies_new_rules() {
+    // Full e2e: daemon boots on v1.0.0 rules → POST reload with
+    // update_remote=true → git fetch v1.0.1 (score 70→99) → engine applies
+    // the hot swap → 200 + result=applied.
+    let (_temp, base, servant) = boot_engine_with_remote_rules().await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+    let resp = client
+        .post(format!("{base}/admin/v1/reloads/model"))
+        .bearer_auth("test-token")
+        .body(r#"{"update_remote": true}"#)
+        .send()
+        .await
+        .expect("post");
+
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(
+        status,
+        reqwest::StatusCode::OK,
+        "expected 200, got {status}: {body}"
+    );
+    assert_eq!(body["accepted"], true, "expected accepted=true: {body}");
+    assert_eq!(body["result"], "applied", "expected result=applied: {body}");
+
+    servant.shutdown().await;
 }

@@ -13,13 +13,22 @@ use tempfile::{TempDir, tempdir};
 use wf_config::project_remote::{ProjectRemoteConf, RepoGroupConf};
 
 pub struct RemoteFixture {
-    _temp: TempDir,
-    remote_path: PathBuf,
+    pub(crate) _temp: TempDir,
+    pub(crate) remote_path: PathBuf,
 }
 
 impl RemoteFixture {
     pub fn repo_url(&self) -> &str {
         self.remote_path.to_str().expect("repo path utf8")
+    }
+
+    /// Create a `RemoteFixture` from an existing temp dir + repo path.
+    /// The caller must have already `git init` + committed + tagged.
+    pub fn from_parts(temp: TempDir, remote_path: PathBuf) -> Self {
+        Self {
+            _temp: temp,
+            remote_path,
+        }
     }
 }
 
