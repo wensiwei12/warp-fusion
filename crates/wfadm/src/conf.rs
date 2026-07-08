@@ -136,7 +136,8 @@ where
         Option<RemoteGroup>,
     ) -> Result<wf_project_remote::ProjectRemoteUpdateResult, String>,
 {
-    let result = wf_project_remote::run_remote_update(work_root, requested_version, group, sync_fn)?;
+    let result =
+        wf_project_remote::run_remote_update(work_root, requested_version, group, sync_fn)?;
 
     if json {
         let body = serde_json::to_string_pretty(&result)
@@ -177,7 +178,6 @@ fn load_project_remote_conf(
             .map_err(|e| format!("load {} failed: {e}", conf_path.display()))?;
     Ok(config.project_remote)
 }
-
 
 fn parse_group(raw: Option<&str>) -> Result<Option<RemoteGroup>, String> {
     match raw {

@@ -256,7 +256,11 @@ pub fn run_remote_update<F>(
     sync_fn: F,
 ) -> Result<ProjectRemoteUpdateResult, String>
 where
-    F: FnOnce(&Path, Option<&str>, Option<RemoteGroup>) -> Result<ProjectRemoteUpdateResult, String>,
+    F: FnOnce(
+        &Path,
+        Option<&str>,
+        Option<RemoteGroup>,
+    ) -> Result<ProjectRemoteUpdateResult, String>,
 {
     tracing::info!(
         domain = "sys",

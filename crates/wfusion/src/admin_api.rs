@@ -6,9 +6,9 @@ use std::convert::Infallible;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Once;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Bytes;
@@ -714,14 +714,9 @@ fn run_remote_sync(src: &ReloadConfigSource, version: Option<&str>) -> Result<()
             "update_remote requested but [project_remote] is disabled in config".to_string(),
         );
     }
-    wf_project_remote::run_remote_update(
-        &src.work_dir,
-        version,
-        None,
-        |work_root, ver, _group| {
-            wf_project_remote::sync_project_remote(work_root, &remote_conf, ver)
-        },
-    )
+    wf_project_remote::run_remote_update(&src.work_dir, version, None, |work_root, ver, _group| {
+        wf_project_remote::sync_project_remote(work_root, &remote_conf, ver)
+    })
     .map(|_| ())
 }
 
