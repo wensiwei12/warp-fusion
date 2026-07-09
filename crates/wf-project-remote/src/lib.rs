@@ -30,7 +30,8 @@ use self::repo::{
 };
 pub use self::state::{
     acquire_project_remote_lock, capture_project_remote_snapshot_with_group,
-    restore_project_remote_update,
+    capture_runtime_artifact_snapshot, restore_project_remote_update,
+    restore_runtime_artifact_snapshot,
 };
 #[cfg(test)]
 use self::state::{capture_project_remote_snapshot, restore_project_remote_snapshot};
@@ -68,7 +69,6 @@ pub struct ProjectRemoteSnapshot {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ProjectRuntimeArtifactSnapshot {
     pub(crate) rule_mapping: Option<Vec<u8>>,
     authority_db: Option<Vec<u8>>,
@@ -140,7 +140,7 @@ struct BackupManifest {
     existing_dirs: Vec<String>,
 }
 
-pub(crate) enum ProjectRemoteMode {
+pub enum ProjectRemoteMode {
     Single {
         repo: String,
         init_version: String,
@@ -277,7 +277,35 @@ where
 
     let _lock_guard = acquire_project_remote_lock(work_root)?;
     let rollback_snapshot = capture_project_remote_snapshot_with_group(work_root, group)?;
+    run_remote_update_locked(
+        work_root,
+        requested_version,
+        group,
+        &_lock_guard,
+        &rollback_snapshot,
+        sync_fn,
+    )
+}
 
+/// Remote-update orchestration for callers that already hold
+/// [`ProjectRemoteLockGuard`]. Uses the provided snapshot for the validation
+/// rollback path, so the caller can keep the same snapshot for a later runtime
+/// reload rollback.
+pub fn run_remote_update_locked<F>(
+    work_root: &Path,
+    requested_version: Option<&str>,
+    group: Option<RemoteGroup>,
+    _lock_guard: &ProjectRemoteLockGuard,
+    rollback_snapshot: &ProjectRemoteSnapshot,
+    sync_fn: F,
+) -> Result<ProjectRemoteUpdateResult, String>
+where
+    F: FnOnce(
+        &Path,
+        Option<&str>,
+        Option<RemoteGroup>,
+    ) -> Result<ProjectRemoteUpdateResult, String>,
+{
     let result = sync_fn(work_root, requested_version, group)?;
     tracing::info!(
         domain = "sys",
@@ -301,7 +329,7 @@ where
             check_err
         );
         if let Err(rollback_err) =
-            restore_project_remote_update(work_root, &rollback_snapshot, result.changed)
+            restore_project_remote_update(work_root, rollback_snapshot, result.changed)
         {
             tracing::warn!(
                 domain = "sys",
@@ -373,9 +401,7 @@ pub fn current_project_group_versions<P: AsRef<Path>>(
     }
 }
 
-pub(crate) fn resolve_project_remote_mode(
-    conf: &ProjectRemoteConf,
-) -> Result<ProjectRemoteMode, String> {
+pub fn resolve_project_remote_mode(conf: &ProjectRemoteConf) -> Result<ProjectRemoteMode, String> {
     let has_single = !conf.repo.trim().is_empty();
     let has_models = conf.models.is_some();
     let has_infra = conf.infra.is_some();

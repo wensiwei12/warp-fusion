@@ -165,6 +165,44 @@ fn acquire_project_remote_lock_rejects_second_holder() {
 }
 
 #[test]
+fn run_remote_update_locked_uses_provided_snapshot_for_validate_rollback() {
+    let fixture = create_remote_fixture();
+    let work_root = create_work_root(&fixture);
+    write_model_version(work_root.path(), "1.4.2");
+    write_runtime_local_dirs(work_root.path());
+
+    let _lock_guard = acquire_project_remote_lock(work_root.path()).expect("hold lock");
+    let snapshot = capture_project_remote_snapshot_with_group(work_root.path(), None)
+        .expect("capture snapshot");
+
+    let err = run_remote_update_locked(
+        work_root.path(),
+        Some("1.4.3"),
+        None,
+        &_lock_guard,
+        &snapshot,
+        |work_root, version, _group| {
+            sync_project_remote_from_repo(work_root, fixture.repo_url(), version)
+        },
+    )
+    .expect_err("validate should fail because conf/wfusion.toml is absent");
+    assert!(
+        err.contains("project check failed after update"),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(
+        fs::read_to_string(work_root.path().join("models/version.txt")).expect("read version"),
+        "1.4.2\n"
+    );
+    assert!(!work_root.path().join(STATE_PATH).exists());
+    assert_eq!(
+        fs::read_to_string(work_root.path().join("runtime/admin_api.token")).expect("read token"),
+        "token\n"
+    );
+}
+
+#[test]
 fn dual_sync_models_only_updates_models_dir() {
     let models = create_models_remote_fixture();
     let infra = create_infra_remote_fixture();

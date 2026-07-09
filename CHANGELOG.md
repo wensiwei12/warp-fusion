@@ -2,6 +2,40 @@
 
 All notable changes to wfusion will be documented in this file.
 
+## [0.1.24] — 2026-07-09
+
+### wfusion — admin API 发布协议对齐 wparse
+
+- **Break**: `/admin/v1/reloads/model` 发布请求直接对齐 wparse 协议，使用 `wait` / `update` / `version` / `group` / `timeout_ms` / `reason`；移除旧的 `full` / `update_remote` 兼容语义。
+- **Break**: reload 不再通过 `full=true` 触发 L4 重启；遇到 requires-restart 变更时返回 `409` + `reload_failed`，由调用方决定后续重启策略。
+- **新增**: `wait=false` 非阻塞 reload，立即返回 `202` + `running`，后台完成后更新 status 中的 reload 状态。
+- **新增**: `GET /admin/v1/runtime/status` 对齐 wparse 字段，返回 `accepting_commands`、`project_version`、当前/最近 reload request id、结果和时间戳。
+- **新增**: `update=true` 支持 dual-repo `group=models|infra`，并在 dual-repo 模式下强制要求 `group`。
+- **安全**: 非 loopback `admin_api.bind` 必须启用 TLS；`admin_api.auth.mode` 仅接受 `bearer_token`；请求体大小使用 `admin_api.max_body_bytes` 校验。
+- **修复**: reload 和 `wfadm conf update` 共用 project remote 文件锁；本地 reload 也会持锁读取项目，避免与外部同步并发读写。
+- **修复**: `update=true` 后如果配置加载、runtime reload 或 blocked reload 失败，会回滚 project remote state、managed dirs 和 runtime artifacts。
+- **修复**: remote lock 冲突返回并记录 `update_in_progress`，不再误记为 `update_failed`。
+
+### wf-project-remote
+
+- **新增**: 导出 `ProjectRemoteMode` / `resolve_project_remote_mode`，供 daemon 在 reload 前判断 single-repo / dual-repo 发布模式。
+- **新增**: 导出 runtime artifact snapshot 捕获与恢复 API，用于 daemon 发布失败后的完整回滚。
+- **新增**: `run_remote_update_locked`，要求调用方显式持有 `ProjectRemoteLockGuard`，复用同一份 project snapshot 完成 sync 校验和 daemon reload 失败回滚。
+
+### wfadm — engine reload CLI
+
+- **Break**: `wfadm engine reload` 参数对齐 wparse：`--update` 替代 `--update-remote`，移除 `--full`，新增 `--wait <true|false>`、`--timeout-ms`、`--group`、`--reason`、`--request-id`。
+- **修复**: `--wait false` 现在作为显式 bool 参数解析，能够发送非阻塞 reload 请求。
+- **更新**: `engine status` 输出适配 `accepting_commands`、`reloading` 和 `project_version`。
+
+### 测试
+
+- **wfusion**: admin_api 测试扩展到 34 个，覆盖 wait=false、dual-repo group 校验、remote lock 冲突、update 后 reload 失败回滚、后台回滚状态清理。
+- **wf-project-remote**: 27 个测试，新增 `run_remote_update_locked` 复用调用方 snapshot 的校验回滚覆盖。
+- **验证**: `cargo check -p wfusion`、`cargo check -p wfadm`、`cargo check -p wf-project-remote`、`cargo test -p wfusion admin_api`、`cargo test -p wf-project-remote`、`bash -n wf-examples/core/remote_ctrl/run.sh`。
+
+---
+
 ## [0.1.23] — 2026-07-08
 
 ### wf-project-remote — 独立 crate 提取

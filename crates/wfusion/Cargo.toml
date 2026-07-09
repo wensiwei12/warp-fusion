@@ -1,6 +1,6 @@
 [package]
 name = "wfusion"
-version = "0.1.23" #@gxl:set(version)
+version = "0.1.24" #@gxl:set(version)
 edition.workspace = true
 license.workspace = true
 
@@ -20,6 +20,7 @@ clap = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+chrono = { workspace = true }
 moju-derive = { git = "https://github.com/dayu-sec/moju-derive.git", branch = "main" }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["server-auto", "tokio"] }

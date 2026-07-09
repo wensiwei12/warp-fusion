@@ -1,5 +1,7 @@
 # CLI 命令参考
 
+> Admin API 的状态查询、在线 reload 和发布操作详见 [`admin_api.md`](admin_api.md)。
+
 ## `wfusion` — 统一入口
 
 ```bash

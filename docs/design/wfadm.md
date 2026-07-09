@@ -1,144 +1,212 @@
 # wfadm — WarpFusion Admin CLI
 
-> 规划文档。`wfadm` 是 `wfusion`/`wfgen`/`wfl` 的**项目管理层**，不重复已有命令。
+- 状态: Current
+- 当前实现: `crates/wfadm`
+- 更新时间: 2026-07-09
 
-## 设计原则
+## 定位
 
-1. **不重复造轮子**：`wfusion` 已有的 `run`、`config`、`rule`、`scenario`、`version` 原封不动保留，`wfadm` 只加项目级管理能力
-2. **借鉴 `wproj` 模式**：参考 warp-parse 的 `wproj` CLI 结构（`init` → `check` → 各模块管理），去掉 wfusion 不需要的概念（`data`/`rescue`/`knowdb`/`model sources`）
-3. **统一入口**：`wfadm` 作为面向用户的单一入口，内部转发到 `wfusion`/`wfgen`/`wfl`
+`wfadm` 是 `wfusion` 项目的管理 CLI，负责项目初始化、配置对比、远端版本同步、项目校验、daemon 管理和自更新。它不再作为 `wfusion` / `wfgen` / `wfl` 的通用转发入口。
 
-## 已有命令（wfadm 不重复）
+当前顶层命令:
 
-| 命令 | 来源 | 说明 |
-|------|------|------|
-| `wfadm run` | `wfusion run` | 启动引擎 |
-| `wfadm config` | `wfusion config` | 配置渲染/比对/变量 |
-| `wfadm rule` | `wfusion rule` / `wfl` | 规则解释/校验/格式化/回放/测试 |
-| `wfadm scenario` | `wfgen` | 场景生成/校验/验证/发送/压测/流式 |
-| `wfadm version` | `wfusion version` | 版本检查 |
-
-> 以上命令 `wfadm` 直接转发到对应的二进制，不加任何额外逻辑。
-
-## 新增命令（wfadm 的项目管理层）
-
-### `wfadm init` — 创建 wf-rules 项目
-
-```bash
-wfadm init [--name <name>] [--dir <path>]
-```
-
-创建项目骨架：
-
-```
-<dir>/
-├── wfusion.toml              # 带注释的模板配置
-├── schemas/                  # WFS schema 文件
-│   └── example.wfs           # 示例 schema
-├── rules/                    # WFL 规则文件
-│   └── example.wfl           # 示例规则
-├── scenarios/                # wfgen 场景文件
-│   └── example.wfg           # 示例场景
-├── test/
-│   ├── sources/              # 测试用 source 配置
-│   └── sinks/                # 测试用 sink 配置
-│       ├── connectors/sink.d/
-│       ├── business.d/
-│       ├── infra.d/
-│       └── defaults.toml
-└── .gitignore
-```
-
-可选 `--from <repo-url>` 从远程模板仓库拉取。
-
-### `wfadm check` — 验证项目完整性
-
-```bash
-wfadm check [--dir <path>]
-```
-
-| 检查项 | 说明 |
-|--------|------|
-| schema 语法 | 所有 `.wfs` 文件可正常解析 |
-| rule 语法 | 所有 `.wfl` 文件编译通过 |
-| rule→schema 引用 | 规则的 `use "xxx.wfs"` 指向存在的 schema |
-| rule→window 引用 | 规则的 `events { alias : window }` 中 window 存在于 schema |
-| sink 配置 | `sinks/` 目录结构正确，connector 引用有效 |
-| sink→window 路由 | `business.d/` 中 `windows` 匹配实际存在的告警窗口 |
-| 场景校验 | 所有 `.wfg` 文件可正常解析 |
-
-### `wfadm conf` — 配置管理增强
-
-```bash
-# 渲染实际运行配置（合并 overlay + 变量）
-wfadm conf render
-
-# 显示每个配置项的来源
-wfadm conf origins [--prefix <path>]
-
-# 显示所有变量
-wfadm conf vars
-
-# 两个配置 diff
-wfadm conf diff --base base.toml --target other.toml
-```
-
-> 大部分功能 `wfusion config` 已有，`wfadm conf` 提供更友好的默认路径和输出格式。
-
-### `wfadm sink` — Sink 验证
-
-```bash
-# 列出所有 sink 组和路由
-wfadm sink list
-
-# 验证某个 yield_target 是否有对应 sink
-wfadm sink check <yield_target>
-
-# 验证整个 sink 配置
-wfadm sink validate
-```
-
-### `wfadm self-update` — 自更新
-
-```bash
-wfadm self-update [--version <ver>]
-```
-
-从 GitHub Releases 下载更新并替换二进制。
-
-## 命令总览
-
-```
+```text
 wfadm
-├── run          → wfusion run          (已有)
-├── config       → wfusion config       (已有)
-├── rule         → wfusion rule / wfl   (已有)
-├── scenario     → wfgen                (已有)
-├── version      → wfusion version      (已有)
-├── init         ★ 新建
-├── check        ★ 新建
-├── conf         ★ 增强（转发 wfusion config + 默认路径）
-├── sink         ★ 新建
-└── self-update  ★ 新建
+├── init
+├── conf
+│   ├── diff
+│   └── update
+├── check
+├── engine
+│   ├── status
+│   └── reload
+└── self-update
 ```
 
-## 实施顺序
+## init
 
-1. **`wfadm init`** — 最优先，降低新用户上手成本
-2. **`wfadm check`** — 项目验证，CI/CD 集成
-3. **`wfadm sink`** — sink 验证，对应本次调试中发现的 sinks 布局问题
-4. **`wfadm self-update`** — 运维必需
-5. **`wfadm conf`** — 已有基础，增强易用性
+创建本地项目:
 
-## 关键技术选型
+```bash
+wfadm init --dir . --name my-rules --mode normal
+```
 
-- CLI 框架：`clap`（与 `wfusion`/`wproj` 一致）
-- 模板引擎：`include_str!` 宏嵌入模板，或用 `handlebars` 做变量替换
-- 自更新：`reqwest` + 解析 GitHub Releases API，参考 `wproj/handlers/self_update.rs`
+`--mode`:
+
+- `full`
+- `normal`
+- `rules`
+- `conf`
+
+从远端仓库 bootstrap:
+
+```bash
+wfadm init \
+  --dir . \
+  --repo https://github.com/example/project.git \
+  --version 1.0.0
+```
+
+`--repo` 与 `--mode` 互斥。远端 bootstrap 会复用 project remote 同步与校验回滚流程。
+
+## conf diff
+
+比较两组 wfusion 配置:
+
+```bash
+wfadm conf diff \
+  --config conf/wfusion.toml \
+  --overlay conf/overlay.toml \
+  --var KEY=VALUE \
+  --to-config conf/new.toml \
+  --to-overlay conf/new-overlay.toml \
+  --to-var KEY=NEW \
+  --path-prefix runtime \
+  --expanded
+```
+
+用途:
+
+- 比较 raw / resolved 配置差异。
+- 支持 overlay、变量和 work dir。
+- 可限制输出路径前缀。
+
+## conf update
+
+从 `[project_remote]` 同步 managed dirs:
+
+```bash
+wfadm conf update \
+  --work-root . \
+  --version 1.0.1 \
+  --group models \
+  --json
+```
+
+语义:
+
+- 从 `<work-root>/conf/wfusion.toml` 读取 `[project_remote]`。
+- single-repo 可不传 `--group`。
+- dual-repo 使用 `--group models|infra`。
+- 同步流程为 lock → snapshot → git sync → validate → rollback on failure。
+
+输出字段:
+
+- requested version
+- current version
+- resolved tag
+- from / to revision
+- changed
+
+## check
+
+验证项目完整性:
+
+```bash
+wfadm check --dir .
+```
+
+检查范围包括:
+
+- wfusion 配置加载
+- sources / connectors / sinks
+- WFS schema
+- WFL rule
+- WFG scenario
+- rule 与 window/schema 引用关系
+
+## engine status
+
+查询 daemon admin API:
+
+```bash
+wfadm engine status \
+  --config conf/wfusion.toml
+```
+
+或显式指定 endpoint:
+
+```bash
+wfadm engine status \
+  --admin-url http://127.0.0.1:19080 \
+  --token-file runtime/admin_api.token \
+  --json
+```
+
+默认从 `conf/wfusion.toml` 读取:
+
+- `[admin_api].bind`
+- `[admin_api.auth].token_file`
+
+展示字段:
+
+- instance id
+- version
+- accepting_commands
+- reloading
+- project_version
+
+## engine reload
+
+触发在线 reload / publish:
+
+```bash
+wfadm engine reload \
+  --config conf/wfusion.toml \
+  --wait true \
+  --timeout-ms 15000
+```
+
+在线发布:
+
+```bash
+wfadm engine reload \
+  --update \
+  --version 1.0.1 \
+  --group models \
+  --wait false \
+  --reason "release"
+```
+
+参数:
+
+| 参数 | 说明 |
+|------|------|
+| `--admin-url` | 覆盖配置中的 admin API 地址 |
+| `--token-file` | 覆盖配置中的 token 文件 |
+| `--wait <true|false>` | 是否等待 reload 结果，默认 `true` |
+| `--timeout-ms` | 等待超时，默认 `15000` |
+| `--update` | reload 前执行 project remote sync |
+| `--version` | update 目标版本，要求 `--update` |
+| `--group` | dual-repo group，要求 `--update` |
+| `--reason` | 写入 daemon 日志 |
+| `--request-id` | 发送 `X-Request-Id` |
+| `--json` | 原样输出 daemon JSON |
+
+旧参数:
+
+- `--update-remote` 已移除，使用 `--update`。
+- `--full` 已移除，Admin API 不触发进程级重启。
+
+## self-update
+
+```bash
+wfadm self-update
+```
+
+从 stable update manifest 下载并替换当前二进制。
+
+## 设计约束
+
+- CLI 参数名与 Admin API 协议保持一致。
+- `engine reload` 不做本地 project remote sync；所有在线发布都由 daemon 持锁执行。
+- `conf update` 和 `engine reload --update` 共享 `wf-project-remote` 的 sync / lock / rollback 语义。
+- `engine reload --wait false` 必须能发送非阻塞请求，不能退化成 clap 无值 flag。
 
 ## 参考
 
-- `warp-parse/src/wproj/` — wproj 的完整实现
-- `warp-fusion/crates/wfusion/src/main.rs` — 当前 CLI 入口
-- `warp-fusion/crates/wfgen/src/main.rs` — wfgen 独立二进制
-- `warp-fusion/crates/wfl/src/main.rs` — wfl 独立二进制
+- `crates/wfadm/src/main.rs`
+- `crates/wfadm/src/conf.rs`
+- `crates/wfadm/src/engine.rs`
+- `docs/design/admin_api_reload_design.md`
+- `docs/design/project_remote_alignment.md`

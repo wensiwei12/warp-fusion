@@ -64,7 +64,7 @@ fn enabled_but_missing_token_is_error() {
 
 #[test]
 fn json_response_has_correct_content_type() {
-    let resp = json_response(StatusCode::OK, "{\"key\":\"value\"}");
+    let resp = json_response(StatusCode::OK, &serde_json::json!({"key":"value"}));
     assert_eq!(resp.status(), 200);
     assert_eq!(
         resp.headers().get("content-type").unwrap(),
@@ -195,7 +195,7 @@ async fn status_requires_bearer_token() {
     let body: serde_json::Value = resp.json().await.expect("parse json");
     assert!(body["instance_id"].is_string());
     assert!(body["version"].is_string());
-    assert_eq!(body["accepting"], true);
+    assert_eq!(body["accepting_commands"], true);
 
     runtime.shutdown().await;
 }
@@ -235,7 +235,7 @@ async fn status_reflects_cancel_state() {
         .expect("send status request");
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let body: serde_json::Value = resp.json().await.expect("parse json");
-    assert_eq!(body["accepting"], true);
+    assert_eq!(body["accepting_commands"], true);
 
     // Reactor cancelled → accepting=false
     cancel.cancel();
@@ -247,7 +247,7 @@ async fn status_reflects_cancel_state() {
         .expect("send status request after cancel");
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let body: serde_json::Value = resp.json().await.expect("parse json");
-    assert_eq!(body["accepting"], false);
+    assert_eq!(body["accepting_commands"], false);
 
     runtime.shutdown().await;
 }
@@ -388,24 +388,25 @@ fn tls_config(_dir: &Path, bind: &str, cert: &str, key: &str) -> AdminApiConf {
 }
 
 #[tokio::test]
-async fn allows_non_loopback_when_tls_disabled() {
+async fn rejects_non_loopback_when_tls_disabled() {
     let temp = tempfile::tempdir().unwrap();
     write_token(temp.path(), "runtime/admin_api.token");
     let mut config = test_config(true);
     config.bind = "0.0.0.0:0".to_string();
     config.auth.token_file = "runtime/admin_api.token".to_string();
     config.tls.enabled = false;
-    let runtime = start_if_enabled(
+    let err = start_if_enabled(
         temp.path(),
         &config,
         test_control_handle(),
         test_config_source(temp.path()),
     )
     .await
-    .expect("start non-loopback without tls")
-    .expect("enabled");
-    assert_eq!(runtime.local_addr().ip().to_string(), "0.0.0.0");
-    runtime.shutdown().await;
+    .expect_err("should reject non-loopback without tls");
+    assert!(
+        err.contains("requires admin_api.tls.enabled=true"),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]
@@ -710,13 +711,14 @@ async fn reload_applied_returns_200() {
     let resp = client
         .post(format!("{base}/admin/v1/reloads/model"))
         .bearer_auth("test-token")
+        .body(r#"{}"#)
         .send()
         .await
         .expect("post reload");
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let body: serde_json::Value = resp.json().await.expect("json");
     assert_eq!(body["accepted"], true);
-    assert_eq!(body["result"], "applied");
+    assert_eq!(body["result"], "reload_done");
 
     servant.shutdown().await;
 }
@@ -798,13 +800,14 @@ rule repeated_fail_bursts {
     let resp = client
         .post(format!("{base}/admin/v1/reloads/model"))
         .bearer_auth("test-token")
+        .body(r#"{}"#)
         .send()
         .await
         .expect("post");
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let body: serde_json::Value = resp.json().await.expect("json");
     assert_eq!(body["accepted"], true);
-    assert_eq!(body["result"], "applied");
+    assert_eq!(body["result"], "reload_done");
 
     cancel.cancel();
     let _ = run_task.await;
@@ -902,6 +905,7 @@ async fn reload_works_when_cli_mode_overrides_toml_mode() {
     let resp = client
         .post(format!("{base}/admin/v1/reloads/model"))
         .bearer_auth("test-token")
+        .body(r#"{}"#)
         .send()
         .await
         .expect("post");
@@ -911,7 +915,7 @@ async fn reload_works_when_cli_mode_overrides_toml_mode() {
         "reload should be applied despite CLI mode override"
     );
     let body: serde_json::Value = resp.json().await.expect("json");
-    assert_eq!(body["result"], "applied");
+    assert_eq!(body["result"], "reload_done");
 
     cancel.cancel();
     let _ = run_task.await;
@@ -933,6 +937,7 @@ async fn reload_with_broken_config_returns_error() {
     let resp = client
         .post(format!("{base}/admin/v1/reloads/model"))
         .bearer_auth("test-token")
+        .body(r#"{}"#)
         .send()
         .await
         .expect("post");
@@ -944,7 +949,7 @@ async fn reload_with_broken_config_returns_error() {
     );
     let body: serde_json::Value = resp.json().await.expect("json");
     assert_eq!(body["accepted"], false);
-    assert_eq!(body["result"], "error");
+    assert_eq!(body["result"], "reload_failed");
     // And the response must itself be valid JSON even though the error
     // message likely contains the offending toml fragment.
     assert!(body["error"].is_string());
@@ -969,6 +974,7 @@ async fn reload_after_shutdown_returns_error_not_hang() {
         client
             .post(format!("{base}/admin/v1/reloads/model"))
             .bearer_auth("test-token")
+            .body(r#"{}"#)
             .send(),
     )
     .await;
@@ -985,12 +991,11 @@ async fn reload_after_shutdown_returns_error_not_hang() {
     let _ = std::fs::remove_dir_all(temp.path());
 }
 
-// -- L4: full=true restart -------------------------------------------------
+// -- publish/reload -------------------------------------------------
 
-/// With `full=true`, a hot-reloadable change still returns 200 — don't
-/// waste a restart when rule-only changes suffice.
+/// A hot-reloadable change returns 200 with the wparse-aligned reload result.
 #[tokio::test]
-async fn reload_full_true_hot_applied_returns_200() {
+async fn reload_hot_applied_returns_200() {
     let (temp, base, servant) = boot_engine_with_admin(BRUTE_FORCE_RULE).await;
     std::fs::write(
         temp.path().join("rules/brute_force.wfl"),
@@ -1001,22 +1006,21 @@ async fn reload_full_true_hot_applied_returns_200() {
     let resp = client
         .post(format!("{base}/admin/v1/reloads/model"))
         .bearer_auth("test-token")
-        .body(r#"{"full": true}"#)
+        .body(r#"{}"#)
         .send()
         .await
         .expect("post");
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let body: serde_json::Value = resp.json().await.expect("json");
     assert_eq!(body["accepted"], true);
-    assert_eq!(body["result"], "applied");
+    assert_eq!(body["result"], "reload_done");
     servant.shutdown().await;
 }
 
-/// With `full=true` and a change that requires restart (changing mode in
-/// wfusion.toml), the reload returns 202 `restarting` and the reactor
-/// begins graceful shutdown.
+/// A change that requires restart is reported as a reload failure; Admin API
+/// does not trigger restart in the wparse-aligned publish protocol.
 #[tokio::test]
-async fn reload_full_true_blocked_returns_202() {
+async fn reload_blocked_returns_409() {
     let (temp, base, servant) = boot_engine_with_admin(BRUTE_FORCE_RULE).await;
     // Change mode from daemon to batch — a raw-diff restart-required field.
     let toml = std::fs::read_to_string(temp.path().join("wfusion.toml")).unwrap();
@@ -1029,23 +1033,20 @@ async fn reload_full_true_blocked_returns_202() {
     let resp = client
         .post(format!("{base}/admin/v1/reloads/model"))
         .bearer_auth("test-token")
-        .body(r#"{"full": true}"#)
+        .body(r#"{}"#)
         .send()
         .await
         .expect("post");
-    assert_eq!(resp.status(), reqwest::StatusCode::ACCEPTED);
+    assert_eq!(resp.status(), reqwest::StatusCode::CONFLICT);
     let body: serde_json::Value = resp.json().await.expect("json");
-    assert_eq!(body["accepted"], true);
-    assert_eq!(body["result"], "restarting");
-    // The reactor was asked to restart; wait for the run task to finish.
+    assert_eq!(body["accepted"], false);
+    assert_eq!(body["result"], "reload_failed");
     servant.shutdown().await;
 }
 
-/// With `full=true` and a broken config, the reload is rejected (5xx)
-/// WITHOUT triggering a restart — crash-loop prevention. (Future work:
-/// return 422 after `compile_reload_check` does full compilation.)
+/// With a broken config, the reload is rejected without triggering restart.
 #[tokio::test]
-async fn reload_full_true_broken_config_returns_error_not_restart() {
+async fn reload_broken_config_returns_error() {
     let (temp, base, servant) = boot_engine_with_admin(BRUTE_FORCE_RULE).await;
     std::fs::write(
         temp.path().join("wfusion.toml"),
@@ -1056,7 +1057,7 @@ async fn reload_full_true_broken_config_returns_error_not_restart() {
     let resp = client
         .post(format!("{base}/admin/v1/reloads/model"))
         .bearer_auth("test-token")
-        .body(r#"{"full": true}"#)
+        .body(r#"{}"#)
         .send()
         .await
         .expect("post");
@@ -1065,7 +1066,7 @@ async fn reload_full_true_broken_config_returns_error_not_restart() {
     assert!(resp.status().is_server_error());
     let body: serde_json::Value = resp.json().await.expect("json");
     assert_eq!(body["accepted"], false);
-    assert_eq!(body["result"], "error");
+    assert_eq!(body["result"], "reload_failed");
     servant.shutdown().await;
 }
 
@@ -1090,21 +1091,41 @@ async fn status_includes_reloading_field() {
 }
 
 #[tokio::test]
-async fn reload_update_remote_disabled_returns_502() {
-    // No [project_remote] in the fixture config → update_remote is rejected.
+async fn reload_wait_false_clears_reloading_when_done() {
     let (_temp, base, servant) = boot_engine_with_admin(BRUTE_FORCE_RULE).await;
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let resp = client
         .post(format!("{base}/admin/v1/reloads/model"))
         .bearer_auth("test-token")
-        .body(r#"{"update_remote": true}"#)
+        .body(r#"{"wait": false}"#)
         .send()
         .await
         .expect("post");
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_GATEWAY);
+    assert_eq!(resp.status(), reqwest::StatusCode::ACCEPTED);
+    let body: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(body["result"], "running");
+
+    wait_for_reload_result(&client, &base, "reload_done").await;
+
+    servant.shutdown().await;
+}
+
+#[tokio::test]
+async fn reload_update_disabled_returns_502() {
+    // No [project_remote] in the fixture config → update is rejected.
+    let (_temp, base, servant) = boot_engine_with_admin(BRUTE_FORCE_RULE).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let resp = client
+        .post(format!("{base}/admin/v1/reloads/model"))
+        .bearer_auth("test-token")
+        .body(r#"{"update": true, "version": "1.0.1"}"#)
+        .send()
+        .await
+        .expect("post");
+    assert_eq!(resp.status(), reqwest::StatusCode::INTERNAL_SERVER_ERROR);
     let body: serde_json::Value = resp.json().await.expect("json");
     assert_eq!(body["accepted"], false);
-    assert_eq!(body["result"], "error");
+    assert_eq!(body["result"], "update_failed");
     let err = body["error"].as_str().expect("error string");
     assert!(
         err.contains("disabled"),
@@ -1114,7 +1135,7 @@ async fn reload_update_remote_disabled_returns_502() {
 }
 
 #[tokio::test]
-async fn reload_update_remote_unknown_version_returns_502() {
+async fn reload_update_unknown_version_returns_502() {
     // [project_remote] points at a real local git remote; requesting a
     // non-existent version makes the in-process sync fail → 502. This proves
     // the daemon invokes the full run_remote_update path (git fetch + version
@@ -1127,14 +1148,14 @@ async fn reload_update_remote_unknown_version_returns_502() {
     let resp = client
         .post(format!("{base}/admin/v1/reloads/model"))
         .bearer_auth("test-token")
-        .body(r#"{"update_remote": true, "version": "9.9.9"}"#)
+        .body(r#"{"update": true, "version": "9.9.9"}"#)
         .send()
         .await
         .expect("post");
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_GATEWAY);
+    assert_eq!(resp.status(), reqwest::StatusCode::INTERNAL_SERVER_ERROR);
     let body: serde_json::Value = resp.json().await.expect("json");
     assert_eq!(body["accepted"], false);
-    assert_eq!(body["result"], "error");
+    assert_eq!(body["result"], "update_failed");
     servant.shutdown().await;
 }
 
@@ -1203,6 +1224,17 @@ fn create_rule_remote_fixture() -> wf_project_remote::test_support::RemoteFixtur
     git_commit_all(&repo, "release 1.0.1");
     git_tag_head(&repo, "v1.0.1");
 
+    // v1.0.2 — changes window layout, so the runtime reload is blocked and
+    // Admin API must roll the project back to the previous release.
+    std::fs::write(models.join("version.txt"), "1.0.2\n").unwrap();
+    std::fs::write(
+        temp.path().join("models/windows.toml"),
+        AUTH_SECURITY_WINDOWS_TOML.replace("over_cap = \"30m\"", "over_cap = \"1h\""),
+    )
+    .unwrap();
+    git_commit_all(&repo, "release 1.0.2");
+    git_tag_head(&repo, "v1.0.2");
+
     let remote_path = temp.path().to_path_buf();
     RemoteFixture::from_parts(temp, remote_path)
 }
@@ -1247,6 +1279,49 @@ init_version = '1.0.0'
     )
 }
 
+fn dual_remote_config_toml(repo_url: &str) -> String {
+    format!(
+        r#"mode = "daemon"
+windows = "models/windows.toml"
+sinks = "sinks"
+
+[[sources]]
+type = "file"
+name = "seed"
+path = "seed.ndjson"
+stream = "syslog"
+data_format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/v1/*.wfl"
+
+[vars]
+FAIL_THRESHOLD = "3"
+
+[admin_api]
+enabled = true
+bind = "127.0.0.1:0"
+
+[admin_api.auth]
+token_file = "runtime/admin_api.token"
+
+[project_remote]
+enabled = true
+
+[project_remote.models]
+repo = '{repo_url}'
+init_version = '1.0.0'
+
+[project_remote.infra]
+repo = '{repo_url}'
+init_version = '1.0.0'
+"#
+    )
+}
+
 fn git_commit_all(repo: &git2::Repository, message: &str) {
     let mut index = repo.index().expect("open index");
     index
@@ -1283,7 +1358,7 @@ fn git_tag_head(repo: &git2::Repository, tag: &str) {
 /// Boot a real engine whose `models/` directory is managed by
 /// `[project_remote]`. The work root is synced from the remote at v1.0.0
 /// before boot, so the engine loads the initial rules. A subsequent
-/// `update_remote` reload fetches v1.0.1 (different rule score) and the
+/// `update` reload fetches v1.0.1 (different rule score) and the
 /// daemon applies the hot swap.
 async fn boot_engine_with_remote_rules() -> (tempfile::TempDir, String, RuntimeServant) {
     let remote = create_rule_remote_fixture();
@@ -1332,9 +1407,9 @@ async fn boot_engine_with_remote_rules() -> (tempfile::TempDir, String, RuntimeS
 }
 
 #[tokio::test]
-async fn reload_update_remote_success_applies_new_rules() {
+async fn reload_update_success_applies_new_rules() {
     // Full e2e: daemon boots on v1.0.0 rules → POST reload with
-    // update_remote=true → git fetch v1.0.1 (score 70→99) → engine applies
+    // update=true → git fetch v1.0.1 (score 70→99) → engine applies
     // the hot swap → 200 + result=applied.
     let (_temp, base, servant) = boot_engine_with_remote_rules().await;
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
@@ -1342,7 +1417,7 @@ async fn reload_update_remote_success_applies_new_rules() {
     let resp = client
         .post(format!("{base}/admin/v1/reloads/model"))
         .bearer_auth("test-token")
-        .body(r#"{"update_remote": true}"#)
+        .body(r#"{"update": true, "version": "1.0.1"}"#)
         .send()
         .await
         .expect("post");
@@ -1355,7 +1430,198 @@ async fn reload_update_remote_success_applies_new_rules() {
         "expected 200, got {status}: {body}"
     );
     assert_eq!(body["accepted"], true, "expected accepted=true: {body}");
-    assert_eq!(body["result"], "applied", "expected result=applied: {body}");
+    assert_eq!(
+        body["result"], "reload_done",
+        "expected result=applied: {body}"
+    );
 
     servant.shutdown().await;
+}
+
+#[tokio::test]
+async fn reload_update_blocked_rolls_back_project() {
+    let (temp, base, servant) = boot_engine_with_remote_rules().await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+    let resp = client
+        .post(format!("{base}/admin/v1/reloads/model"))
+        .bearer_auth("test-token")
+        .body(r#"{"update": true, "version": "1.0.2"}"#)
+        .send()
+        .await
+        .expect("post");
+
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(
+        status,
+        reqwest::StatusCode::CONFLICT,
+        "expected 409, got {status}: {body}"
+    );
+    assert_eq!(body["result"], "reload_failed");
+
+    let state = std::fs::read_to_string(temp.path().join(".run/project_remote_state.json"))
+        .expect("state file");
+    assert!(
+        state.contains(r#""current_version": "1.0.0""#),
+        "project state should roll back to v1.0.0: {state}"
+    );
+    let version_txt = std::fs::read_to_string(temp.path().join("models/version.txt"))
+        .expect("models version marker");
+    assert_eq!(version_txt, "1.0.0\n");
+
+    servant.shutdown().await;
+}
+
+#[tokio::test]
+async fn reload_update_wait_false_blocked_rolls_back_project_in_background() {
+    let (temp, base, servant) = boot_engine_with_remote_rules().await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+    let resp = client
+        .post(format!("{base}/admin/v1/reloads/model"))
+        .bearer_auth("test-token")
+        .body(r#"{"wait": false, "update": true, "version": "1.0.2"}"#)
+        .send()
+        .await
+        .expect("post");
+
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(
+        status,
+        reqwest::StatusCode::ACCEPTED,
+        "expected 202, got {status}: {body}"
+    );
+    assert_eq!(body["result"], "running");
+
+    wait_for_project_version(temp.path(), "1.0.0").await;
+    let version_txt = std::fs::read_to_string(temp.path().join("models/version.txt"))
+        .expect("models version marker");
+    assert_eq!(version_txt, "1.0.0\n");
+
+    servant.shutdown().await;
+}
+
+#[tokio::test]
+async fn reload_update_dual_repo_requires_group() {
+    let (temp, base, servant) = boot_engine_with_remote_rules().await;
+    let remote = create_rule_remote_fixture();
+    std::fs::write(
+        temp.path().join("conf/wfusion.toml"),
+        dual_remote_config_toml(remote.repo_url()),
+    )
+    .unwrap();
+
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let resp = client
+        .post(format!("{base}/admin/v1/reloads/model"))
+        .bearer_auth("test-token")
+        .body(r#"{"update": true}"#)
+        .send()
+        .await
+        .expect("post");
+
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(
+        status,
+        reqwest::StatusCode::BAD_REQUEST,
+        "expected 400, got {status}: {body}"
+    );
+    assert_eq!(body["result"], "invalid_request");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("requires group"),
+        "unexpected body: {body}"
+    );
+
+    let status_resp = client
+        .get(format!("{base}/admin/v1/runtime/status"))
+        .bearer_auth("test-token")
+        .send()
+        .await
+        .expect("status");
+    assert_eq!(status_resp.status(), reqwest::StatusCode::OK);
+    let status_body: serde_json::Value = status_resp.json().await.expect("status json");
+    assert_eq!(status_body["reloading"], false);
+    assert_eq!(status_body["current_request_id"], serde_json::Value::Null);
+    assert_eq!(status_body["last_reload_result"], serde_json::Value::Null);
+
+    servant.shutdown().await;
+}
+
+#[tokio::test]
+async fn reload_update_lock_conflict_returns_409() {
+    let (temp, base, servant) = boot_engine_with_remote_rules().await;
+    let _lock_guard =
+        wf_project_remote::acquire_project_remote_lock(temp.path()).expect("hold remote lock");
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+    let resp = client
+        .post(format!("{base}/admin/v1/reloads/model"))
+        .bearer_auth("test-token")
+        .body(r#"{"update": true, "version": "1.0.1"}"#)
+        .send()
+        .await
+        .expect("post");
+
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(
+        status,
+        reqwest::StatusCode::CONFLICT,
+        "expected 409, got {status}: {body}"
+    );
+    assert_eq!(body["result"], "update_in_progress");
+    assert_eq!(body["accepted"], false);
+
+    let status_resp = client
+        .get(format!("{base}/admin/v1/runtime/status"))
+        .bearer_auth("test-token")
+        .send()
+        .await
+        .expect("status");
+    assert_eq!(status_resp.status(), reqwest::StatusCode::OK);
+    let status_body: serde_json::Value = status_resp.json().await.expect("status json");
+    assert_eq!(status_body["reloading"], false);
+    assert_eq!(status_body["last_reload_result"], "update_in_progress");
+
+    servant.shutdown().await;
+}
+
+async fn wait_for_project_version(work_root: &Path, expected: &str) {
+    let state_path = work_root.join(".run/project_remote_state.json");
+    for _ in 0..40 {
+        if let Ok(state) = std::fs::read_to_string(&state_path)
+            && state.contains(&format!(r#""current_version": "{expected}""#))
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let state = std::fs::read_to_string(&state_path).unwrap_or_else(|err| err.to_string());
+    panic!("project state did not roll back to {expected}: {state}");
+}
+
+async fn wait_for_reload_result(client: &reqwest::Client, base: &str, expected: &str) {
+    for _ in 0..40 {
+        let resp = client
+            .get(format!("{base}/admin/v1/runtime/status"))
+            .bearer_auth("test-token")
+            .send()
+            .await
+            .expect("status");
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+        let body: serde_json::Value = resp.json().await.expect("status json");
+        if body["last_reload_result"] == expected {
+            assert_eq!(body["reloading"], false);
+            assert_eq!(body["current_request_id"], serde_json::Value::Null);
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("reload result did not become {expected}");
 }
