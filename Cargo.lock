@@ -5349,7 +5349,6 @@ dependencies = [
 [[package]]
 name = "wf-config"
 version = "0.1.25"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.25#6d35d80f4a21dcf520009358b86a8f48b9aef3ef"
 dependencies = [
  "glob",
  "moju-derive",
@@ -5374,9 +5373,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wf-data"
+version = "0.1.25"
+dependencies = [
+ "chrono",
+ "serde_json",
+]
+
+[[package]]
 name = "wf-engine"
 version = "0.1.25"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.25#6d35d80f4a21dcf520009358b86a8f48b9aef3ef"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5400,7 +5406,6 @@ dependencies = [
 [[package]]
 name = "wf-lang"
 version = "0.1.25"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.25#6d35d80f4a21dcf520009358b86a8f48b9aef3ef"
 dependencies = [
  "moju-derive",
  "orion-error",
@@ -5426,7 +5431,6 @@ dependencies = [
 [[package]]
 name = "wf-runtime"
 version = "0.1.25"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v0.1.25#6d35d80f4a21dcf520009358b86a8f48b9aef3ef"
 dependencies = [
  "arrow",
  "async-broadcast",
@@ -5449,6 +5453,7 @@ dependencies = [
  "tracing-subscriber",
  "wf-config",
  "wf-connector-api",
+ "wf-data",
  "wf-engine",
  "wf-lang",
  "wp-arrow",
@@ -5517,6 +5522,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-wfl",
  "wf-config",
+ "wf-data",
  "wf-engine",
  "wf-lang",
  "wfgen",

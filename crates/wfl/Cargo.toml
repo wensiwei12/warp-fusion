@@ -14,6 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 wf-config.workspace = true
+wf-data.workspace = true
 wf-lang.workspace = true
 wf-engine.workspace = true
 wfgen = { path = "../wfgen" }

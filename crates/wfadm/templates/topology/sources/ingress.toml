@@ -1,4 +1,5 @@
 connect = "tcp_src"
+enable = true
 key = "ingress"
 stream = ""
 addr = "127.0.0.1"

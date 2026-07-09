@@ -1,4 +1,5 @@
 connect = "file_src"
+enable = true
 key = "conn_source"
 
 path = "data/conn_events.ndjson"

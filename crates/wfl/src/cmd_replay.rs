@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, IsTerminal};
 use std::path::PathBuf;
 
-use chrono::DateTime;
 use orion_error::conversion::SourceErr;
 
 use crate::error::{self, WflReason, WflResult, WflStructExt};
 use wf_config::ConfigVarContext;
+use wf_data::time::parse_json_timestamp_nanos;
 use wf_engine::alert::OutputRecord;
 use wf_engine::match_engine::{
     CepStateMachine, CloseReason, Event, RuleExecutor, StepResult, Value, WindowLookup,
@@ -634,19 +634,6 @@ fn collect_known_time_fields(schemas: &[WindowSchema]) -> HashSet<String> {
         .iter()
         .filter_map(|s| s.time_field.clone())
         .collect()
-}
-
-fn parse_json_timestamp_nanos(v: &serde_json::Value) -> Option<i64> {
-    match v {
-        serde_json::Value::Number(n) => n.as_f64().map(|f| f as i64),
-        serde_json::Value::String(s) => {
-            if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-                return dt.timestamp_nanos_opt();
-            }
-            s.parse::<i64>().ok()
-        }
-        _ => None,
-    }
 }
 
 fn infer_event_watermark_nanos(

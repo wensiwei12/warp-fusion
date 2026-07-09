@@ -226,6 +226,35 @@ rule multi_src {
     );
 }
 
+#[test]
+fn replay_time_field_accepts_millis_timestamp() {
+    let schemas = vec![make_auth_events_schema(), make_security_alerts_schema()];
+
+    let base_millis = 1_700_000_000_000i64;
+    let ndjson = (0..5)
+        .map(|i| {
+            format!(
+                r#"{{"_stream":"auth_stream","sip":"10.0.0.1","action":"failed","user":"admin","event_time":{}}}"#,
+                base_millis + i * 1_000
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let reader = BufReader::new(ndjson.as_bytes());
+
+    let result = replay_events(WFL_RULE, &schemas, reader, false).expect("replay should succeed");
+
+    assert_eq!(result.event_count, 5);
+    assert_eq!(result.match_count, 1);
+    assert_eq!(result.error_count, 0);
+    assert_eq!(result.alerts.len(), 1);
+    assert!(
+        result.alerts[0].fired_at.starts_with("2023-11-14"),
+        "millis timestamp should be normalized to event-time nanos, got {}",
+        result.alerts[0].fired_at
+    );
+}
+
 // ===========================================================================
 // Conv + mixed qualifying/non-qualifying: cross-layer e2e
 // ===========================================================================

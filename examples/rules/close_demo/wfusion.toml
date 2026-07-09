@@ -8,6 +8,7 @@ windows = "windows.toml"
 # 从 NDJSON 文件回放到 netflow stream
 [[sources]]
 connect = "file_src"
+enable = true
 name = "seed_netflow"
 path = "data/conn_events.ndjson"
 stream = "netflow"
