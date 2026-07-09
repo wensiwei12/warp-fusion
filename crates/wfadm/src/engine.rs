@@ -2,7 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use clap::Subcommand;
+use clap::{ArgAction, Subcommand};
+use serde::{Deserialize, Serialize};
 
 // ── CLI subcommands ────────────────────────────────────────────────────
 
@@ -28,15 +29,27 @@ pub enum EngineCommands {
         admin_url: Option<String>,
         #[arg(long)]
         token_file: Option<PathBuf>,
+        /// Wait for the reload result before returning
+        #[arg(long, action = ArgAction::Set, default_value_t = true)]
+        wait: bool,
+        /// Request timeout while waiting for reload result
+        #[arg(long, default_value_t = 15_000)]
+        timeout_ms: u64,
         /// Sync managed dirs from `[project_remote]` before reloading
         #[arg(long)]
-        update_remote: bool,
+        update: bool,
         /// Target version for the remote sync (auto-resolved if omitted)
-        #[arg(long, requires = "update_remote")]
+        #[arg(long, requires = "update")]
         version: Option<String>,
-        /// Upgrade a blocked (requires-restart) reload to a graceful restart
+        /// Target group for update in dual-repo mode: models or infra
+        #[arg(long, requires = "update")]
+        group: Option<String>,
+        /// Reason string included in daemon logs
         #[arg(long)]
-        full: bool,
+        reason: Option<String>,
+        /// Request id to send as X-Request-Id
+        #[arg(long)]
+        request_id: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -56,20 +69,56 @@ pub fn run(command: EngineCommands) -> Result<(), String> {
             config,
             admin_url,
             token_file,
-            update_remote,
+            wait,
+            timeout_ms,
+            update,
             version,
-            full,
+            group,
+            reason,
+            request_id,
             json,
         } => cmd_reload(
             &config,
             admin_url.as_deref(),
             token_file.as_deref(),
-            update_remote,
+            wait,
+            timeout_ms,
+            update,
             version.as_deref(),
-            full,
+            group.as_deref(),
+            reason.as_deref(),
+            request_id.as_deref(),
             json,
         ),
     }
+}
+
+#[derive(Debug, Serialize)]
+struct EngineReloadRequest<'a> {
+    wait: bool,
+    timeout_ms: u64,
+    update: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    group: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EngineReloadResponse {
+    request_id: String,
+    accepted: bool,
+    result: String,
+    update: Option<bool>,
+    requested_version: Option<String>,
+    current_version: Option<String>,
+    resolved_tag: Option<String>,
+    group: Option<String>,
+    force_replaced: Option<bool>,
+    warning: Option<String>,
+    error: Option<String>,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -191,35 +240,60 @@ fn cmd_status(
     if let Some(ver) = val.get("version").and_then(|v| v.as_str()) {
         println!("  Version   : {ver}");
     }
-    if let Some(acc) = val.get("accepting").and_then(|v| v.as_bool()) {
+    if let Some(acc) = val.get("accepting_commands").and_then(|v| v.as_bool()) {
         println!("  Accepting : {acc}");
+    }
+    if let Some(reloading) = val.get("reloading").and_then(|v| v.as_bool()) {
+        println!("  Reloading : {reloading}");
+    }
+    if let Some(project_version) = val.get("project_version") {
+        println!("  Project V : {project_version}");
     }
     Ok(())
 }
 
 // ── Reload ─────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_reload(
     config_path: &Path,
     admin_url: Option<&str>,
     token_file: Option<&Path>,
-    update_remote: bool,
+    wait: bool,
+    timeout_ms: u64,
+    update: bool,
     version: Option<&str>,
-    full: bool,
+    group: Option<&str>,
+    reason: Option<&str>,
+    request_id: Option<&str>,
     json: bool,
 ) -> Result<(), String> {
+    if !update && version.is_some() {
+        return Err("--version requires --update".to_string());
+    }
+    if !update && group.is_some() {
+        return Err("--group requires --update".to_string());
+    }
+
     let target = resolve_target(config_path, admin_url, token_file)?;
     let url = format!("{}/admin/v1/reloads/model", target.base_url);
 
-    let body = serde_json::json!({
-        "full": full,
-        "update_remote": update_remote,
-        "version": version,
-    });
-    let resp = ureq::post(&url)
+    let body = EngineReloadRequest {
+        wait,
+        timeout_ms,
+        update,
+        version,
+        group,
+        reason,
+    };
+    let mut req = ureq::post(&url)
         .header("Authorization", &format!("Bearer {}", target.token))
-        .header("Accept", "application/json")
-        .send(body.to_string())
+        .header("Accept", "application/json");
+    if let Some(request_id) = request_id {
+        req = req.header("X-Request-Id", request_id);
+    }
+    let resp = req
+        .send(serde_json::to_string(&body).map_err(|e| format!("encode request: {e}"))?)
         .map_err(|e| format!("request failed: {e}"))?;
 
     let status = resp.status();
@@ -232,28 +306,40 @@ fn cmd_reload(
         // Forward the daemon's JSON response verbatim.
         println!("{resp_body}");
     } else {
-        let val: serde_json::Value =
+        let body: EngineReloadResponse =
             serde_json::from_str(&resp_body).map_err(|e| format!("parse response JSON: {e}"))?;
         println!("Engine reload");
         println!("  Endpoint : {}", target.base_url);
-        if let Some(r) = val.get("result").and_then(|v| v.as_str()) {
-            println!("  Result   : {r}");
+        println!("  Request  : {}", body.request_id);
+        println!("  Accepted : {}", body.accepted);
+        println!("  Result   : {}", body.result);
+        if let Some(update) = body.update {
+            println!("  Updated  : {update}");
         }
-        if let Some(a) = val.get("accepted").and_then(|v| v.as_bool()) {
-            println!("  Accepted : {a}");
+        if let Some(version) = body.requested_version.as_deref() {
+            println!("  Request V: {version}");
         }
-        if let Some(h) = val.get("hot_reload").and_then(|v| v.as_u64()) {
-            println!("  Hot swap : {h} rule(s)");
+        if let Some(version) = body.current_version.as_deref() {
+            println!("  Current V: {version}");
         }
-        if let Some(rr) = val.get("requires_restart").and_then(|v| v.as_u64()) {
-            println!("  Restart  : {rr} blocker(s)");
+        if let Some(tag) = body.resolved_tag.as_deref() {
+            println!("  Tag      : {tag}");
         }
-        if let Some(e) = val.get("error").and_then(|v| v.as_str()) {
-            println!("  Error    : {e}");
+        if let Some(group) = body.group.as_deref() {
+            println!("  Group    : {group}");
+        }
+        if let Some(force_replaced) = body.force_replaced {
+            println!("  Forced   : {force_replaced}");
+        }
+        if let Some(warning) = body.warning.as_deref() {
+            println!("  Warning  : {warning}");
+        }
+        if let Some(error) = body.error.as_deref() {
+            println!("  Error    : {error}");
         }
     }
 
-    if !status.is_success() {
+    if !(status.is_success() || status.as_u16() == 202) {
         return Err(format!("HTTP {status}"));
     }
     Ok(())

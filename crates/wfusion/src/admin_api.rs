@@ -9,9 +9,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime};
 
+use chrono::{DateTime, Utc};
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Bytes;
+use hyper::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -19,16 +22,24 @@ use hyper_util::server::conn::auto::Builder as AutoBuilder;
 use rustls::ServerConfig;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::sync::{Mutex, oneshot};
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 use wf_config::{
     AdminApiConf, ConfigVarContext, FusionConfig, FusionConfigLoader, FusionMode, MetricsConfig,
-    RawFusionConfigTree,
+    RawFusionConfigTree, project_remote::ProjectRemoteConf,
+};
+use wf_project_remote::{
+    ProjectRemoteLockGuard, ProjectRemoteMode, ProjectRemoteSnapshot, ProjectRemoteUpdateResult,
+    ProjectRuntimeArtifactSnapshot, RemoteGroup,
 };
 use wf_runtime::lifecycle::{ReloadOutcome, RuntimeControlHandle};
+
+const DEFAULT_AUTH_MODE: &str = "bearer_token";
 
 // ── AdminApiRuntime ───────────────────────────────────────────────────
 
@@ -72,6 +83,27 @@ struct AppState {
     /// `/runtime/status` as `reloading`, so callers can tell a reload is
     /// ongoing even though `accepting` stays true.
     reloading: Arc<AtomicBool>,
+    reload_gate: Mutex<()>,
+    reload_state: Mutex<ReloadState>,
+    request_timeout: Duration,
+    max_body_bytes: usize,
+    work_root: PathBuf,
+}
+
+#[derive(Debug, Default)]
+struct ReloadState {
+    current_request_id: Option<String>,
+    last_reload_request_id: Option<String>,
+    last_reload_result: Option<&'static str>,
+    last_reload_started_at: Option<SystemTime>,
+    last_reload_finished_at: Option<SystemTime>,
+}
+
+struct ProjectRemoteReloadContext {
+    _lock_guard: ProjectRemoteLockGuard,
+    snapshot: ProjectRemoteSnapshot,
+    runtime_snapshot: ProjectRuntimeArtifactSnapshot,
+    update_result: Option<ProjectRemoteUpdateResult>,
 }
 
 /// What `POST /admin/v1/reloads/model` re-reads on each request. Captured at
@@ -161,6 +193,16 @@ pub async fn start_if_enabled(
         .bind
         .parse()
         .map_err(|e| conf_err(format!("invalid admin_api.bind \"{}\": {e}", config.bind)))?;
+    if config.max_body_bytes == 0 {
+        return Err(conf_err("admin_api.max_body_bytes must be > 0"));
+    }
+    let auth_mode = config.auth.mode.trim().to_ascii_lowercase();
+    if auth_mode != DEFAULT_AUTH_MODE {
+        return Err(conf_err(format!(
+            "unsupported admin_api.auth.mode '{}', expected '{}'",
+            config.auth.mode, DEFAULT_AUTH_MODE
+        )));
+    }
 
     // Resolve TLS before binding so certificate/key errors are reported before
     // the admin listener is exposed.
@@ -191,6 +233,12 @@ pub async fn start_if_enabled(
     if bearer_token.is_empty() {
         return Err(conf_err("admin_api token file is empty"));
     }
+    if !bind.ip().is_loopback() && tls.is_none() {
+        return Err(conf_err(format!(
+            "non-loopback admin_api.bind '{}' requires admin_api.tls.enabled=true",
+            bind
+        )));
+    }
 
     let instance_id = format!("fusion:{}", std::process::id());
 
@@ -201,6 +249,11 @@ pub async fn start_if_enabled(
         control,
         config_source,
         reloading: Arc::new(AtomicBool::new(false)),
+        reload_gate: Mutex::new(()),
+        reload_state: Mutex::new(ReloadState::default()),
+        request_timeout: Duration::from_millis(config.request_timeout_ms),
+        max_body_bytes: config.max_body_bytes,
+        work_root: work_root.to_path_buf(),
     });
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -410,314 +463,888 @@ async fn handle_request(
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 
-    // Bearer token auth
-    let auth_header = req
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let expected = format!("Bearer {}", state.bearer_token);
-    if auth_header != expected {
-        let body = format!(
-            r#"{{"request_id":"{}","accepted":false,"result":"unauthorized","error":"invalid bearer token"}}"#,
-            request_id
-        );
-        return Ok(json_response(StatusCode::UNAUTHORIZED, &body));
+    if !authorized(req.headers(), &state.bearer_token) {
+        return Ok(json_response(
+            StatusCode::UNAUTHORIZED,
+            &ErrorResponse {
+                request_id,
+                accepted: false,
+                result: "unauthorized",
+                error: "invalid bearer token".to_string(),
+            },
+        ));
     }
 
     match (method.clone(), path.as_str()) {
         (Method::GET, "/admin/v1/runtime/status") => {
-            let accepting = !state.control.cancel_token().is_cancelled();
-            let reloading = state.reloading.load(Ordering::Relaxed);
-            tracing::info!(
-                domain = "sys",
-                "admin api status request_id={} remote={} accepting={} reloading={}",
-                request_id,
-                remote_addr,
-                accepting,
-                reloading
-            );
-            let body = format!(
-                r#"{{"instance_id":"{}","version":"{}","accepting":{},"reloading":{}}}"#,
-                state.instance_id, state.version, accepting, reloading
-            );
-            Ok(json_response(StatusCode::OK, &body))
+            Ok(status_response(&request_id, remote_addr, &state).await)
         }
         (Method::POST, "/admin/v1/reloads/model") => {
             Ok(handle_reload(req, request_id, remote_addr, state).await)
         }
-        _ => {
-            let body = format!(
-                r#"{{"request_id":"{}","accepted":false,"result":"not_found","error":"unsupported route {} {}"}}"#,
-                request_id, method, path
-            );
-            Ok(json_response(StatusCode::NOT_FOUND, &body))
-        }
+        _ => Ok(json_response(
+            StatusCode::NOT_FOUND,
+            &ErrorResponse {
+                request_id,
+                accepted: false,
+                result: "not_found",
+                error: format!("unsupported route {}", path),
+            },
+        )),
     }
 }
 
-/// `POST /admin/v1/reloads/model` — hot-reload the rule set.
-///
-/// Re-resolves the fusion config (raw + effective) from `work_root` and asks
-/// the running Reactor to apply it. Request body (JSON, all fields optional):
-///
-/// ```json
-/// { "full": false, "update_remote": false, "version": null }
-/// ```
-///
-/// - `full` — upgrade a blocked (requires-restart) reload to a graceful restart.
-/// - `update_remote` — sync managed dirs from the `[project_remote]` repo
-///   *before* re-reading the config, giving the end-to-end
-///   publish → daemon-sync → reload flow. Uses `wf_project_remote::run_remote_update`
-///   (lock → snapshot → sync → validate → rollback), the same path `wfadm conf
-///   update` takes.
-/// - `version` — target version for the remote sync (auto-resolved if absent).
-///
-/// An empty or unparseable body is treated as all-defaults (back-compatible
-/// with the old string-match behaviour).
+#[derive(Serialize)]
+struct RuntimeStatusResponse {
+    instance_id: String,
+    version: String,
+    project_version: Option<serde_json::Value>,
+    accepting_commands: bool,
+    reloading: bool,
+    current_request_id: Option<String>,
+    last_reload_request_id: Option<String>,
+    last_reload_result: Option<&'static str>,
+    last_reload_started_at: Option<String>,
+    last_reload_finished_at: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    request_id: String,
+    accepted: bool,
+    result: &'static str,
+    error: String,
+}
+
+#[derive(Serialize)]
+struct ReloadResponse {
+    request_id: String,
+    accepted: bool,
+    result: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    update: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    force_replaced: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+async fn status_response(
+    request_id: &str,
+    remote_addr: SocketAddr,
+    state: &AppState,
+) -> Response<Full<Bytes>> {
+    let accepting_commands = !state.control.cancel_token().is_cancelled();
+    let reloading = state.reloading.load(Ordering::Relaxed);
+    let project_version = match read_project_version(&state.work_root) {
+        Ok(version) => version,
+        Err(err) => {
+            tracing::warn!(
+                domain = "sys",
+                "admin api status project version read failed request_id={} remote={} error={}",
+                request_id,
+                remote_addr,
+                err
+            );
+            None
+        }
+    };
+    let reload_state = state.reload_state.lock().await;
+    tracing::info!(
+        domain = "sys",
+        "admin api status request_id={} remote={} accepting={} reloading={}",
+        request_id,
+        remote_addr,
+        accepting_commands,
+        reloading
+    );
+    json_response(
+        StatusCode::OK,
+        &RuntimeStatusResponse {
+            instance_id: state.instance_id.clone(),
+            version: state.version.clone(),
+            project_version,
+            accepting_commands,
+            reloading,
+            current_request_id: reload_state.current_request_id.clone(),
+            last_reload_request_id: reload_state.last_reload_request_id.clone(),
+            last_reload_result: reload_state.last_reload_result,
+            last_reload_started_at: reload_state
+                .last_reload_started_at
+                .map(system_time_to_rfc3339),
+            last_reload_finished_at: reload_state
+                .last_reload_finished_at
+                .map(system_time_to_rfc3339),
+        },
+    )
+}
+
+/// `POST /admin/v1/reloads/model` — publish/update project content and reload
+/// the running rule set.
 async fn handle_reload(
     req: Request<hyper::body::Incoming>,
     request_id: String,
     remote_addr: SocketAddr,
     state: Arc<AppState>,
 ) -> Response<Full<Bytes>> {
-    // Read the body (capped at 1 MiB), then parse as JSON.
-    const RELOAD_BODY_LIMIT: usize = 1024 * 1024;
-    let reload_req = match Limited::new(req.into_body(), RELOAD_BODY_LIMIT)
-        .collect()
-        .await
-    {
-        Ok(collected) => {
-            let bytes = collected.to_bytes();
-            if bytes.is_empty() {
-                ReloadRequest::default()
-            } else {
-                serde_json::from_slice::<ReloadRequest>(&bytes).unwrap_or_default()
-            }
-        }
+    let _reload_guard = match state.reload_gate.try_lock() {
+        Ok(guard) => guard,
         Err(_) => {
-            let body = format!(
-                r#"{{"request_id":"{}","accepted":false,"result":"error","error":"request body exceeds {} bytes"}}"#,
-                request_id, RELOAD_BODY_LIMIT
+            return json_response(
+                StatusCode::CONFLICT,
+                &ReloadResponse {
+                    request_id,
+                    accepted: false,
+                    result: "reload_in_progress",
+                    update: None,
+                    requested_version: None,
+                    current_version: None,
+                    resolved_tag: None,
+                    group: None,
+                    force_replaced: None,
+                    warning: None,
+                    error: None,
+                },
             );
-            return json_response(StatusCode::PAYLOAD_TOO_LARGE, &body);
         }
     };
-    let full = reload_req.full;
+
+    let reload_req =
+        match read_json_body::<ReloadRequest>(req.into_body(), state.max_body_bytes).await {
+            Ok(payload) => payload,
+            Err(ReadBodyError::TooLarge(limit)) => {
+                return json_response(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    &ErrorResponse {
+                        request_id,
+                        accepted: false,
+                        result: "payload_too_large",
+                        error: format!("request body exceeds {} bytes", limit),
+                    },
+                );
+            }
+            Err(ReadBodyError::InvalidJson(err)) | Err(ReadBodyError::Read(err)) => {
+                return json_response(
+                    StatusCode::BAD_REQUEST,
+                    &ErrorResponse {
+                        request_id,
+                        accepted: false,
+                        result: "invalid_request",
+                        error: err,
+                    },
+                );
+            }
+        };
+
+    let reason = reload_req.reason.as_deref().unwrap_or("");
+    if !reload_req.update && reload_req.version.is_some() {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            &ErrorResponse {
+                request_id,
+                accepted: false,
+                result: "invalid_request",
+                error: "version requires update=true".to_string(),
+            },
+        );
+    }
+    if !reload_req.update && reload_req.group.as_deref().is_some_and(|g| !g.is_empty()) {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            &ErrorResponse {
+                request_id,
+                accepted: false,
+                result: "invalid_request",
+                error: "group requires update=true".to_string(),
+            },
+        );
+    }
+    let update_group = match reload_req.group.as_deref() {
+        None | Some("") => None,
+        Some(raw) => match raw.parse::<RemoteGroup>() {
+            Ok(group) => Some(group),
+            Err(err) => {
+                return json_response(
+                    StatusCode::BAD_REQUEST,
+                    &ErrorResponse {
+                        request_id,
+                        accepted: false,
+                        result: "invalid_request",
+                        error: err,
+                    },
+                );
+            }
+        },
+    };
+
+    let remote_conf = if reload_req.update {
+        match load_remote_conf(&state.config_source) {
+            Ok(remote_conf) => {
+                if !remote_conf.enabled {
+                    return json_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        &ErrorResponse {
+                            request_id,
+                            accepted: false,
+                            result: "update_failed",
+                            error: "update requested but [project_remote] is disabled in config"
+                                .to_string(),
+                        },
+                    );
+                }
+                match wf_project_remote::resolve_project_remote_mode(&remote_conf) {
+                    Ok(ProjectRemoteMode::Dual { .. }) if update_group.is_none() => {
+                        return json_response(
+                            StatusCode::BAD_REQUEST,
+                            &ErrorResponse {
+                                request_id,
+                                accepted: false,
+                                result: "invalid_request",
+                                error:
+                                    "dual-repo mode requires group (models|infra) with update=true"
+                                        .to_string(),
+                            },
+                        );
+                    }
+                    Ok(_) => Some(remote_conf),
+                    Err(err) => {
+                        return json_response(
+                            StatusCode::BAD_REQUEST,
+                            &ErrorResponse {
+                                request_id,
+                                accepted: false,
+                                result: "invalid_request",
+                                error: err,
+                            },
+                        );
+                    }
+                }
+            }
+            Err(err) => {
+                return json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &ErrorResponse {
+                        request_id,
+                        accepted: false,
+                        result: "update_failed",
+                        error: err,
+                    },
+                );
+            }
+        }
+    } else {
+        None
+    };
+
+    if state.control.cancel_token().is_cancelled() {
+        return json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &ErrorResponse {
+                request_id,
+                accepted: false,
+                result: "runtime_not_ready",
+                error: "runtime command receiver not ready".to_string(),
+            },
+        );
+    }
+    if state.reloading.load(Ordering::Relaxed) {
+        return json_response(
+            StatusCode::CONFLICT,
+            &ReloadResponse {
+                request_id,
+                accepted: false,
+                result: "reload_in_progress",
+                update: None,
+                requested_version: None,
+                current_version: None,
+                resolved_tag: None,
+                group: None,
+                force_replaced: None,
+                warning: None,
+                error: None,
+            },
+        );
+    }
 
     tracing::info!(
         domain = "sys",
-        "admin api reload request_id={} remote={} full={} update_remote={} version={}",
+        "admin api reload request_id={} remote={} wait={} update={} version={} group={} reason={}",
         request_id,
         remote_addr,
-        full,
-        reload_req.update_remote,
-        reload_req.version.as_deref().unwrap_or("-")
+        reload_req.wait,
+        reload_req.update,
+        reload_req.version.as_deref().unwrap_or("(auto)"),
+        reload_req.group.as_deref().unwrap_or("-"),
+        reason
     );
 
-    // Mark the engine as reloading for the duration of this request so
-    // `/runtime/status` can report `reloading:true`. Cleared on drop.
-    let _reloading = ReloadingGuard::new(&state.reloading);
+    mark_reload_started(&state, &request_id).await;
 
     let src = &state.config_source;
+    let lock_guard = match wf_project_remote::acquire_project_remote_lock(&src.work_dir) {
+        Ok(lock_guard) => lock_guard,
+        Err(err) => {
+            mark_reload_finished(&state, &request_id, "update_in_progress").await;
+            return json_response(
+                StatusCode::CONFLICT,
+                &ReloadResponse {
+                    request_id,
+                    accepted: false,
+                    result: "update_in_progress",
+                    update: Some(reload_req.update),
+                    requested_version: reload_req.version.clone(),
+                    current_version: None,
+                    resolved_tag: None,
+                    group: reload_req.group.clone(),
+                    force_replaced: None,
+                    warning: None,
+                    error: Some(err),
+                },
+            );
+        }
+    };
+    let snapshot = match wf_project_remote::capture_project_remote_snapshot_with_group(
+        &src.work_dir,
+        update_group,
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            mark_reload_finished(&state, &request_id, "update_failed").await;
+            return json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &ErrorResponse {
+                    request_id,
+                    accepted: false,
+                    result: "update_failed",
+                    error: err,
+                },
+            );
+        }
+    };
+    let runtime_snapshot = match wf_project_remote::capture_runtime_artifact_snapshot(&src.work_dir)
+    {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            mark_reload_finished(&state, &request_id, "update_failed").await;
+            return json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &ErrorResponse {
+                    request_id,
+                    accepted: false,
+                    result: "update_failed",
+                    error: err,
+                },
+            );
+        }
+    };
 
-    // Optional remote sync before re-reading the on-disk config.
-    if reload_req.update_remote {
-        match run_remote_sync(src, reload_req.version.as_deref()) {
-            Ok(()) => {
+    let update_result = if let Some(remote_conf) = remote_conf {
+        let update_result = match run_remote_sync(
+            src,
+            &remote_conf,
+            reload_req.version.as_deref(),
+            update_group,
+            &lock_guard,
+            &snapshot,
+        ) {
+            Ok(result) => {
                 tracing::info!(
                     domain = "sys",
-                    "admin api reload update_remote sync done request_id={}",
-                    request_id
+                    "admin api reload update sync done request_id={} current_version={} resolved_tag={}",
+                    request_id,
+                    result.current_version,
+                    result.resolved_tag
                 );
+                result
             }
             Err(err) => {
                 tracing::warn!(
                     domain = "sys",
-                    "admin api reload update_remote sync failed request_id={}: {err}",
+                    "admin api reload update sync failed request_id={}: {err}",
                     request_id
                 );
-                let body = format!(
-                    r#"{{"request_id":"{}","accepted":false,"result":"error","error":"remote update failed: {}"}}"#,
-                    request_id,
-                    json_escape(&err)
+                mark_reload_finished(&state, &request_id, "update_failed").await;
+                return json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &ErrorResponse {
+                        request_id,
+                        accepted: false,
+                        result: "update_failed",
+                        error: err,
+                    },
                 );
-                return json_response(StatusCode::BAD_GATEWAY, &body);
             }
-        }
-    }
+        };
+        Some(update_result)
+    } else {
+        None
+    };
+    let reload_ctx = Some(ProjectRemoteReloadContext {
+        _lock_guard: lock_guard,
+        snapshot,
+        runtime_snapshot,
+        update_result,
+    });
+    let update_result = reload_ctx
+        .as_ref()
+        .and_then(|ctx| ctx.update_result.as_ref())
+        .cloned();
 
-    // Re-resolve the config the engine booted from, using the *same* config
-    // path / overlays / var context captured at boot — NOT a hard-coded
-    // `wfusion.toml`. This keeps reload consistent with `--config`/`--overlay`/
-    // `--var` (e.g. the default `conf/wfusion.toml`).
     let loader = FusionConfigLoader::new(
         &src.config_path,
         &src.overlay_paths,
         &src.config_ctx,
         Some(&src.work_dir),
     );
-    let (next_raw, mut next_config): (RawFusionConfigTree, FusionConfig) = match (
-        loader.load_raw(),
-        loader.load(),
-    ) {
-        (Ok(raw), Ok(config)) => (raw, config),
-        (Err(err), _) | (_, Err(err)) => {
-            let msg = err.to_string();
-            tracing::warn!(domain = "sys", "reload config load failed: {msg}");
-            let body = format!(
-                r#"{{"request_id":"{}","accepted":false,"result":"error","error":"failed to load config: {}"}}"#,
-                request_id,
-                json_escape(&msg)
-            );
-            return json_response(StatusCode::INTERNAL_SERVER_ERROR, &body);
-        }
-    };
-    // Re-apply the CLI overrides captured at boot (mode/metrics) so the reload
-    // baseline comparison isn't thrown off by `--mode`/`--metrics*`.
+    let (next_raw, mut next_config): (RawFusionConfigTree, FusionConfig) =
+        match (loader.load_raw(), loader.load()) {
+            (Ok(raw), Ok(config)) => (raw, config),
+            (Err(err), _) | (_, Err(err)) => {
+                let msg = err.to_string();
+                tracing::warn!(domain = "sys", "reload config load failed: {msg}");
+                mark_reload_finished(&state, &request_id, "reload_failed").await;
+                let rollback_warning = rollback_updated_project(
+                    &state.config_source.work_dir,
+                    reload_ctx.as_ref(),
+                    &request_id,
+                    remote_addr,
+                    "config_load_failed",
+                );
+                return json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &ReloadResponse {
+                        request_id,
+                        accepted: false,
+                        result: "reload_failed",
+                        update: Some(reload_req.update),
+                        requested_version: update_result
+                            .as_ref()
+                            .and_then(|result| result.requested_version.clone()),
+                        current_version: update_result
+                            .as_ref()
+                            .map(|result| result.current_version.clone()),
+                        resolved_tag: update_result
+                            .as_ref()
+                            .map(|result| result.resolved_tag.clone()),
+                        group: update_result
+                            .as_ref()
+                            .and_then(|result| result.group.clone()),
+                        force_replaced: None,
+                        warning: rollback_warning,
+                        error: Some(format!("failed to load config: {msg}")),
+                    },
+                );
+            }
+        };
     state.config_source.apply_overrides(&mut next_config);
 
-    match state.control.apply_reload(next_raw, next_config).await {
-        Ok(ReloadOutcome::Applied(plan)) => {
-            tracing::info!(domain = "sys", "reload applied request_id={}", request_id);
-            let body = format!(
-                r#"{{"request_id":"{}","accepted":true,"result":"applied","hot_reload":{},"requires_restart":{}}}"#,
-                request_id,
-                plan.hot_reload.len(),
-                plan.requires_restart.len()
-            );
-            json_response(StatusCode::OK, &body)
-        }
-        Ok(ReloadOutcome::Blocked(plan)) => {
-            if full {
-                // L4: full reload requested. Verify the new config compiles
-                // (prevent crash loop), then request a graceful shutdown with
-                // restart exit code.
-                if compile_reload_check(&loader, &state.config_source).is_err() {
-                    let body = format!(
-                        r#"{{"request_id":"{}","accepted":false,"result":"error","error":"full reload refused: new config fails to compile"}}"#,
-                        request_id
-                    );
-                    return json_response(StatusCode::UNPROCESSABLE_ENTITY, &body);
-                }
+    let reload_state = state.clone();
+    let reload_request_id = request_id.clone();
+    let reload_reason = reason.to_string();
+    let reload_control = state.control.clone();
+    let mut task =
+        tokio::spawn(async move { reload_control.apply_reload(next_raw, next_config).await });
+
+    if reload_req.wait {
+        let wait_timeout = Duration::from_millis(
+            reload_req
+                .timeout_ms
+                .unwrap_or(state.request_timeout.as_millis() as u64),
+        );
+        match timeout(wait_timeout, &mut task).await {
+            Ok(Ok(result)) => {
+                return map_reload_result(
+                    result,
+                    reload_state,
+                    reload_request_id,
+                    remote_addr,
+                    reload_reason,
+                    reload_ctx,
+                )
+                .await;
+            }
+            Ok(Err(err)) => {
+                tracing::warn!(
+                    domain = "sys",
+                    "admin api reload task failed request_id={} remote={} error={}",
+                    request_id,
+                    remote_addr,
+                    err
+                );
+                mark_reload_finished(&state, &request_id, "reload_failed").await;
+                let rollback_warning = rollback_updated_project(
+                    &state.config_source.work_dir,
+                    reload_ctx.as_ref(),
+                    &request_id,
+                    remote_addr,
+                    "reload_task_join_failed",
+                );
+                return json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &ReloadResponse {
+                        request_id,
+                        accepted: true,
+                        result: "reload_failed",
+                        update: Some(reload_req.update),
+                        requested_version: update_result
+                            .as_ref()
+                            .and_then(|result| result.requested_version.clone()),
+                        current_version: update_result
+                            .as_ref()
+                            .map(|result| result.current_version.clone()),
+                        resolved_tag: update_result
+                            .as_ref()
+                            .map(|result| result.resolved_tag.clone()),
+                        group: update_result
+                            .as_ref()
+                            .and_then(|result| result.group.clone()),
+                        force_replaced: None,
+                        warning: rollback_warning,
+                        error: Some("runtime reload task failed".to_string()),
+                    },
+                );
+            }
+            Err(_) => {
                 tracing::info!(
                     domain = "sys",
-                    "reload blocked request_id={} full=true — requesting restart",
-                    request_id
+                    "admin api reload still running request_id={} remote={} timeout_ms={} reason={}",
+                    request_id,
+                    remote_addr,
+                    wait_timeout.as_millis(),
+                    reason
                 );
-                if let Err(e) = state.control.request_restart().await {
-                    tracing::warn!(domain = "sys", "restart request failed: {e}");
-                    let body = format!(
-                        r#"{{"request_id":"{}","accepted":false,"result":"error","error":"failed to initiate restart"}}"#,
-                        request_id
-                    );
-                    return json_response(StatusCode::INTERNAL_SERVER_ERROR, &body);
-                }
-                let blockers = plan.requires_restart.len();
-                let body = format!(
-                    r#"{{"request_id":"{}","accepted":true,"result":"restarting","requires_restart":{}}}"#,
-                    request_id, blockers
-                );
-                return json_response(StatusCode::ACCEPTED, &body);
+                tokio::spawn(monitor_reload_task(
+                    task,
+                    state.clone(),
+                    request_id.clone(),
+                    remote_addr,
+                    reason.to_string(),
+                    reload_ctx,
+                ));
+                return running_response(request_id, reload_req.update, update_result.as_ref());
             }
-            let blockers = plan.requires_restart.len();
+        }
+    }
+
+    tokio::spawn(monitor_reload_task(
+        task,
+        state.clone(),
+        request_id.clone(),
+        remote_addr,
+        reason.to_string(),
+        reload_ctx,
+    ));
+    running_response(request_id, reload_req.update, update_result.as_ref())
+}
+
+fn running_response(
+    request_id: String,
+    update: bool,
+    update_result: Option<&ProjectRemoteUpdateResult>,
+) -> Response<Full<Bytes>> {
+    json_response(
+        StatusCode::ACCEPTED,
+        &ReloadResponse {
+            request_id,
+            accepted: true,
+            result: "running",
+            update: Some(update),
+            requested_version: update_result.and_then(|result| result.requested_version.clone()),
+            current_version: update_result.map(|result| result.current_version.clone()),
+            resolved_tag: update_result.map(|result| result.resolved_tag.clone()),
+            group: update_result.and_then(|result| result.group.clone()),
+            force_replaced: None,
+            warning: None,
+            error: None,
+        },
+    )
+}
+
+async fn monitor_reload_task(
+    task: JoinHandle<wf_runtime::error::RuntimeResult<ReloadOutcome>>,
+    state: Arc<AppState>,
+    request_id: String,
+    remote_addr: SocketAddr,
+    reason: String,
+    reload_ctx: Option<ProjectRemoteReloadContext>,
+) {
+    match task.await {
+        Ok(result) => {
+            let response = map_reload_result(
+                result,
+                state,
+                request_id.clone(),
+                remote_addr,
+                reason.clone(),
+                reload_ctx,
+            )
+            .await;
             tracing::info!(
                 domain = "sys",
-                "reload blocked request_id={} blockers={}",
+                "admin api background reload finished request_id={} remote={} status={} reason={}",
                 request_id,
-                blockers
+                remote_addr,
+                response.status(),
+                reason
             );
-            let body = format!(
-                r#"{{"request_id":"{}","accepted":false,"result":"blocked","requires_restart":{}}}"#,
-                request_id, blockers
-            );
-            json_response(StatusCode::CONFLICT, &body)
         }
         Err(err) => {
-            let msg = err.to_string();
             tracing::warn!(
                 domain = "sys",
-                "reload failed request_id={}: {msg}",
-                request_id
-            );
-            let body = format!(
-                r#"{{"request_id":"{}","accepted":false,"result":"error","error":"{}"}}"#,
+                "admin api background reload task failed request_id={} remote={} reason={} error={}",
                 request_id,
-                json_escape(&msg)
+                remote_addr,
+                reason,
+                err
             );
-            json_response(StatusCode::INTERNAL_SERVER_ERROR, &body)
+            mark_reload_finished(&state, &request_id, "reload_failed").await;
+            let _ = rollback_updated_project(
+                &state.config_source.work_dir,
+                reload_ctx.as_ref(),
+                &request_id,
+                remote_addr,
+                "background_reload_task_join_failed",
+            );
         }
     }
 }
 
-/// Quick compile-check: can the loader successfully produce a valid config?
-/// Used by L4 `full=true` reload before committing to a restart, to avoid
-/// a crash loop (restart → broken config → crash → restart → …).
-fn compile_reload_check(
-    loader: &FusionConfigLoader<'_>,
-    _source: &ReloadConfigSource,
-) -> Result<(), String> {
-    // Re-use the same loader that already read the on-disk config.
-    let _raw = loader.load_raw().map_err(|e| e.to_string())?;
-    let _config = loader.load().map_err(|e| e.to_string())?;
-    Ok(())
+async fn map_reload_result(
+    result: wf_runtime::error::RuntimeResult<ReloadOutcome>,
+    state: Arc<AppState>,
+    request_id: String,
+    remote_addr: SocketAddr,
+    reason: String,
+    reload_ctx: Option<ProjectRemoteReloadContext>,
+) -> Response<Full<Bytes>> {
+    let update_result = reload_ctx
+        .as_ref()
+        .and_then(|ctx| ctx.update_result.as_ref());
+    match result {
+        Ok(ReloadOutcome::Applied(_plan)) => {
+            mark_reload_finished(&state, &request_id, "reload_done").await;
+            tracing::info!(
+                domain = "sys",
+                "admin api reload done request_id={} remote={} reason={}",
+                request_id,
+                remote_addr,
+                reason
+            );
+            json_response(
+                StatusCode::OK,
+                &ReloadResponse {
+                    request_id,
+                    accepted: true,
+                    result: "reload_done",
+                    update: update_result.map(|_| true),
+                    requested_version: update_result
+                        .and_then(|result| result.requested_version.clone()),
+                    current_version: update_result.map(|result| result.current_version.clone()),
+                    resolved_tag: update_result.map(|result| result.resolved_tag.clone()),
+                    group: update_result.and_then(|result| result.group.clone()),
+                    force_replaced: Some(false),
+                    warning: None,
+                    error: None,
+                },
+            )
+        }
+        Ok(ReloadOutcome::Blocked(plan)) => {
+            mark_reload_finished(&state, &request_id, "reload_failed").await;
+            let blockers = plan.requires_restart.len();
+            let rollback_warning = rollback_updated_project(
+                &state.config_source.work_dir,
+                reload_ctx.as_ref(),
+                &request_id,
+                remote_addr,
+                "reload_blocked",
+            );
+            tracing::info!(
+                domain = "sys",
+                "admin api reload blocked request_id={} remote={} blockers={} reason={}",
+                request_id,
+                remote_addr,
+                blockers,
+                reason
+            );
+            json_response(
+                StatusCode::CONFLICT,
+                &ReloadResponse {
+                    request_id,
+                    accepted: false,
+                    result: "reload_failed",
+                    update: update_result.map(|_| true),
+                    requested_version: update_result
+                        .and_then(|result| result.requested_version.clone()),
+                    current_version: update_result.map(|result| result.current_version.clone()),
+                    resolved_tag: update_result.map(|result| result.resolved_tag.clone()),
+                    group: update_result.and_then(|result| result.group.clone()),
+                    force_replaced: None,
+                    warning: merge_warnings(
+                        Some(format!(
+                            "reload blocked by {} restart-required changes",
+                            blockers
+                        )),
+                        rollback_warning,
+                    ),
+                    error: Some("reload requires restart".to_string()),
+                },
+            )
+        }
+        Err(err) => {
+            mark_reload_finished(&state, &request_id, "reload_failed").await;
+            let msg = err.to_string();
+            let rollback_warning = rollback_updated_project(
+                &state.config_source.work_dir,
+                reload_ctx.as_ref(),
+                &request_id,
+                remote_addr,
+                "reload_failed",
+            );
+            tracing::warn!(
+                domain = "sys",
+                "admin api reload failed request_id={} remote={} reason={} error={}",
+                request_id,
+                remote_addr,
+                reason,
+                msg
+            );
+            json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &ReloadResponse {
+                    request_id,
+                    accepted: false,
+                    result: "reload_failed",
+                    update: update_result.map(|_| true),
+                    requested_version: update_result
+                        .and_then(|result| result.requested_version.clone()),
+                    current_version: update_result.map(|result| result.current_version.clone()),
+                    resolved_tag: update_result.map(|result| result.resolved_tag.clone()),
+                    group: update_result.and_then(|result| result.group.clone()),
+                    force_replaced: None,
+                    warning: rollback_warning,
+                    error: Some(msg),
+                },
+            )
+        }
+    }
 }
 
-/// `POST /admin/v1/reloads/model` request body. All fields optional; an empty
-/// or unparseable body yields `Default` (no-op local reload).
-#[derive(serde::Deserialize, Default)]
+#[derive(Debug, Deserialize, Default)]
 struct ReloadRequest {
+    #[serde(default = "default_wait")]
+    wait: bool,
     #[serde(default)]
-    full: bool,
-    #[serde(default)]
-    update_remote: bool,
-    #[serde(default)]
+    update: bool,
     version: Option<String>,
+    #[serde(default)]
+    group: Option<String>,
+    timeout_ms: Option<u64>,
+    reason: Option<String>,
 }
 
-/// Sets `reloading=true` on construction and `false` on drop, so the flag
-/// always clears even if the reload errors or panics.
-struct ReloadingGuard<'a> {
-    flag: &'a AtomicBool,
-}
-
-impl<'a> ReloadingGuard<'a> {
-    fn new(flag: &'a AtomicBool) -> Self {
-        flag.store(true, Ordering::Relaxed);
-        Self { flag }
-    }
-}
-
-impl Drop for ReloadingGuard<'_> {
-    fn drop(&mut self) {
-        self.flag.store(false, Ordering::Relaxed);
-    }
-}
-
-/// Run the remote rule-source sync (publish → daemon-sync) before a reload.
-/// Loads `[project_remote]` from the booted config, then delegates to
-/// `wf_project_remote::run_remote_update` for lock → snapshot → sync →
-/// validate → rollback. The `version` is auto-resolved when `None`.
-fn run_remote_sync(src: &ReloadConfigSource, version: Option<&str>) -> Result<(), String> {
+fn load_remote_conf(src: &ReloadConfigSource) -> Result<ProjectRemoteConf, String> {
     let loader = FusionConfigLoader::new(
         &src.config_path,
         &src.overlay_paths,
         &src.config_ctx,
         Some(&src.work_dir),
     );
-    let remote_conf = loader
+    Ok(loader
         .load()
         .map_err(|e| format!("failed to load config for [project_remote]: {e}"))?
-        .project_remote;
-    if !remote_conf.enabled {
-        return Err(
-            "update_remote requested but [project_remote] is disabled in config".to_string(),
-        );
+        .project_remote)
+}
+
+fn run_remote_sync(
+    src: &ReloadConfigSource,
+    remote_conf: &ProjectRemoteConf,
+    version: Option<&str>,
+    group: Option<RemoteGroup>,
+    lock_guard: &ProjectRemoteLockGuard,
+    snapshot: &ProjectRemoteSnapshot,
+) -> Result<ProjectRemoteUpdateResult, String> {
+    wf_project_remote::run_remote_update_locked(
+        &src.work_dir,
+        version,
+        group,
+        lock_guard,
+        snapshot,
+        |work_root, ver, group| match group {
+            Some(group) => {
+                wf_project_remote::sync_project_remote_group(work_root, group, remote_conf, ver)
+            }
+            None => wf_project_remote::sync_project_remote(work_root, remote_conf, ver),
+        },
+    )
+}
+
+fn rollback_updated_project(
+    work_root: &Path,
+    reload_ctx: Option<&ProjectRemoteReloadContext>,
+    request_id: &str,
+    remote_addr: SocketAddr,
+    stage: &str,
+) -> Option<String> {
+    let ctx = reload_ctx?;
+    let update_result = ctx.update_result.as_ref()?;
+
+    let mut warnings = Vec::new();
+    if let Err(err) = wf_project_remote::restore_project_remote_update(
+        work_root,
+        &ctx.snapshot,
+        update_result.changed,
+    ) {
+        warnings.push(format!("restore project failed: {}", err));
     }
-    wf_project_remote::run_remote_update(&src.work_dir, version, None, |work_root, ver, _group| {
-        wf_project_remote::sync_project_remote(work_root, &remote_conf, ver)
-    })
-    .map(|_| ())
+
+    if let Err(err) =
+        wf_project_remote::restore_runtime_artifact_snapshot(work_root, &ctx.runtime_snapshot)
+    {
+        warnings.push(format!("restore runtime artifacts failed: {}", err));
+    }
+
+    if warnings.is_empty() {
+        tracing::info!(
+            domain = "sys",
+            "admin api project rollback done request_id={} remote={} stage={} target_version={} changed={}",
+            request_id,
+            remote_addr,
+            stage,
+            update_result.current_version,
+            update_result.changed
+        );
+        None
+    } else {
+        let warning = warnings.join("; ");
+        tracing::warn!(
+            domain = "sys",
+            "admin api project rollback warning request_id={} remote={} stage={} warning={}",
+            request_id,
+            remote_addr,
+            stage,
+            warning
+        );
+        Some(warning)
+    }
+}
+
+fn merge_warnings(first: Option<String>, second: Option<String>) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{}; {}", first, second)),
+        (Some(first), None) => Some(first),
+        (None, Some(second)) => Some(second),
+        (None, None) => None,
+    }
 }
 
 /// Escape a string for safe embedding in a JSON string literal.
@@ -755,22 +1382,111 @@ fn json_escape(s: &str) -> String {
 /// otherwise a malicious `X-Request-Id` could inject fields / break the JSON
 /// structure of every response.
 fn request_id(headers: &hyper::header::HeaderMap) -> String {
-    let raw = headers
+    headers
         .get("X-Request-Id")
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-    json_escape(&raw)
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
 }
 
-fn json_response(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "application/json")
-        .body(Full::from(body.to_string()))
-        .unwrap()
+#[derive(Debug)]
+enum ReadBodyError {
+    TooLarge(usize),
+    InvalidJson(String),
+    Read(String),
+}
+
+async fn read_json_body<T>(
+    body: hyper::body::Incoming,
+    max_body_bytes: usize,
+) -> Result<T, ReadBodyError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let collected = Limited::new(body, max_body_bytes)
+        .collect()
+        .await
+        .map_err(|err| {
+            if err.to_string().contains("length limit exceeded") {
+                ReadBodyError::TooLarge(max_body_bytes)
+            } else {
+                ReadBodyError::Read(format!("read request body failed: {err}"))
+            }
+        })?;
+    let bytes = collected.to_bytes();
+    serde_json::from_slice(&bytes)
+        .map_err(|e| ReadBodyError::InvalidJson(format!("invalid JSON body: {}", e)))
+}
+
+async fn mark_reload_started(state: &AppState, request_id: &str) {
+    state.reloading.store(true, Ordering::Relaxed);
+    let mut reload_state = state.reload_state.lock().await;
+    reload_state.current_request_id = Some(request_id.to_string());
+    reload_state.last_reload_request_id = Some(request_id.to_string());
+    reload_state.last_reload_started_at = Some(SystemTime::now());
+    reload_state.last_reload_finished_at = None;
+    reload_state.last_reload_result = None;
+}
+
+async fn mark_reload_finished(state: &AppState, request_id: &str, result: &'static str) {
+    state.reloading.store(false, Ordering::Relaxed);
+    let mut reload_state = state.reload_state.lock().await;
+    if reload_state.current_request_id.as_deref() == Some(request_id) {
+        reload_state.current_request_id = None;
+    }
+    reload_state.last_reload_request_id = Some(request_id.to_string());
+    reload_state.last_reload_result = Some(result);
+    reload_state.last_reload_finished_at = Some(SystemTime::now());
+}
+
+fn read_project_version(work_root: &Path) -> Result<Option<serde_json::Value>, String> {
+    match wf_project_remote::current_project_group_versions(work_root)? {
+        Some(group_versions) => Ok(Some(group_versions)),
+        None => {
+            Ok(wf_project_remote::current_project_version(work_root)?
+                .map(serde_json::Value::String))
+        }
+    }
+}
+
+fn authorized(headers: &hyper::HeaderMap<HeaderValue>, token: &str) -> bool {
+    let Some(value) = headers.get(AUTHORIZATION) else {
+        return false;
+    };
+    let Ok(value) = value.to_str() else {
+        return false;
+    };
+    let Some(token_part) = value.strip_prefix("Bearer ") else {
+        return false;
+    };
+    token_part == token
+}
+
+fn json_response<T: Serialize>(status: StatusCode, value: &T) -> Response<Full<Bytes>> {
+    let body = match serde_json::to_vec(value) {
+        Ok(body) => body,
+        Err(err) => format!(
+            r#"{{"accepted":false,"result":"internal_error","error":"{}"}}"#,
+            json_escape(&err.to_string())
+        )
+        .into_bytes(),
+    };
+    let mut resp = Response::new(Full::new(Bytes::from(body)));
+    *resp.status_mut() = status;
+    resp.headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    resp
+}
+
+fn system_time_to_rfc3339(time: SystemTime) -> String {
+    let dt: DateTime<Utc> = time.into();
+    dt.to_rfc3339()
+}
+
+fn default_wait() -> bool {
+    true
 }
 
 #[cfg(test)]
