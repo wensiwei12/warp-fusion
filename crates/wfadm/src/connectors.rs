@@ -36,6 +36,7 @@ pub fn ensure_factories_registered() {
         registry::register_sink_factory(wp_core_connectors::sinks::file_factory::FileFactory);
         registry::register_sink_factory(wp_core_connectors::sinks::syslog::SyslogFactory);
         registry::register_sink_factory(wp_core_connectors::sinks::tcp::TcpFactory);
+        registry::register_sink_factory(wp_connectors::doris::DorisSinkFactory);
     });
 }
 

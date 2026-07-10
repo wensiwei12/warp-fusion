@@ -16,6 +16,7 @@ toml = { workspace = true }
 rand = { workspace = true }
 wp-core-connectors = { workspace = true }
 wp-connector-api = { workspace = true }
+wp-connectors = { workspace = true }
 wf-config = { workspace = true }
 wf-lang = { workspace = true }
 ureq = { workspace = true }
