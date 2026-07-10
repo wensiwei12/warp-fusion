@@ -17,6 +17,9 @@ pub fn register_connectors() {
     register_source_factory(wp_connectors::kafka::KafkaSourceFactory);
     register_sink_factory(wp_connectors::kafka::KafkaSinkFactory);
 
+    // Doris
+    register_sink_factory(wp_connectors::doris::DorisSinkFactory);
+
     // VictoriaMetrics
     register_sink_factory(wp_connectors::victoriametrics::VictoriaMetricFactory);
 }
