@@ -66,6 +66,6 @@ warp-fusion/
 | [`configuration.md`](configuration.md) | `wfusion.toml` 完整配置参考 |
 | [`wparse-window-routing.md`](wparse-window-routing.md) | `warp-parse` 输出如何分发到 window |
 | [`schema.md`](schema.md) | `.wfs` Schema 定义 |
-| [`rules.md`](rules.md) | `.wfl` 规则编写 |
+| [`rules.md`](rules.md) | `.wfl` 规则编写、yield 时间变量、稳定统计上下文 |
 | [`cli.md`](cli.md) | CLI 命令参考 |
 | [`monitoring-design.md`](monitoring-design.md) | 监控方案设计 |

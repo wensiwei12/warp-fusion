@@ -36,9 +36,23 @@ window security_alerts {
         dip: ip
         alert_type: chars
         detail: chars
+        matched_events: digit
+        trigger_count: float
+        first_seen: time
+        last_seen: time
+        rule_window_start: time
+        rule_window_end: time
+        latest_analysis_time: time
     }
 }
 ```
+
+输出窗口常用于接收规则 `yield` 结果。统计字段通常声明为 `digit` / `float`，时间语义字段通常声明为 `time`，例如：
+
+- `matched_events = stat.count(match_event(label))` → `digit`
+- `trigger_count = stat.value(trigger(label))` → `float`
+- `first_seen = @event_first_time`、`last_seen = @event_last_time` → `time`
+- `rule_window_start = @window_start_time`、`latest_analysis_time = @emit_time` → `time`
 
 ## Provider 窗口（外部数据）
 

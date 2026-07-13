@@ -140,7 +140,73 @@ yield security_alerts (
 )
 ```
 
-yield 中可直接引用事件字段、join 窗口字段、字符串常量。聚合操作（`| count`、`| distinct`）**不能**用于 yield，只能在匹配步中使用。
+yield 中可直接引用事件字段、join 窗口字段、字符串常量和系统上下文变量。普通管道聚合（例如 `c | count`、`c.dport | distinct | count`）仍然只能写在匹配步中；如果需要在输出里说明“为什么触发”，应给匹配步加 label，然后用稳定统计上下文读取该步的结果。
+
+### 时间变量
+
+时间变量只能在 `yield` 中使用，用于把规则触发时的稳定时间语义写入输出窗口。
+
+| 变量 | 含义 | 常用输出字段 |
+|------|------|--------------|
+| `@event_first_time` | 本次输出证据中最早的事件时间 | `first_seen` |
+| `@event_last_time` | 本次输出证据中最晚的事件时间 | `last_seen` |
+| `@evidence_start_time` | 本次输出证据范围起点；通常等同最早证据事件时间 | `evidence_start_time` |
+| `@evidence_end_time` | 本次输出证据范围终点；通常等同最晚证据事件时间 | `evidence_end_time` |
+| `@window_start_time` | 当前规则匹配窗口的起点 | `rule_window_start` |
+| `@window_end_time` | 当前规则匹配窗口的终点 | `rule_window_end` |
+| `@emit_time` | 引擎生成本条输出记录的稳定时间 | `latest_analysis_time` |
+
+示例：
+
+```wfl
+yield security_alerts (
+    sip = c.sip,
+    first_seen = @event_first_time,
+    last_seen = @event_last_time,
+    evidence_start_time = @evidence_start_time,
+    evidence_end_time = @evidence_end_time,
+    rule_window_start = @window_start_time,
+    rule_window_end = @window_end_time,
+    latest_analysis_time = @emit_time
+)
+```
+
+输出窗口中这些字段通常声明为 `time`。
+
+### 稳定统计上下文
+
+在 `on event` / `and close` 中给匹配步加 label 后，可以在 `yield` 中使用 `stat.count(...)` 或 `stat.value(...)` 输出稳定统计值。
+
+```wfl
+match<sip:5m> {
+    on event {
+        failures: c | count >= 10;
+        target_spread: c.dip | distinct | count >= 3;
+    }
+    and close {
+        final_failures: c | count >= 20;
+    }
+} -> score(80.0)
+
+yield security_alerts (
+    sip = c.sip,
+    window_events = stat.count(window_event(c)),
+    matched_events = stat.count(match_event(failures)),
+    distinct_targets = stat.count(match_distinct(target_spread)),
+    trigger_count = stat.value(trigger(failures)),
+    final_count = stat.value(final(final_failures))
+)
+```
+
+| 表达式 | 含义 |
+|--------|------|
+| `stat.count(window_event(alias))` | 当前 rule instance / window 内，source alias 进入窗口的候选事件数 |
+| `stat.count(match_event(label))` | 指定 `on event` step label 接受为证据的命中事件数 |
+| `stat.count(match_distinct(label))` | 指定 `distinct | count` step label 的精确 distinct 数量 |
+| `stat.value(trigger(label))` | 指定 `on event` label 第一次满足阈值时的聚合值 |
+| `stat.value(final(label))` | 指定 `and close` label 在 close / flush 输出时的最终聚合值 |
+
+selector 参数是静态符号，不加引号。`window_event(c)` 中的 `c` 是 `events` 里声明的 alias；`match_event(failures)`、`trigger(failures)` 引用 `on event` label；`final(final_failures)` 引用 `and close` label。label 不存在、阶段不匹配或 selector 用错位置会在编译期报错。
 
 ## 测试用例
 
