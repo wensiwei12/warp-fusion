@@ -1,6 +1,6 @@
 [package]
 name = "wfadm"
-version = "0.1.13" #@gxl:set(version)
+version = "0.1.30" #@gxl:set(version)
 edition.workspace = true
 license.workspace = true
 
@@ -26,6 +26,7 @@ walkdir = { workspace = true }
 comfy-table = { version = "7", default-features = false }
 wf-project-remote = { workspace = true }
 tracing = { workspace = true }
+semver = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

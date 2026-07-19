@@ -5474,12 +5474,13 @@ dependencies = [
 
 [[package]]
 name = "wfadm"
-version = "0.1.13"
+version = "0.1.30"
 dependencies = [
  "clap",
  "comfy-table",
  "flate2",
  "rand 0.9.4",
+ "semver",
  "serde",
  "serde_json",
  "tar",
@@ -5498,7 +5499,7 @@ dependencies = [
 
 [[package]]
 name = "wfgen"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "arrow",
  "chrono",
@@ -5523,7 +5524,7 @@ dependencies = [
 
 [[package]]
 name = "wfl"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "chrono",
  "clap",
@@ -5540,7 +5541,7 @@ dependencies = [
 
 [[package]]
 name = "wfusion"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "chrono",
  "clap",
