@@ -903,6 +903,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "console"
+version = "0.16.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fe5f465a4f6fee88fad41b85d990f84c835335e85b5d9e6e63e0d06d28cba7c"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "unicode-width",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1225,6 +1237,12 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "encode_unicode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "encoding_rs"
@@ -2047,6 +2065,19 @@ dependencies = [
  "hashbrown 0.17.1",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "indicatif"
+version = "0.18.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9433806cd6b4ec1aba79c021c7e4c58fb4c3b9977c085062e611ac929998fb0c"
+dependencies = [
+ "console",
+ "portable-atomic",
+ "unicode-width",
+ "unit-prefix",
+ "web-time",
 ]
 
 [[package]]
@@ -3096,6 +3127,12 @@ dependencies = [
  "higher-kinded-types",
  "never-say-never",
 ]
+
+[[package]]
+name = "portable-atomic"
+version = "1.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d20d5497ef88037a52ff98267d066e7f11fcc5e99bbfbd58a42336193aacec3"
 
 [[package]]
 name = "potential_utf"
@@ -5095,6 +5132,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
+name = "unit-prefix"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
+
+[[package]]
 name = "unsafe-any-ors"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5474,32 +5517,29 @@ dependencies = [
 
 [[package]]
 name = "wfadm"
-version = "0.1.30"
+version = "0.1.34"
 dependencies = [
  "clap",
  "comfy-table",
- "flate2",
  "rand 0.9.4",
- "semver",
  "serde",
  "serde_json",
- "tar",
- "tempfile",
+ "tokio",
  "toml",
  "tracing",
  "ureq",
- "walkdir",
  "wf-config",
  "wf-lang",
  "wf-project-remote",
  "wp-connector-api",
  "wp-connectors",
  "wp-core-connectors",
+ "wp-self-update",
 ]
 
 [[package]]
 name = "wfgen"
-version = "0.1.31"
+version = "0.1.34"
 dependencies = [
  "arrow",
  "chrono",
@@ -5524,7 +5564,7 @@ dependencies = [
 
 [[package]]
 name = "wfl"
-version = "0.1.31"
+version = "0.1.34"
 dependencies = [
  "chrono",
  "clap",
@@ -5541,7 +5581,7 @@ dependencies = [
 
 [[package]]
 name = "wfusion"
-version = "0.1.31"
+version = "0.1.34"
 dependencies = [
  "chrono",
  "clap",
@@ -6141,6 +6181,29 @@ dependencies = [
  "serde_derive",
  "thiserror 2.0.18",
  "wp-model-core",
+]
+
+[[package]]
+name = "wp-self-update"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfc95547d7be4202a41e55fa482f302cdd6f775a8b69d8df1184ddcdd611e067"
+dependencies = [
+ "derive_more",
+ "flate2",
+ "hex",
+ "indicatif",
+ "libc",
+ "orion-error",
+ "reqwest 0.13.4",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tokio",
+ "uuid",
+ "walkdir",
 ]
 
 [[package]]

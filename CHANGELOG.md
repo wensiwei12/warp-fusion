@@ -25,10 +25,12 @@ All notable changes to wfusion will be documented in this file.
 - **状态记录**: 后台 reload 的 `last_reload_result` 增加 `restart_required`，文档和测试同步更新 wait=true / wait=false 行为。
 - **wfadm self update**: 新增对齐 `wpadm self update` 的分层命令和参数，支持 `--channel`、`--updates-base-url`、`--updates-root`、`--json`、`--yes`、`--dry-run`、`--force`。更新源改为 manifest canonical target triple，修复 macOS arm64 `aarch64-macos` 短名导致的 404，并避免将 `wfusion` 写入 `wfadm` 路径；当远端版本低于当前版本时，文本输出会将 `Latest` 灰色显示。
 - **wfadm self update**: 默认远端 manifest URL 按 channel 选择分支，`alpha` 使用 `alpha/updates/alpha/manifest.json`，`beta` 使用 `beta/updates/beta/manifest.json`，避免 `--channel alpha` 错误读取 `main/updates/alpha/manifest.json`。
+- **wfadm self update**: 实现切换为与 `wpadm` 一致的 `wp-self-update` 执行库，复用 manifest channel 校验、sha256 校验、下载重试、安装锁、包管理目录保护、健康检查和回滚逻辑，并新增 `wfadm self check`。
+- **wfadm self update**: 安装目标调整为 warp-fusion suite，下载 release archive 后会将 `wfusion` / `wfgen` / `wfl` / `wfadm` 一起安装到当前安装目录或 `--install-dir` 指定目录。
 
 ### 发布元数据
 
-- **版本**: `wfusion` / `wfgen` / `wfl` 版本推进到 `0.1.31`，`wfadm` 保持 `0.1.30`。
+- **版本**: `wfusion` / `wfgen` / `wfl` / `wfadm` 版本推进到 `0.1.34`。
 - **Update manifest**: 移除本地 manifest 生成脚本入口，`v_patch` / `v_feat` 不再覆盖 `updates/*/manifest.json`；latest manifest 由 `.github/workflows/release.yml` 的 `update-release-manifest` CI job 在对应 tag release 后按 channel 生成并回写。release 文案和 manifest job 共用一致的 alpha/beta/stable tag 后缀判断，manifest `git_commit` 解析为 tag 指向的 commit。
 
 ## [0.1.28] — 2026-07-13
