@@ -2,36 +2,92 @@
 
 All notable changes to wfusion will be documented in this file.
 
-## [0.1.30 Unreleased]
+## [0.1.35 Unreleased]
 
 ### 依赖与语言能力
 
-- **依赖**: `wf-engine` / `wf-config` / `wf-lang` / `wf-data` / `wf-runtime` 对齐 `wp-reactor` v0.1.33。
-- **Sink 元字段控制**: 通过 `wp-reactor` v0.1.32 支持 `wf_meta_disable` 的 wildmatch matcher，可使用 `__wfu_*`、`__wfu_rule_*` 等 pattern 禁用 wfusion 元字段输出。
-- **Window miss 诊断**: 通过 `wp-reactor` v0.1.33 支持内置 `__window_miss` 诊断窗口与 `window_miss_total` runtime metrics。
+- **依赖**: `wf-engine` / `wf-config` / `wf-lang` / `wf-data` / `wf-runtime` 对齐 `wp-reactor` v0.1.34。
+- **结构化输入与 merge**: 通过 `wp-reactor` v0.1.34 支持 stream window 声明 `object` / `array` / `array/T` 输入字段，Arrow Struct/List 会桥接为结构化 WFL 值；新增 `merge(obj1, obj2, ...)`，用于在 `yield` 中对输入 object 透传并做浅层增量合并，后面的同名 key 覆盖前面的 key。
+- **结构化字段桥接**: 结构化 stream 字段在 runtime 内通过 UTF-8 JSON 与 Arrow metadata 桥接，区分普通 `chars` 与结构化 object/array，并拒绝 object/array metadata kind 错配。
 
 ### 示例与文档
 
-- **配置文档**: 补充 `wf_meta_disable` wildmatch pattern 说明，明确仅允许 `__wfu_` 前缀的精确字段或 pattern。
-- **SSH brute force 示例**: 输出统计证据和事件/窗口时间边界，并在 sink 组中配置 `wf_meta_disable = ["__wfu_*"]`。
-- **Window miss 示例**: 新增 `examples/rules/window_miss`，覆盖动态 `wp_oml_name` 路由下的合法 stream、未知 stream schema 和缺失 stream tag 字段。
-- **Window miss monitor**: 为示例增加 `infra.d/monitor.toml` 与 runtime metrics 配置，`run.sh` 会验证 `window_miss_total` 中 `unknown_stream_schema` 和 `missing_stream_tag_field` 两类统计均为 1。
-- **wp-pipeline 示例**: `scan_alerts` / `traffic_alerts` 输出补充 `rule_name = @__wfu_rule_name`，便于下游按规则名区分告警。
+- **WFL merge 文档**: 补充 `merge()` 的使用示例和语义边界：缺失的 object 字段引用按空对象处理；object 字面量内部表达式失败、函数失败或非 object 参数会使 `merge()` 求值失败。
+
+### 发布元数据
+
+- **版本**: `wfusion` / `wfgen` / `wfl` / `wfadm` 版本推进到 `0.1.35`。
+
+## [0.1.34-alpha] — 2026-07-20
 
 ### Admin API / project remote
 
-- **Reload 语义**: runtime 判定 requires-restart / blocked 时，Admin API 返回 `200 restart_required`，不再作为 `409 reload_failed` 处理。
-- **Update 保留**: `update=true` 后如果项目已同步并通过校验，但 runtime reload 返回 `restart_required`，daemon 保留已同步项目内容和 project state，等待进程重启后生效。
-- **状态记录**: 后台 reload 的 `last_reload_result` 增加 `restart_required`，文档和测试同步更新 wait=true / wait=false 行为。
-- **wfadm self update**: 新增对齐 `wpadm self update` 的分层命令和参数，支持 `--channel`、`--updates-base-url`、`--updates-root`、`--json`、`--yes`、`--dry-run`、`--force`。更新源改为 manifest canonical target triple，修复 macOS arm64 `aarch64-macos` 短名导致的 404，并避免将 `wfusion` 写入 `wfadm` 路径；当远端版本低于当前版本时，文本输出会将 `Latest` 灰色显示。
-- **wfadm self update**: 默认远端 manifest URL 按 channel 选择分支，`alpha` 使用 `alpha/updates/alpha/manifest.json`，`beta` 使用 `beta/updates/beta/manifest.json`，避免 `--channel alpha` 错误读取 `main/updates/alpha/manifest.json`。
 - **wfadm self update**: 实现切换为与 `wpadm` 一致的 `wp-self-update` 执行库，复用 manifest channel 校验、sha256 校验、下载重试、安装锁、包管理目录保护、健康检查和回滚逻辑，并新增 `wfadm self check`。
 - **wfadm self update**: 安装目标调整为 warp-fusion suite，下载 release archive 后会将 `wfusion` / `wfgen` / `wfl` / `wfadm` 一起安装到当前安装目录或 `--install-dir` 指定目录。
 
 ### 发布元数据
 
 - **版本**: `wfusion` / `wfgen` / `wfl` / `wfadm` 版本推进到 `0.1.34`。
+
+## [0.1.32-alpha] — 2026-07-20
+
+### Admin API / project remote
+
+- **wfadm self update**: 默认远端 manifest URL 按 channel 选择分支，`alpha` 使用 `alpha/updates/alpha/manifest.json`，`beta` 使用 `beta/updates/beta/manifest.json`，避免 `--channel alpha` 错误读取 `main/updates/alpha/manifest.json`。
+
+### 发布元数据
+
+- **版本**: `wfusion` / `wfgen` / `wfl` 版本推进到 `0.1.32`，`wfadm` 保持 `0.1.30`。
+
+## [0.1.31-alpha] — 2026-07-19
+
+### Admin API / project remote
+
+- **wfadm self update**: 新增对齐 `wpadm self update` 的分层命令和参数，支持 `--channel`、`--updates-base-url`、`--updates-root`、`--json`、`--yes`、`--dry-run`、`--force`。更新源改为 manifest canonical target triple，修复 macOS arm64 `aarch64-macos` 短名导致的 404，并避免将 `wfusion` 写入 `wfadm` 路径；当远端版本低于当前版本时，文本输出会将 `Latest` 灰色显示。
+
+### 发布元数据
+
+- **版本**: `wfusion` / `wfgen` / `wfl` 版本推进到 `0.1.31`，`wfadm` 保持 `0.1.30`。
 - **Update manifest**: 移除本地 manifest 生成脚本入口，`v_patch` / `v_feat` 不再覆盖 `updates/*/manifest.json`；latest manifest 由 `.github/workflows/release.yml` 的 `update-release-manifest` CI job 在对应 tag release 后按 channel 生成并回写。release 文案和 manifest job 共用一致的 alpha/beta/stable tag 后缀判断，manifest `git_commit` 解析为 tag 指向的 commit。
+
+## [0.1.30-alpha] — 2026-07-19
+
+### 依赖与语言能力
+
+- **依赖**: `wf-engine` / `wf-config` / `wf-lang` / `wf-data` / `wf-runtime` 对齐 `wp-reactor` v0.1.33。
+- **Window miss 诊断**: 通过 `wp-reactor` v0.1.33 支持内置 `__window_miss` 诊断窗口与 `window_miss_total` runtime metrics。
+
+### 示例与文档
+
+- **Window miss 示例**: 新增 `examples/rules/window_miss`，覆盖动态 `wp_oml_name` 路由下的合法 stream、未知 stream schema 和缺失 stream tag 字段。
+- **Window miss monitor**: 为示例增加 `infra.d/monitor.toml` 与 runtime metrics 配置，`run.sh` 会验证 `window_miss_total` 中 `unknown_stream_schema` 和 `missing_stream_tag_field` 两类统计均为 1。
+- **wp-pipeline 示例**: `scan_alerts` / `traffic_alerts` 输出补充 `rule_name = @__wfu_rule_name`，便于下游按规则名区分告警。
+
+### 发布元数据
+
+- **版本**: `wfusion` / `wfgen` / `wfl` 版本推进到 `0.1.30`，`wfadm` 保持 `0.1.13`；stable update manifest 指向 `v0.1.29` 发布包，并归档 `v0.1.29` manifest。
+
+## [0.1.29-alpha] — 2026-07-14
+
+### 依赖与语言能力
+
+- **依赖**: `wf-engine` / `wf-config` / `wf-lang` / `wf-data` / `wf-runtime` 对齐 `wp-reactor` v0.1.32。
+- **Sink 元字段控制**: 通过 `wp-reactor` v0.1.32 支持 `wf_meta_disable` 的 wildmatch matcher，可使用 `__wfu_*`、`__wfu_rule_*` 等 pattern 禁用 wfusion 元字段输出。
+
+### 示例与文档
+
+- **配置文档**: 补充 `wf_meta_disable` wildmatch pattern 说明，明确仅允许 `__wfu_` 前缀的精确字段或 pattern。
+- **SSH brute force 示例**: 输出统计证据和事件/窗口时间边界，并在 sink 组中配置 `wf_meta_disable = ["__wfu_*"]`。
+
+### Admin API / project remote
+
+- **Reload 语义**: runtime 判定 requires-restart / blocked 时，Admin API 返回 `200 restart_required`，不再作为 `409 reload_failed` 处理。
+- **Update 保留**: `update=true` 后如果项目已同步并通过校验，但 runtime reload 返回 `restart_required`，daemon 保留已同步项目内容和 project state，等待进程重启后生效。
+- **状态记录**: 后台 reload 的 `last_reload_result` 增加 `restart_required`，文档和测试同步更新 wait=true / wait=false 行为。
+
+### 发布元数据
+
+- **版本**: `wfusion` / `wfgen` / `wfl` 版本推进到 `0.1.29`，`wfadm` 保持 `0.1.13`；stable update manifest 指向 `v0.1.28` 发布包，并归档 `v0.1.28` manifest。
 
 ## [0.1.28] — 2026-07-13
 
