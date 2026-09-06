@@ -81,7 +81,7 @@ cd wf-examples/nginx_log_stats
 
 ### NEXMark 性能参照
 
-与 Flink 系**同方法论**对照（100M 事件、in-memory 源 + blackhole 汇、同型号云服务器）：
+与 Flink 系**同方法论**对照（100M 事件、in-memory 源 + blackhole、同型号云服务器）：
 
 | 对照基线                         | 几何平均领先    | 算术平均领先 |
 | ---------------------------- | --------- | ------ |
@@ -98,8 +98,7 @@ cd wf-examples/nginx_log_stats
 
 - **五原语内核（Bind / Match / Stats / Join / Yield）**：既写逐事件流式检测，也写声明式窗口统计（`stats<dur> [group by] { 聚合 }`）。
 - **检测表达力为核心差异化**：时序链 + OR 分支 + 双阶段匹配（实时/窗口关闭），缺失检测（A→NOT B）；一等实体声明 `entity()` 驱动跨规则评分。
-- **覆盖范围**：哈希族、网络 `cidr_match`、多精度时间、对象 `merge`、HOP 跳窗、`anti`/延迟触发 join、规则级 `let`、表达式派生分组 key 等；与 SPL Top50 高频函数对齐率 100%（50/50）。
-- **诚实边界**：三角函数、行保留聚合（eventstats 类）等通用计算不在主战场；分项可解释评分为规划项。
+- **覆盖范围**：哈希族、网络 `cidr_match`、多精度时间、对象 `merge`、HOP 跳窗、`anti`/延迟触发 join、规则级 `let`、表达式派生分组 key 等；。
 
 ## 架构亮点
 
