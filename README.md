@@ -8,18 +8,6 @@
 
 **WarpFusion  是高性能Ai Native 的实时计算引擎
 
-## 目录
-
-- [快速开始](#快速开始)
-- [一个最小的规则](#一个最小的规则)
-- [Workspace 组件](#workspace-组件)
-- [示例导览](#示例导览)
-- [文档](#文档)
-- [能力定位与性能参照](#能力定位与性能参照)
-- [架构亮点](#架构亮点)
-- [边界声明](#边界声明)
-- [License](#license)
-
 ## 快速开始
 
 ### 安装（推荐）
@@ -60,7 +48,7 @@ cd wf-examples/nginx_log_stats
 | --- | --- |
 | `wfusion` | 引擎主二进制 |
 | `wfl` | 规则开发工具 |
-| `wfgen` | 数据生成与 oracle 验证；|
+| `wfgen` | 数据生成与 oracle 验证|
 | `wfadm` | 管理 CLI|
 
 ## 文档
@@ -74,8 +62,6 @@ cd wf-examples/nginx_log_stats
 - **开发者集成**：[integration.md](docs/useage/integration.md)（把引擎接入自有系统：来源 → 窗口 → 输出路由 → 规则）
 - **WFL 语言**：[rules.md](docs/useage/rules.md)
 - **运行与配置**：[config](docs/useage/config/) · [cli](docs/useage/cli/cli.md)
-- **Admin API / 在线 reload / 发布**：[admin_api.md](docs/useage/cli/admin_api.md)
-- **设计与能力**：[design](docs/design/) · [warp-fusion-competitiveness.md](docs/warp-fusion-competitiveness.md)
 
 ## 能力定位与性能参照
 
@@ -105,17 +91,17 @@ cd wf-examples/nginx_log_stats
 
 ## 架构亮点
 
-| 杠杆               | 砍掉了什么                                                 |
+|   关键设计              |  作用                                                |
 | ------------------ | ---------------------------------------------------------- |
-| **列批式向量化**  | 逐事件对象分配 + 解释器分发                                |
+| **列批式向量化**  | 减去逐事件对象分配 + 解释器分发                                |
 | **数据零拷贝**     | 消灭 Event→Record→DataRecord 多层拷贝                      |
 | **内存精确控制**   | 窗口数据仅过期且被下游全部消费后才释放、数据预读总量设上限 |
-| **Rust vs Java**   | 免去 Java 系引擎（Flink 等）的 JVM GC 停顿                 |
+| **Rust**   | 免去 Java 系引擎（Flink 等）的 JVM GC 停顿                 |
 | **规则即规划**     | 运行期逐事件解释（Stats/Match 编译期定型为执行计划）       |
 
 ## 边界声明
 
-上述领先在**「引擎纯算力 / 单机内存」隔离维度**测得：当前为**单机、无 exactly-once / checkpoint(规划) / 分布式协调开销**。NEXMark 为合成基准，结论作**能力参照**而非生产 SLA 承诺；生产级容错、分布式与有状态一致性补齐后方可对等比较。
+测试为**单机、无 exactly-once / checkpoint(规划)**。NEXMark 为合成基准。
 
 ## License
 
