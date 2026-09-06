@@ -46,7 +46,6 @@ cd wf-examples/nginx_log_stats
 | --- | --- | --- |
 | ① 持续运行 | `./run.sh` | 启动 `wfusion` daemon + `wfgen` stream 实时注入（Ctrl-C 停止；可 `./run.sh 30s` 限时自停） |
 | ② 实时看板 | `./view.sh` | 另开终端运行，浏览器打开 http://localhost:8123/view/（每 3s 自动刷新） |
-| ③ 冒烟验证 | `./smoke.sh` | 一次性确定性验证：lint → 生成 → batch 回放 → 摘要（无需看板） |
 
 看板**直读引擎输出** `data/alerts/nginx.ndjson`（统计行随 5s 桶关闭追加、5xx 告警随注入增长），
 展示累计请求 / 独立 IP（Top 10 + 总数）/ 状态码分布 / 请求时间线，以及 5xx 突发明细（时间 / IP / URI）。
