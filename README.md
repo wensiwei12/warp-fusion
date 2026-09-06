@@ -18,12 +18,9 @@
 # stable（默认通道，推荐生产）
 curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wfusion
  
-# 预发布通道：alpha / beta（新语法验证、与引擎开发线对齐时使用）
 curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wfusion alpha
 curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wfusion beta
 ```
-
-安装后确保 `~/bin` 在 PATH 中（脚本会提示）：
 
 ```bash
 export PATH="$HOME/bin:$PATH"
@@ -31,12 +28,10 @@ export PATH="$HOME/bin:$PATH"
 
 ### 快速体验（示例项目集合）
 
-示例项目在独立仓库 [wf-examples](https://github.com/wp-labs/wf-examples)。
+示例项目[wf-examples](https://github.com/wp-labs/wf-examples)。
 `nginx_log_stats/` 对 Nginx access 日志做**持续流式统计**
 
 ```bash
-# 确保 wfadm / wfusion / wfgen 在 PATH（安装见上方；前置细节以
-# wf-examples/nginx_log_stats 的 README 为准），然后：
 git clone https://github.com/wp-labs/wf-examples
 cd wf-examples/nginx_log_stats
 ./view.sh &
