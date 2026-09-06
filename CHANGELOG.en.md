@@ -3,6 +3,43 @@
 This file records user-facing changes to `wfusion` / `wfl` / `wfgen` / `wfadm`.
 Internal implementation details, dependency alignment, and test counts are not covered here.
 
+## [0.5.7]
+
+### Engine (aligned with wp-reactor 2.0.18)
+
+- Aligned to wp-reactor v2.0.18 (2.0.16–2.0.18 are internal refactors; public API and rule semantics unchanged).
+
+### wfl
+
+- **L1 structured receipts**: `wfl test --format json` (verify isomorphic) — assertion-level pass/fail receipts.
+- **L2 adversarial generation**: `wfl test --gen-negatives` — appends violating rows for bind guards (`field == literal` / `!= literal`), asserting hits stay unchanged.
+- **L3 intent compilation**: `wfl intent` — `.wfi` positive samples (`hits >= 1`, missed detection) / negative samples (`hits == 0`, false positive) compiled into receipts.
+- **`wfl limits-est`**: recommends `max_memory` / `max_instances` = measured peak × headroom (default 2) from `metrics.ndjson`.
+
+### wfgen
+
+- **L4 performance gate**: `wfgen perf-diag --gate` — fails on regression.
+
+### Examples / docs
+
+- Added `hello_detection` integration example and the memory-limits guide; `ssh_brute_force` replay gains the `_stream` field; README positioning and license wording updated.
+
+## [0.5.6]
+
+### Language (WFL, aligned with wp-reactor 2.0.15)
+
+- **match grouping keys support derived expressions (issue #80)**: `coalesce` / `concat` / `case` / literal results usable as window keys (`match<k:10m>`), mixed with field keys; empty/fallback-less results behave like a missing key (event not grouped).
+  - Derived keys support `rule_shards`; window stats/query and `now*` functions rejected by the checker.
+  - Example: `examples/rules/match_expr_key_demo`; `match_let_demo` shows `let`-derived keys (issue #83).
+
+### wfl
+
+- **`wfl verify` EOF close fix (issue #23)**: for spans shorter than the window, EOF closes remaining `and close` instances uniformly — verify hits match the oracle.
+
+### Engine (aligned with wp-reactor 2.0.15)
+
+- Aligned to wp-reactor v2.0.15 (expression-derived match keys, fanout expression sharding, async spill watchdog).
+
 ## [0.5.5]
 
 ### Language (WFL)

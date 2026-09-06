@@ -6,7 +6,7 @@
 ![lang: Rust](https://img.shields.io/badge/lang-Rust-000000.svg)
 ![status: active](https://img.shields.io/badge/status-active-brightgreen.svg)
 
-**WarpFusion 的 CLI / 工具 workspace**——WFL 安全检测引擎的工程入口：规则开发（`wfl`）、数据生成与基准（`wfgen`）、引擎运行（`wfusion`）、管理（`wfadm`）。
+**WarpFusion  是高性能Ai Native 的实时计算引擎
 
 ## 目录
 
@@ -29,7 +29,7 @@
 ```bash
 # stable（默认通道，推荐生产）
 curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wfusion
-
+ 
 # 预发布通道：alpha / beta（新语法验证、与引擎开发线对齐时使用）
 curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wfusion alpha
 curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wfusion beta
@@ -107,7 +107,6 @@ rule ssh_brute_force {
 | `wfl` | 规则开发工具：`lint` / `test`（规则内联用例）/ `replay` / `verify` |
 | `wfgen` | 数据生成与 oracle 验证；含 `nexmark_pk` 基准工具链 |
 | `wfadm` | 管理 CLI（Admin API 状态查询、在线 reload、发布流程） |
-| `wf-project-remote` | 远程项目加载库 |
 
 各 crate 变更见 [CHANGELOG.md](./CHANGELOG.md) / [CHANGELOG.en.md](./CHANGELOG.en.md)。
 
@@ -186,7 +185,7 @@ rule ssh_brute_force {
 
 `warp-fusion` 及核心运行时采用 **Elastic License 2.0 (ELv2)**。
 
-- **允许**：个人、研究、教学、非营利组织，以及企业**内部自用**（含部署、修改、嵌入自有产品）。
+- **允许**：个人、研究、教学、非营利组织，以及企业**内部自用**。
 - **禁止**：将本软件作为**托管服务 / 产品对外提供**、销售本软件本身、或绕过授权限制。
 - 任何超出上述免费范围的商业用途，需与版权人另行签署商业授权协议。
 

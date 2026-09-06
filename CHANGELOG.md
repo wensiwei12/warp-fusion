@@ -2,6 +2,27 @@
 
 本文件记录 `wfusion` / `wfl` / `wfgen` / `wfadm` 面向使用者的变更。内部实现细节、依赖版本对齐和测试计数不在此展开。
 
+## [0.5.7]
+
+### 引擎（对齐 wp-reactor 2.0.18）
+
+- 对齐 wp-reactor v2.0.18（2.0.16–2.0.18 均为内部工程重构，公开 API 与规则语义不变）。
+
+### wfl
+
+- **L1 结构化回执**：`wfl test --format json`（verify 同构）——断言级通过/失败回执。
+- **L2 对抗测试生成**：`wfl test --gen-negatives`——按 bind-guard（`field == literal` / `!= literal`）自动追加违反行反例，断言命中数不变。
+- **L3 检测意图编译**：`wfl intent`——`.wfi` 正样本（`hits >= 1`，漏报）/负样本（`hits == 0`，误报）编译回执。
+- **`wfl limits-est`**：按 `metrics.ndjson` 实测峰值推荐 `max_memory` / `max_instances` = 峰值 × headroom（默认 2）。
+
+### wfgen
+
+- **L4 性能门禁**：`wfgen perf-diag --gate`，超限即红。
+
+### 示例 / 文档
+
+- 新增 `hello_detection` 集成示例与 memory-limits 指南；`ssh_brute_force` 回放补 `_stream` 字段；README 定位与许可说明更新。
+
 ## [0.5.6]
 
 ### 语言（WFL，对齐 wp-reactor 2.0.15）

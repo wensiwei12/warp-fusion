@@ -5509,9 +5509,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "wf-cep"
+version = "2.0.18"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.18#251ed45fda328d8e6c289a1d809b1ec1441babdf"
+dependencies = [
+ "arrow",
+ "chrono",
+ "foldhash 0.2.0",
+ "hex",
+ "md-5 0.10.6",
+ "moju-derive",
+ "orion-error",
+ "regex",
+ "serde_json",
+ "sha1 0.11.0",
+ "sha2 0.11.0",
+ "smol_str",
+ "wf-lang",
+]
+
+[[package]]
 name = "wf-config"
-version = "2.0.15"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.15#2e460996bf7db1b378f9ada728768b113e817407"
+version = "2.0.18"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.18#251ed45fda328d8e6c289a1d809b1ec1441babdf"
 dependencies = [
  "chrono",
  "glob",
@@ -5538,8 +5558,8 @@ dependencies = [
 
 [[package]]
 name = "wf-data"
-version = "2.0.15"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.15#2e460996bf7db1b378f9ada728768b113e817407"
+version = "2.0.18"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.18#251ed45fda328d8e6c289a1d809b1ec1441babdf"
 dependencies = [
  "chrono",
  "serde_json",
@@ -5547,8 +5567,8 @@ dependencies = [
 
 [[package]]
 name = "wf-engine"
-version = "2.0.15"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.15#2e460996bf7db1b378f9ada728768b113e817407"
+version = "2.0.18"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.18#251ed45fda328d8e6c289a1d809b1ec1441babdf"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5571,6 +5591,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
+ "wf-cep",
  "wf-config",
  "wf-lang",
  "wildmatch",
@@ -5580,8 +5601,8 @@ dependencies = [
 
 [[package]]
 name = "wf-lang"
-version = "2.0.15"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.15#2e460996bf7db1b378f9ada728768b113e817407"
+version = "2.0.18"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.18#251ed45fda328d8e6c289a1d809b1ec1441babdf"
 dependencies = [
  "moju-derive",
  "orion-error",
@@ -5606,8 +5627,8 @@ dependencies = [
 
 [[package]]
 name = "wf-runtime"
-version = "2.0.15"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.15#2e460996bf7db1b378f9ada728768b113e817407"
+version = "2.0.18"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.18#251ed45fda328d8e6c289a1d809b1ec1441babdf"
 dependencies = [
  "arrow",
  "async-broadcast",
