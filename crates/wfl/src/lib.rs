@@ -1,10 +1,13 @@
 pub mod cmd_explain;
 pub mod cmd_fmt;
+pub mod cmd_intent;
+pub mod cmd_limits_est;
 pub mod cmd_lint;
 pub mod cmd_replay;
 pub mod cmd_replay_verify;
 pub mod cmd_test;
 pub mod error;
+pub mod gen_negatives;
 mod load_imports;
 
 pub(crate) use load_imports::load_wfl_with_imports;

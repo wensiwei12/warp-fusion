@@ -1,6 +1,7 @@
 use std::io::BufReader;
 use std::time::Duration;
 
+use wf_engine::match_engine::Value;
 use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
 use wfl::cmd_replay::{replay_events, replay_events_for_verify};
 
@@ -144,6 +145,129 @@ fn replay_eof_close_all_fires_alert() {
     assert!((alert.score - 80.0).abs() < f64::EPSILON);
     assert_eq!(alert.entity_type.as_ref(), "ip");
     assert_eq!(alert.entity_id, "10.0.0.1");
+}
+
+// ===========================================================================
+// let 派生字段（issue #79）：match 路径 apply_lets，entity/yield 按裸名引用
+// ===========================================================================
+
+fn make_alert_out_schema() -> WindowSchema {
+    WindowSchema {
+        name: "alert_out".to_string(),
+        streams: vec![],
+        time_field: None,
+        over: Duration::from_secs(3600),
+        fields: vec![
+            FieldDef {
+                name: "tenant".to_string(),
+                field_type: FieldType::Base(BaseType::Chars),
+            },
+            FieldDef {
+                name: "dedup".to_string(),
+                field_type: FieldType::Base(BaseType::Chars),
+            },
+        ],
+    }
+}
+
+/// match 规则 + `let` 派生字段（issue #79）：`tenant = first(e.user)`、
+/// `dedup = join_by("|", tenant, first(e.action))`（链式引用），entity 与 yield
+/// 都按裸名引用派生值——验证解析 → 编译 → match 路径 apply_lets 的完整链路。
+#[test]
+fn replay_match_rule_with_lets() {
+    let schemas = vec![
+        make_auth_events_schema(),
+        make_security_alerts_schema(),
+        make_alert_out_schema(),
+    ];
+    let wfl = r#"
+rule let_derive {
+    events { e : auth_events }
+    let tenant = e.user
+    let dedup = join_by("|", tenant, e.action)
+    match<sip:5m> {
+        on event { e | count >= 2; }
+    } -> score(70.0)
+    entity(chars, tenant)
+    yield alert_out (tenant = tenant, dedup = dedup)
+}
+"#;
+    let ndjson = make_ndjson_events(2); // user=admin, action=failed
+    let reader = BufReader::new(ndjson.as_bytes());
+
+    let result = replay_events(wfl, &schemas, reader, false).expect("replay should succeed");
+
+    assert_eq!(result.event_count, 2);
+    assert_eq!(result.match_count, 1);
+    assert_eq!(result.error_count, 0);
+    assert_eq!(result.alerts.len(), 1);
+    let alert = &result.alerts[0];
+    assert_eq!(
+        alert.entity_id, "admin",
+        "entity(chars, tenant) → let 派生值"
+    );
+    assert_eq!(alert.yield_fields.len(), 2);
+    assert_eq!(
+        alert.yield_fields[0].1,
+        Value::Str("admin".into()),
+        "tenant 派生值"
+    );
+    assert_eq!(
+        alert.yield_fields[1].1,
+        Value::Str("admin|failed".into()),
+        "dedup 派生值（链式引用 tenant）"
+    );
+}
+
+// ===========================================================================
+// match 表达式（issue #79 Issue 2）：枚举归一化 + 多模式 `|` + 默认 `_`
+// ===========================================================================
+
+/// match 表达式在 yield 中做枚举归一化：`failed` → 5、`locked`/`disabled`
+/// → 9（多模式 `|`）、其余 → 1（默认 `_`）。验证解析 → 编译 → 引擎求值链路。
+#[test]
+fn replay_match_expr_severity() {
+    let schemas = vec![make_auth_events_schema(), make_security_alerts_schema()];
+    let wfl = r#"
+rule sev_map {
+    events { e : auth_events }
+    match<sip:5m> {
+        on event { e | count >= 1; }
+    } -> score(50.0)
+    entity(ip, e.sip)
+    yield security_alerts (sip = e.sip, fail_count = case e.action {
+        "failed" => 5,
+        "locked" | "disabled" => 9,
+        _ => 1,
+    })
+}
+"#;
+    let ndjson = make_ndjson_events(1); // action=failed
+    let reader = BufReader::new(ndjson.as_bytes());
+    let result = replay_events(wfl, &schemas, reader, false).expect("replay should succeed");
+    assert_eq!(result.error_count, 0);
+    assert_eq!(result.alerts.len(), 1);
+    assert_eq!(
+        result.alerts[0].yield_fields[1].1,
+        Value::Number(5.0),
+        "failed → 5"
+    );
+
+    // locked → 9（多模式第二个命中）；other → 1（默认分支）。
+    for (action, expected) in [("locked", 9.0), ("info", 1.0)] {
+        let ndjson = format!(
+            r#"{{"_stream":"auth_stream","sip":"10.0.0.1","action":"{action}","user":"admin","event_time":1700000000000000000}}"#
+        );
+        let reader = BufReader::new(ndjson.as_bytes());
+        let result = replay_events(wfl, &schemas, reader, false).expect("replay should succeed");
+        assert_eq!(result.error_count, 0);
+        assert_eq!(result.alerts.len(), 1);
+        assert_eq!(
+            result.alerts[0].yield_fields[1].1,
+            Value::Number(expected),
+            "{action} → {expected}"
+        );
+    }
 }
 
 // ===========================================================================
@@ -442,10 +566,10 @@ rule pipe_replay {
 }
 
 #[test]
-fn replay_verify_mode_uses_timeout_not_eos() {
+fn replay_verify_mode_timeout_and_eof_close() {
     let schemas = vec![make_auth_events_schema(), make_security_alerts_schema()];
     let wfl = r#"
-rule timeout_only {
+rule timeout_and_eof {
     events { e : auth_events }
     match<sip:5s> {
         on event { e | count >= 1; }
@@ -456,8 +580,10 @@ rule timeout_only {
 }
 "#;
 
-    // Event times are strings (wfgen JSONL style). Verify mode should parse
-    // them as event time and emit timeout close when watermark passes 5s.
+    // 10.0.0.1 的窗口在 5s 处被第二条事件的 watermark（7s）扫过期 → 中途
+    // timeout 发射；10.0.0.2 的窗口（起点 7s，未过期）在 EOF 时 close_all
+    // 收口发射（issue #23：verify 必须补尾部未过期窗口，与 replay/test 及
+    // 引擎 flush 收口语义一致，否则 span 短于窗口的数据恒 0 匹配）。
     let ndjson = r#"{"_stream":"auth_stream","_timestamp":"1970-01-01T00:00:00Z","sip":"10.0.0.1","action":"failed","user":"u1","event_time":"1970-01-01T00:00:00Z"}
 {"_stream":"auth_stream","_timestamp":"1970-01-01T00:00:07Z","sip":"10.0.0.2","action":"failed","user":"u2","event_time":"1970-01-01T00:00:07Z"}"#;
     let reader = BufReader::new(ndjson.as_bytes());
@@ -466,8 +592,164 @@ rule timeout_only {
         replay_events_for_verify(wfl, &schemas, reader, false).expect("replay should succeed");
     assert_eq!(result.event_count, 2);
     assert_eq!(result.error_count, 0);
-    assert_eq!(result.match_count, 1, "only key 10.0.0.1 should timeout");
+    assert_eq!(
+        result.match_count, 2,
+        "timeout (10.0.0.1) + EOF close (10.0.0.2)"
+    );
+    assert_eq!(result.alerts.len(), 2);
+
+    let mut by_entity: Vec<(&str, &str)> = result
+        .alerts
+        .iter()
+        .map(|a| (a.entity_id.as_str(), a.origin.as_str()))
+        .collect();
+    by_entity.sort();
+    assert_eq!(by_entity[0], ("10.0.0.1", "close:timeout"));
+    assert_eq!(by_entity[1], ("10.0.0.2", "close:eos"));
+
+    // 对照：replay（无逐事件扫描）在 EOF 统一 close_all——同输入也覆盖到
+    // 10.0.0.1（origin 为 eos 而非 timeout，语义差异见 run_timeout_scan 注释）。
+    let reader = BufReader::new(ndjson.as_bytes());
+    let replay_result = replay_events(wfl, &schemas, reader, false).expect("replay should succeed");
+    assert_eq!(
+        replay_result.match_count, 2,
+        "replay closes both keys at EOF"
+    );
+    let mut replay_origins: Vec<&str> = replay_result
+        .alerts
+        .iter()
+        .map(|a| a.origin.as_str())
+        .collect();
+    replay_origins.sort();
+    assert_eq!(
+        replay_origins,
+        vec!["close:eos", "close:eos"],
+        "replay (no mid-stream scan) closes everything at EOF"
+    );
+}
+
+// ===========================================================================
+// Bind filter on NDJSON replay（issue #23）
+// ===========================================================================
+//
+// `events { c : conn_events && dport == 4444 }` 的 bind filter 必须在 replay
+// 驱动里逐事件应用（与 `wfl test` / 生产 rule_task 的 alias 过滤一致）。此前
+// replay 漏掉该前置过滤：被 filter 排除的事件仍进入状态机，close 步累积把
+// 良性事件计入 count → 误触发 / count 虚高。digit（dport）与 chars（action）
+// 两条路径都验证。
+
+/// 只有良性事件（dport=443/80，均非 4444）→ 规则必须 0 触发。
+/// 修复前：dport==4444 过滤被忽略，两行良性事件各触发 1 条 close 告警。
+#[test]
+fn replay_bind_filter_excludes_benign_only_input() {
+    let schemas = vec![make_conn_events_schema(), make_network_alerts_schema()];
+    let wfl = r#"
+rule port_filter {
+    events { c : conn_events && dport == 4444 }
+    match<sip:5m> {
+        on event { c | count >= 1; }
+        and close { c | count >= 1; }
+    } -> score(80.0)
+    entity(ip, c.sip)
+    yield network_alerts (sip = c.sip, alert_type = "x")
+}
+"#;
+    let base = 1_700_000_000_000_000_000i64;
+    let sec = 1_000_000_000i64;
+    let ndjson = format!(
+        r#"{{"_stream":"netflow","sip":"10.0.0.1","dport":443,"action":"syn","event_time":{}}}"#,
+        base
+    ) + "\n"
+        + &format!(
+            r#"{{"_stream":"netflow","sip":"10.0.0.2","dport":80,"action":"syn","event_time":{}}}"#,
+            base + sec
+        );
+    let reader = BufReader::new(ndjson.as_bytes());
+    let result = replay_events(wfl, &schemas, reader, false).expect("replay should succeed");
+    assert_eq!(result.event_count, 2);
+    assert_eq!(
+        result.match_count, 0,
+        "bind filter dport==4444 must reject benign-only events"
+    );
+    assert_eq!(result.error_count, 0);
+    assert!(result.alerts.is_empty());
+}
+
+/// 恶意(dport=4444) + 良性(dport=80) 同 sip → 恰好 1 触发。close 步用
+/// `count == 1` 精确断言：修复前良性事件被计入 close 累积使 count=2，
+/// `== 1` 不满足 → 漏报；修复后只有命中 filter 的事件计入 → count=1 触发。
+#[test]
+fn replay_bind_filter_does_not_inflate_close_count() {
+    let schemas = vec![make_conn_events_schema(), make_network_alerts_schema()];
+    let wfl = r#"
+rule port_filter_exact {
+    events { c : conn_events && dport == 4444 }
+    match<sip:5m> {
+        on event { c | count >= 1; }
+        and close { exact: c | count == 1; }
+    } -> score(80.0)
+    entity(ip, c.sip)
+    yield network_alerts (sip = c.sip, alert_type = "x")
+}
+"#;
+    let base = 1_700_000_000_000_000_000i64;
+    let sec = 1_000_000_000i64;
+    let ndjson = format!(
+        r#"{{"_stream":"netflow","sip":"10.0.0.1","dport":4444,"action":"syn","event_time":{}}}"#,
+        base
+    ) + "\n"
+        + &format!(
+            r#"{{"_stream":"netflow","sip":"10.0.0.1","dport":80,"action":"syn","event_time":{}}}"#,
+            base + sec
+        );
+    let reader = BufReader::new(ndjson.as_bytes());
+    let result = replay_events(wfl, &schemas, reader, false).expect("replay should succeed");
+    assert_eq!(result.event_count, 2);
+    assert_eq!(result.error_count, 0);
+    assert_eq!(
+        result.match_count, 1,
+        "benign event must not inflate close count; expected exactly 1 alert"
+    );
     assert_eq!(result.alerts.len(), 1);
     assert_eq!(result.alerts[0].entity_id, "10.0.0.1");
-    assert_eq!(result.alerts[0].origin.as_str(), "close:timeout");
+}
+
+/// chars bind filter（对照，issue #23 报告中 chars 正常的论断）：
+/// `action == "syn"` 过滤下，非 syn 事件不得进入机器。
+#[test]
+fn replay_chars_bind_filter_excludes_non_matching() {
+    let schemas = vec![make_conn_events_schema(), make_network_alerts_schema()];
+    let wfl = r#"
+rule action_filter {
+    events { c : conn_events && action == "syn" }
+    match<sip:5m> {
+        on event { c | count >= 1; }
+        and close { exact: c | count == 1; }
+    } -> score(80.0)
+    entity(ip, c.sip)
+    yield network_alerts (sip = c.sip, alert_type = "x")
+}
+"#;
+    let base = 1_700_000_000_000_000_000i64;
+    let sec = 1_000_000_000i64;
+    // 1 条命中(action=syn) + 1 条不命中(action=fin)：close 精确计数必须只含
+    // syn 事件。
+    let ndjson = format!(
+        r#"{{"_stream":"netflow","sip":"10.0.0.1","dport":4444,"action":"syn","event_time":{}}}"#,
+        base
+    ) + "\n"
+        + &format!(
+            r#"{{"_stream":"netflow","sip":"10.0.0.1","dport":80,"action":"fin","event_time":{}}}"#,
+            base + sec
+        );
+    let reader = BufReader::new(ndjson.as_bytes());
+    let result = replay_events(wfl, &schemas, reader, false).expect("replay should succeed");
+    assert_eq!(result.event_count, 2);
+    assert_eq!(result.error_count, 0);
+    assert_eq!(
+        result.match_count, 1,
+        "non-syn event must not inflate close count; expected exactly 1 alert"
+    );
+    assert_eq!(result.alerts.len(), 1);
+    assert_eq!(result.alerts[0].entity_id, "10.0.0.1");
 }

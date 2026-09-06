@@ -1,23 +1,85 @@
 # warp-fusion
 
-`warp-fusion` 是 WarpFusion 的 CLI / 工具 workspace，负责产出：
+[![CI: build & test](https://github.com/wp-labs/warp-fusion/actions/workflows/build-and-test.yml/badge.svg?branch=alpha)](https://github.com/wp-labs/warp-fusion/actions/workflows/build-and-test.yml)
+[![release](https://img.shields.io/github/v/tag/wp-labs/warp-fusion?include_prereleases&label=release&color=orange)](https://github.com/wp-labs/warp-fusion/releases)
+![license: ELv2](https://img.shields.io/badge/license-ELv2-blue.svg)
+![lang: Rust](https://img.shields.io/badge/lang-Rust-000000.svg)
+![status: active](https://img.shields.io/badge/status-active-brightgreen.svg)
 
-- `wfusion` — 引擎主二进制
-- `wfgen` — 测试数据生成工具（含 `nexmark_pk` 基准工具链）
-- `wfl` — 规则开发工具
-- `wfadm` — 管理 CLI
-- `wf-project-remote` — 远程项目加载库
+**WarpFusion  是高性能Ai Native 的实时计算引擎**
 
-变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
+## 快速开始
 
-运行、配置和 Admin API 使用文档见 [docs](./docs/)，其中 Admin API  
-状态查询、在线 reload 和发布流程见 [docs/useage/cli/admin\_api.md](./docs/useage/cli/admin_api.md)。
+### 安装（推荐）
 
-## 价值与竞争力
+一行命令安装 `warp-fusion` 套件（`wfusion` 引擎及配套 CLI，默认装到 `~/bin`）：
 
-`warp-fusion` 定位为**通用流处理引擎**，以 WFL 高层处理语义 DSL（五原语 `Bind` / `Match` / `Stats` / `Join` / `Yield`）表达规则，轻量化运行。
+```bash
+# stable（默认通道，推荐生产）
+curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wfusion
+ 
+# 预发布通道：alpha / beta（新语法验证、与引擎开发线对齐时使用）
+curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wfusion alpha
+curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wfusion beta
+```
 
-### 性能能力参照（NEXMark）
+安装后确保 `~/bin` 在 PATH 中（脚本会提示）：
+
+```bash
+export PATH="$HOME/bin:$PATH"
+```
+
+### 快速体验（示例项目集合）
+
+示例项目在独立仓库 [wf-examples](https://github.com/wp-labs/wf-examples)。
+`nginx_log_stats/` 为最小业务示例——对 Nginx access 日志做**持续流式统计**
+（状态码 / 来源 IP，5s 固定桶）+ **5xx 突发检测**，页面实时展示：
+
+```bash
+# 确保 wfadm / wfusion / wfgen 在 PATH（安装见上方；前置细节以
+# wf-examples/nginx_log_stats 的 README 为准），然后：
+git clone https://github.com/wp-labs/wf-examples
+cd wf-examples/nginx_log_stats
+```
+
+| 步骤 | 命令 | 说明 |
+| --- | --- | --- |
+| ① 持续运行 | `./run.sh` | 启动 `wfusion` daemon + `wfgen` stream 实时注入（Ctrl-C 停止；可 `./run.sh 30s` 限时自停） |
+| ② 实时看板 | `./view.sh` | 另开终端运行，浏览器打开 http://localhost:8123/view/（每 3s 自动刷新） |
+
+看板**直读引擎输出** `data/alerts/nginx.ndjson`（统计行随 5s 桶关闭追加、5xx 告警随注入增长），
+展示累计请求 / 独立 IP（Top 10 + 总数）/ 状态码分布 / 请求时间线，以及 5xx 突发明细（时间 / IP / URI）。
+
+更多示例见仓库内 [getting_started](https://github.com/wp-labs/wf-examples/tree/main/getting_started)
+（完整 CEP 管道 + TCP daemon 联调）、[core](https://github.com/wp-labs/wf-examples/tree/main/core)
+（安全检测规则库）与 [performance](https://github.com/wp-labs/wf-examples/tree/main/performance)（NEXMark 基准）。
+
+## Workspace 组件
+
+| 二进制 | 作用 |
+| --- | --- |
+| `wfusion` | 引擎主二进制 |
+| `wfl` | 规则开发工具 |
+| `wfgen` | 数据生成与 oracle 验证|
+| `wfadm` | 管理 CLI|
+
+## 文档
+
+> **用 AI / Agent 辅助开发 [wf-skills](https://github.com/wp-labs/wf-skills)**
+> ```bash
+> curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wf-skills
+> ```
+
+- **快速上手 / 概念**：[getting-started.md](docs/useage/getting-started.md) · [warp-fusion-intro.md](docs/warp-fusion-intro.md)
+- **开发者集成**：[integration.md](docs/useage/integration.md)（把引擎接入自有系统：来源 → 窗口 → 输出路由 → 规则）
+- **WFL 语言**：[rules.md](docs/useage/rules.md)
+- **运行与配置**：[config](docs/useage/config/) · [cli](docs/useage/cli/cli.md)
+
+## 能力定位与性能参照
+
+`warp-fusion` 定位为**通用流处理引擎**，以 WFL 高层语义 DSL 表达规则，轻量化运行。
+
+### NEXMark 性能参照
 
 与 Flink 系**同方法论**对照（100M 事件、in-memory 源 + blackhole 汇、同型号云服务器）：
 
@@ -26,31 +88,41 @@
 | Flink OSS（3×12 vCPU / 48GiB） | **24.3×** | 44.7×  |
 | 阿里 VVR（8 CU / 32GiB 托管集群）    | **6.8×**  | 10.1×  |
 
-在公开 NEXMark 对照中属**独一档**——其他现代引擎（Feldera 增量计算 2.2×、RisingWave 宣称 2–10× 但基准有争议）相对 Flink 仅 2–4× 量级改进。完整口径与逐查询数据见 [NEXMark PK 报告](https://github.com/wp-labs/wf-examples/blob/main/performance/nexmark_pk/NEXMARK_PK_REPORT.md)。
+完整口径与逐查询数据见 [NEXMark PK 报告](https://github.com/wp-labs/wf-examples/blob/main/performance/nexmark_pk/NEXMARK_PK_REPORT.md)。
 
 ![WarpFusion vs Flink NEXMark 对照](images/vs-flink.jpg)
-### 架构优势（为什么快）
 
-| 杠杆                  | 砍掉了什么                                                                |
-| ------------------- | -------------------------------------------------------------------- |
-| **列式批式向量化**         | 逐事件对象分配 + 解释器分发                                                      |
-| **数据零拷贝**           | 消灭 Event→Record→DataRecord 多层拷贝                                      |
-| **内存精确控制**          | 窗口数据仅过期且被下游全部消费后才释放、数据预读总量设上限                                        |
-| **Rust vs Java**    | 免去 Java 系引擎（Flink 等）的 JVM GC 停顿、RocksDB/Hummock 磁盘 I/O、checkpoint 屏障 |
-| **WFL 五原语 → 计划期优化** | 运行期逐事件解释（Stats/Match 编译期定型，常量作 `Arc` 计划常量）                           |
+### WFL 表达能力
 
-### 边界声明（重要）
+![WFL 五原语 Core IR](images/wfl-five-primitives.svg)
 
-上述领先&#x5728;**「引擎纯算力 / 单机内存」隔离维度**测得：`warp-fusion` 当前为**单机 8 核、纯内存、无 exactly-once / checkpoint / 分布式协调开销**。NEXMark 为合成基准，结论作**能力参照**而非生产 SLA 承诺；生产级容错、分布式与有状态一致性仍需补齐后方能对等比较。
+- **五原语内核（Bind / Match / Stats / Join / Yield）**：既写逐事件流式检测，也写声明式窗口统计（`stats<dur> [group by] { 聚合 }`）。
+- **检测表达力为核心差异化**：时序链 + OR 分支 + 双阶段匹配（实时/窗口关闭），缺失检测（A→NOT B）；一等实体声明 `entity()` 驱动跨规则评分。
+- **覆盖范围**：哈希族、网络 `cidr_match`、多精度时间、对象 `merge`、HOP 跳窗、`anti`/延迟触发 join、规则级 `let`、表达式派生分组 key 等；与 SPL Top50 高频函数对齐率 100%（50/50）。
+- **诚实边界**：三角函数、行保留聚合（eventstats 类）等通用计算不在主战场；分项可解释评分为规划项。
+
+## 架构亮点
+
+|   关键设计              |  作用                                                |
+| ------------------ | ---------------------------------------------------------- |
+| **列批式向量化**  | 减去逐事件对象分配 + 解释器分发                                |
+| **数据零拷贝**     | 消灭 Event→Record→DataRecord 多层拷贝                      |
+| **内存精确控制**   | 窗口数据仅过期且被下游全部消费后才释放、数据预读总量设上限 |
+| **Rust**   | 免去 Java 系引擎（Flink 等）的 JVM GC 停顿                 |
+| **规则即规划**     | 运行期逐事件解释（Stats/Match 编译期定型为执行计划）       |
+
+## 边界声明
+
+测试为**单机、无 exactly-once / checkpoint(规划)**。NEXMark 为合成基准。
 
 ## License
 
 `warp-fusion` 及核心运行时采用 **Elastic License 2.0 (ELv2)**。
 
-- **允许**：个人、研究、教学、非营利组织，以及企业**内部自用**（含部署、修改、嵌入自有产品）。
+- **允许**：个人、研究、教学、非营利组织，以及企业**内部自用**。
 - **禁止**：将本软件作为**托管服务 / 产品对外提供**、销售本软件本身、或绕过授权限制。
 - 任何超出上述免费范围的商业用途，需与版权人另行签署商业授权协议。
 
 完整条款见 [LICENSE](./LICENSE)；版权归属 `Copyright (c) 2026 zuowenjian`。
 
-> 注：ELv2 不属于 OSI 认证的开源协议（source-available），但允许企业内部商用。
+> 注：ELv2 不属于 OSI 认证的开源协议（source-available），但允许企业内部使用。

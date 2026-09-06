@@ -141,6 +141,64 @@ enum Commands {
         /// Number of runs for conformance testing (requires > 0)
         #[arg(long)]
         runs: Option<usize>,
+
+        /// Generate bind-guard negative cases (L2): for each test row that
+        /// hits a simple `field == literal` / `field != literal` bind guard,
+        /// append a violating row and assert hits stay unchanged.
+        #[arg(long)]
+        gen_negatives: bool,
+
+        /// Output format: "human" (default) or "json"
+        #[arg(long, default_value = "human")]
+        format: String,
+    },
+
+    /// Run detection-intent samples (.wfi) against compiled rules (L3)
+    ///
+    /// 意图文件 = 纯 test 块集合：expect { hits >= 1 } 是正样本（漏报检查：
+    /// 该检出），expect { hits == 0 } 是负样本（误报检查：不该检出）。
+    #[command(name = "intent")]
+    Intent {
+        /// Path to the .wfl rule file (the rules under test)
+        file: PathBuf,
+
+        /// Path to the .wfi intent samples file (test-block-only subset of .wfl)
+        #[arg(long)]
+        intent: PathBuf,
+
+        /// Schema file glob patterns (e.g. "schemas/*.wfs")
+        #[arg(short, long, default_value = "schemas/*.wfs")]
+        schemas: Vec<String>,
+
+        /// Variable substitutions in KEY=VALUE format
+        #[arg(long)]
+        var: Vec<String>,
+
+        /// Output format: "human" (default) or "json"
+        #[arg(long, default_value = "human")]
+        format: String,
+    },
+
+    /// Recommend rule memory limits from a metrics.ndjson run (memory-limits.md)
+    ///
+    /// 读 bench/diag/verify 跑出的 metrics.ndjson，按 rule.instances /
+    /// rule.memory_bytes 峰值给出建议：max_memory / max_instances = 峰值 × headroom。
+    #[command(name = "limits-est")]
+    LimitsEst {
+        /// metrics.ndjson 路径（bench.sh/diag.sh/verify_daemon.sh 产物）
+        metrics: PathBuf,
+
+        /// 只评估指定规则（缺省 = 全部）
+        #[arg(long)]
+        rule: Option<String>,
+
+        /// 建议余量倍数（文档推荐 1.5–3，默认 2）
+        #[arg(long, default_value = "2.0")]
+        headroom: f64,
+
+        /// Output format: "human" (default) or "json"
+        #[arg(long, default_value = "human")]
+        format: String,
     },
 }
 
@@ -214,8 +272,29 @@ fn run_cli() -> WflResult<()> {
             var,
             shuffle,
             runs,
+            gen_negatives,
+            format,
         } => {
-            wfl::cmd_test::run(file, schemas, var, shuffle, runs)?;
+            wfl::cmd_test::run(file, schemas, var, shuffle, runs, gen_negatives, format)?;
+        }
+
+        Commands::Intent {
+            file,
+            intent,
+            schemas,
+            var,
+            format,
+        } => {
+            wfl::cmd_intent::run(file, intent, schemas, var, format)?;
+        }
+
+        Commands::LimitsEst {
+            metrics,
+            rule,
+            headroom,
+            format,
+        } => {
+            wfl::cmd_limits_est::run(metrics, rule, headroom, format)?;
         }
     }
 

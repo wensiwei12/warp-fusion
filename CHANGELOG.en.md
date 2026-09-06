@@ -3,6 +3,126 @@
 This file records user-facing changes to `wfusion` / `wfl` / `wfgen` / `wfadm`.
 Internal implementation details, dependency alignment, and test counts are not covered here.
 
+## [0.5.7]
+
+### Engine (aligned with wp-reactor 2.0.18)
+
+- Aligned to wp-reactor v2.0.18 (2.0.16–2.0.18 are internal refactors; public API and rule semantics unchanged).
+
+### wfl
+
+- **L1 structured receipts**: `wfl test --format json` (verify isomorphic) — assertion-level pass/fail receipts.
+- **L2 adversarial generation**: `wfl test --gen-negatives` — appends violating rows for bind guards (`field == literal` / `!= literal`), asserting hits stay unchanged.
+- **L3 intent compilation**: `wfl intent` — `.wfi` positive samples (`hits >= 1`, missed detection) / negative samples (`hits == 0`, false positive) compiled into receipts.
+- **`wfl limits-est`**: recommends `max_memory` / `max_instances` = measured peak × headroom (default 2) from `metrics.ndjson`.
+
+### wfgen
+
+- **L4 performance gate**: `wfgen perf-diag --gate` — fails on regression.
+
+### Examples / docs
+
+- Added `hello_detection` integration example and the memory-limits guide; `ssh_brute_force` replay gains the `_stream` field; README positioning and license wording updated.
+
+## [0.5.6]
+
+### Language (WFL, aligned with wp-reactor 2.0.15)
+
+- **match grouping keys support derived expressions (issue #80)**: `coalesce` / `concat` / `case` / literal results usable as window keys (`match<k:10m>`), mixed with field keys; empty/fallback-less results behave like a missing key (event not grouped).
+  - Derived keys support `rule_shards`; window stats/query and `now*` functions rejected by the checker.
+  - Example: `examples/rules/match_expr_key_demo`; `match_let_demo` shows `let`-derived keys (issue #83).
+
+### wfl
+
+- **`wfl verify` EOF close fix (issue #23)**: for spans shorter than the window, EOF closes remaining `and close` instances uniformly — verify hits match the oracle.
+
+### Engine (aligned with wp-reactor 2.0.15)
+
+- Aligned to wp-reactor v2.0.15 (expression-derived match keys, fanout expression sharding, async spill watchdog).
+
+## [0.5.5]
+
+### Language (WFL)
+
+- **`let` derived fields (issue #79)**: complex logic shared by multiple output fields defined once and referenced by bare name (e.g. `dedup_key` → `alert_id`); referenceable from `entity` / `yield` / `where` / `score`. Supported on match / close / on-each / deferred paths; stats rules not yet supported (checker errors).
+- **`case` value-dispatch expression (issue #79)**: `case x { "crit" | "alert" => "CRITICAL", _ => x }` replaces nested if/else for enum normalization (multi-pattern `|` / default `_` / short-circuit). Keyword finalized as `case`, leaving `match` to the rule-level CEP clause.
+- Example: `examples/rules/match_let_demo` (let chain + case normalization).
+
+### Engine (aligned with wp-reactor 2.0.12)
+
+- Aligned to `wp-reactor` v2.0.12: `rule_parallelism` → `rule_shards` (stateless each rules shard whole batches — output-chain parallelism); `parse_parallelism` / `parse_buffer_bytes` deprecated (ignored by the engine).
+
+### wfgen
+
+- **`verify-nexmark --detail-diff`**: oracle field-level detail diff — each alert's yield field values compared row-by-row against engine output, upgrading verification from count-level to field-level.
+
+## [0.5.4]
+
+### Engine (aligned with wp-reactor 2.0.10)
+
+- Aligned to `wp-reactor` v2.0.10, centered on multi-key join indexing and multi-rule correctness fixes:
+  - **Multi-key join index**: when multiple rules join the same window on different key fields (e.g. q8 by seller / q20 by id), a later registrant previously fell back to a full-window scan O(window)×pending and froze mixed runs; each key field now gets its own index, restoring `mix` multi-rule runs.
+  - **Multi-rule correctness**: fixes located via q8/q11/q6/q7 cross-checks (join index field validation / shard conflict detection / stats key injection / close_all watermark alignment granularity).
+  - **Snapshot join**: first-batch index race + gate performance regression fix (q20 regression 10–12%→3.7%).
+  - Shutdown tail-batch loss + q13 mid-pipeline consume race fixes.
+
+### License
+
+- Licensed under **Elastic License 2.0 (ELv2)**: free for internal use (including deployment / modification / embedding in your own product); a commercial license is required to offer it as a hosted service.
+
+## [0.5.3]
+
+### Language (WFL)
+
+- **Top-level lists + `use` imports (issue #73)**: define once with `name = ("a", "b", ...)`, reference from multiple rules via `expr in <name>` / `expr not in <name>`; `use "lists.wfl"` imports all top-level lists from the target file (no visibility control — all visible).
+  - Compiled to literal lists + **InList type checking** (element/left-value type comparison, unified for literal and named lists; mixed/incompatible types error).
+  - Error surface: unknown name / missing use target / cyclic reference / duplicate name → error (same path for lint and compile).
+  - `wfl lint`/`test`/`replay`/`explain` all route through `load_wfl_with_imports` (use resolution); `wfl fmt` (tree-sitter) support for list declarations pending tree-sitter-wfl sync.
+
+### Engine (aligned with wp-reactor 2.0.9)
+
+- Aligned to `wp-reactor` v2.0.9 (internal engine fixes).
+
+### wfgen
+
+- **Stats rules wired into oracle cross-check**: q15–q19 verify consistent; oracle feeds rows by bound window + enqueues intermediate events.
+
+## [0.5.2]
+
+### Engine (aligned with wp-reactor 2.0.8)
+
+- Aligned to `wp-reactor` v2.0.8; `mimalloc` periodic collection (`WF_COLLECT_MS`, default 5s) significantly reduces q18 RSS.
+
+## [0.5.1]
+
+### wfusion
+
+- **mimalloc memory accounting**: process memory from `mi_process_info` reported under `metrics alloc.*` for observable true memory usage.
+
+### wfgen
+
+- **Configurable send buffer**: `WFGEN_SEND_BUF` (default 1MB); perf-diag send 8KB→1MB (injection 620MB/s→6.9GB/s).
+- **Streaming perf-diag send**: eliminates reading the whole file into memory (drops the 30M 6.4GB×2 peak).
+
+## [0.5.0]
+
+### wfgen — NEXMark data generation and oracle cross-check
+
+- **Data generation aligned with Flink official**: `gen-nexmark` distribution parameters corrected item-by-item (string fields / extra padding / fixed 100µs event rate / nextExtra range / cold 90% / horizon millisecond rounding); `bid.url` matches the official `getBaseUrl` (3-segment directory, supporting q22); `bid` gains a `channel_id` field (q21 alignment).
+- **`gen-nexmark --check` self-check**: value ranges / timestamps / stream counts + md5 fingerprint + stream-order self-check; `--check` / `verify-nexmark` emit a Flink NEXMark conformance statement.
+- **`verify-nexmark` oracle cross-check**: new Rust NEXMark ground-truth simulator, cross-checking against the real WFL rule engine; adds deferred join / cross-stream time ordering within frames / join window state (q21 green) / intermediate output fed downstream + union-find grouping (q13 dual-rule chain); `known-diff` mechanism (q12/q17); parallel by auction (100M 5min→44s).
+- **`diff` command**: layered file comparison (L1 hash equality / L2 Myers diff volume / L3 `--detail` localization).
+- **Terminal progress bars**: `gen-nexmark` / `verify-nexmark` (stderr, TTY only); non-TTY falls back to a completion summary.
+- **`send-arrow` injection control**: `--rate-bytes` rate limiting (default 0 = unlimited); 1MiB large-buffer TCP copy (replacing 8KiB).
+
+### Performance diagnostics (perf-diag)
+
+- **Sentinel tuple system**: `wfgen`/`wfusion` support `--perf-diag`; `send-arrow`/`stream` `--sentinel <n>` appends a `__wf_sentinel` completion frame (per-connection sentinel) for precise EPS/CPU measurement.
+
+### wfadm
+
+- `wfadm init` auto-generates `business.d/sentinel.toml` (perf-diag sentinel sink group); docker defaults add the sentinel sink template.
+
 ## [0.3.1]
 
 ### Engine (aligned with wp-reactor 1.0.2)
