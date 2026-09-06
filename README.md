@@ -43,61 +43,22 @@ export PATH="$HOME/bin:$PATH"
 
 ### 快速体验（示例项目集合）
 
-示例项目在独立仓库 [wf-examples](https://github.com/wp-labs/wf-examples)。最简路径
-`getting_started/` 一条命令验证完整 CEP 管道（`wfadm init` 生成 17 规则项目 →
-lint → 生成 3 万事件演示数据 → batch 回放产出 654 条 `port_scan` 告警 → TCP
-daemon 实时联调）：
+示例项目在独立仓库 [wf-examples](https://github.com/wp-labs/wf-examples)。
+`nginx_log_stats/` 为最小业务示例——对 Nginx access 日志做**持续流式统计**
+（状态码 / 来源 IP，5s 固定桶）+ **5xx 突发检测**，看板实时展示
+（直读引擎输出 `data/alerts/nginx.ndjson`，每 3s 自动刷新）：
 
 ```bash
-# 确保 wfadm / wfusion / wfgen 在 PATH（见上方安装 / 源码构建；前置细节以
-# wf-examples/getting_started 的 README 为准），然后：
+# 确保 wfadm / wfusion / wfgen 在 PATH（安装见上方；前置细节以
+# wf-examples/nginx_log_stats 的 README 为准），然后：
 git clone https://github.com/wp-labs/wf-examples
-cd wf-examples/getting_started
-./run.sh
+cd wf-examples/nginx_log_stats
+./run.sh     # ① 持续运行：wfusion daemon + wfgen stream 实时注入（Ctrl-C 停止）
+./view.sh    #   另开终端：实时看板 → http://localhost:8123/view/
 ```
 
-更多场景（安全检测规则库 / NEXMark 基准）见仓库内 [core](https://github.com/wp-labs/wf-examples/tree/main/core) 与 [performance](https://github.com/wp-labs/wf-examples/tree/main/performance)。
-
-> 引擎仓库内也带可运行的安全检测规则集（`examples/rules/`，随源码构建使用），
-> 矩阵见 [examples/rules/README.md](examples/rules/README.md)。
-
-### 从源码构建（可选）
-
-需要 Rust stable（workspace 依赖 wp-reactor 引擎 crates）：
-
-```bash
-cargo build --release --bin wfusion --bin wfl
-```
-
-构建后可跑示例自带的全流程脚本（约 20 个规则工程，逐个 lint / 内联测试 / batch 回放）：
-
-```bash
-./examples/rules/run_all.sh release
-```
-
-## 一个最小的规则
-
-WFL 以**声明式窗口语义**表达检测（五原语 `Bind / Match / Stats / Join / Yield`，所有语法糖编译期归一为同一内核）：
-
-```wfl
-rule ssh_brute_force {
-    events { c : auth_events && service == "ssh" && result == "failed" }
-    match<sip:5m> {                       // 按源 IP 开 5 分钟窗口
-        on event { c | count >= 10; }     // ≥10 次失败即触发
-        and close { total: c | count >= 30; }
-    } -> score(70.0)                      // 命中即评 70 分（支持跨规则累计）
-    join scanner_whitelist anti on c.sip == scanner_whitelist.sip   // 白名单排除
-    entity(ip, c.sip)                     // 实体 = 源 IP，驱动评分累加
-    yield security_alerts (
-        sip = c.sip,
-        alert_type = "ssh_brute_force",
-        detail = "failed attempts >= 10",
-        targets = c.dip | values | join(",")
-    )
-}
-```
-
-语法与语义见 [WFL 语言参考](docs/useage/rules.md)；示例按场景编排见 [examples/rules/README.md](examples/rules/README.md)。
+看板展示累计请求 / 独立 IP（Top 10 + 总数）/ 状态码分布 / 请求时间线，以及 5xx
+突发明细（时间 / IP / URI）。
 
 ## Workspace 组件
 
@@ -109,19 +70,6 @@ rule ssh_brute_force {
 | `wfadm` | 管理 CLI（Admin API 状态查询、在线 reload、发布流程） |
 
 各 crate 变更见 [CHANGELOG.md](./CHANGELOG.md) / [CHANGELOG.en.md](./CHANGELOG.en.md)。
-
-## 示例导览
-
-`examples/rules/` 是**可运行的安全检测场景库**（每个目录自带 schema / 规则 / 数据 / 拓扑 / `run.sh` 断言），例如：
-
-- `ssh_brute_force` / `sqli_probe` / `port_scan_whitelist` — count 阈值 + join anti 排除类
-- `rat_propagation` — 多步攻击链时序匹配
-- `match_let_demo` — `let` 派生字段复用 + `case` 归一化（issue #79/#83）
-- `match_expr_key_demo` — 表达式（`coalesce`）作分组 key（issue #80）
-- `two_window_pipeline` / `single_stream_multi_window` — 窗口路由与中间窗口 `|>` pipeline
-- `window_miss` / `shared_log_types` — 路由诊断与多源分窗
-
-完整场景矩阵见 [examples/rules/README.md](examples/rules/README.md)。
 
 ## 文档
 
@@ -191,4 +139,4 @@ rule ssh_brute_force {
 
 完整条款见 [LICENSE](./LICENSE)；版权归属 `Copyright (c) 2026 zuowenjian`。
 
-> 注：ELv2 不属于 OSI 认证的开源协议（source-available），但允许企业内部商用。
+> 注：ELv2 不属于 OSI 认证的开源协议（source-available），但允许企业内部使用。
