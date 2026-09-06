@@ -210,8 +210,7 @@ pub fn run(
 
         // L2：基线通过后，追加 bind-guard 反例变体并逐个验证（hits 应不变）。
         if gen_negatives && baseline_passed {
-            let negative_cases =
-                crate::gen_negatives::gen_negative_cases(plan, &effective_test);
+            let negative_cases = crate::gen_negatives::gen_negative_cases(plan, &effective_test);
             if !negative_cases.is_empty() {
                 for nc in negative_cases {
                     let mut variant = effective_test.clone();

@@ -485,7 +485,13 @@ mod tests {
 
     // ---- summarize：漏报/误报/样本错误的归属 ----
 
-    fn report(name: &str, kind: &str, passed: bool, hits: usize, error: Option<String>) -> IntentSampleReport {
+    fn report(
+        name: &str,
+        kind: &str,
+        passed: bool,
+        hits: usize,
+        error: Option<String>,
+    ) -> IntentSampleReport {
         IntentSampleReport {
             name: name.to_string(),
             kind: kind.to_string(),
@@ -508,7 +514,13 @@ mod tests {
             // 负样本 0 命中通过
             report("pass_neg", "negative", true, 0, None),
             // 正样本执行错误（样本写错）→ 只计 failed+errors，不计漏报
-            report("err_pos", "positive", false, 0, Some("row alias `nope` not found".to_string())),
+            report(
+                "err_pos",
+                "positive",
+                false,
+                0,
+                Some("row alias `nope` not found".to_string()),
+            ),
         ];
         let s = summarize(&samples);
         assert_eq!(s.total, 5);

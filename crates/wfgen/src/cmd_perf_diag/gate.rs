@@ -97,7 +97,10 @@ pub fn read_wall_file(path: &Path) -> WfgenResult<Vec<WallRow>> {
     if rows.is_empty() {
         return Err(error::error(
             WfgenReason::Validation,
-            format!("{} 无有效墙表行（预期格式: `stage  eps=.. n=.. rounds=..`）", path.display()),
+            format!(
+                "{} 无有效墙表行（预期格式: `stage  eps=.. n=.. rounds=..`）",
+                path.display()
+            ),
         ));
     }
     Ok(rows)
@@ -190,7 +193,8 @@ impl GateConfig {
     /// 配置自检：至少一条断言；per_rule_ns_max 需要 rule_count；relative 需要
     /// baseline+回退率。尽早报错——门禁开着但"没拦任何东西"是静默失效。
     fn validate(&self) -> WfgenResult<()> {
-        let has_abs = self.absolute.rules_eps_min.is_some() || self.absolute.per_rule_ns_max.is_some();
+        let has_abs =
+            self.absolute.rules_eps_min.is_some() || self.absolute.per_rule_ns_max.is_some();
         let rel = &self.relative;
         // 相对断言信号 = 给了基线（真要比）或给了回退率（想比但可能漏了基线）。
         // 不把 stages 算作信号——它有 serde 默认值（[relative] 整段省略也存在）。
@@ -287,7 +291,11 @@ pub fn write_baseline(path: &Path, wall: &[WallRow]) -> WfgenResult<()> {
             )
         })?;
     }
-    let body: String = wall.iter().map(render_wall_row).collect::<Vec<_>>().join("\n");
+    let body: String = wall
+        .iter()
+        .map(render_wall_row)
+        .collect::<Vec<_>>()
+        .join("\n");
     std::fs::write(path, body + "\n").map_err(|e| {
         error::error(
             WfgenReason::Io,
@@ -310,9 +318,8 @@ pub fn evaluate_gate(cfg: &GateConfig, current: &[WallRow]) -> WfgenResult<Vec<G
 
     // --- 绝对兜底 ---
     if let Some(min) = cfg.absolute.rules_eps_min {
-        let eps = eps_at(current, "rules", n_ref).ok_or_else(|| {
-            missing_measurement("rules", n_ref, current)
-        })?;
+        let eps = eps_at(current, "rules", n_ref)
+            .ok_or_else(|| missing_measurement("rules", n_ref, current))?;
         checks.push(GateCheck {
             metric: "rules_set_eps".to_string(),
             stage: "rules".to_string(),
@@ -328,12 +335,10 @@ pub fn evaluate_gate(cfg: &GateConfig, current: &[WallRow]) -> WfgenResult<Vec<G
     }
 
     if let Some(cap) = cfg.absolute.per_rule_ns_max {
-        let eps_floor = eps_at(current, "floor", n_ref).ok_or_else(|| {
-            missing_measurement("floor", n_ref, current)
-        })?;
-        let eps_rules = eps_at(current, "rules", n_ref).ok_or_else(|| {
-            missing_measurement("rules", n_ref, current)
-        })?;
+        let eps_floor = eps_at(current, "floor", n_ref)
+            .ok_or_else(|| missing_measurement("floor", n_ref, current))?;
+        let eps_rules = eps_at(current, "rules", n_ref)
+            .ok_or_else(|| missing_measurement("rules", n_ref, current))?;
         // rules−floor 增量 = 规则求值成本（ns/事件）；除规则数 = 单规则成本增量。
         let per_rule_ns = (1e9 / eps_rules - 1e9 / eps_floor) / cfg.rule_count as f64;
         let per_rule_ns = per_rule_ns.max(0.0); // 噪声可能让增量为负 → 视为 0
@@ -358,9 +363,8 @@ pub fn evaluate_gate(cfg: &GateConfig, current: &[WallRow]) -> WfgenResult<Vec<G
         let base = read_wall_file(base_path)?;
         let pct = cfg.relative.max_regression_pct.unwrap_or(0.0);
         for stage in &cfg.relative.stages {
-            let now = eps_at(current, stage, n_ref).ok_or_else(|| {
-                missing_measurement(stage, n_ref, current)
-            })?;
+            let now = eps_at(current, stage, n_ref)
+                .ok_or_else(|| missing_measurement(stage, n_ref, current))?;
             let base_eps = eps_at(&base, stage, n_ref).ok_or_else(|| {
                 error::error(
                     WfgenReason::Validation,
@@ -566,7 +570,10 @@ max_regression_pct = 20.0
         assert_eq!(cfg.rule_count, 376);
         assert_eq!(cfg.absolute.rules_eps_min, Some(150_000.0));
         assert_eq!(cfg.absolute.per_rule_ns_max, Some(300.0));
-        assert_eq!(cfg.relative.stages, vec!["rules".to_string(), "full".to_string()]);
+        assert_eq!(
+            cfg.relative.stages,
+            vec!["rules".to_string(), "full".to_string()]
+        );
         assert_eq!(cfg.relative.max_regression_pct, Some(20.0));
     }
 
@@ -599,7 +606,11 @@ max_regression_pct = 20.0
         assert!(checks.iter().all(|c| c.passed));
         // 单规则成本近似 (1e9/168k − 1e9/17M)/376 ≈ (5952−58.8)/376 ≈ 15.7 ns
         let per_rule = &checks[1];
-        assert!((per_rule.measured - 15.7).abs() < 1.0, "{}", per_rule.measured);
+        assert!(
+            (per_rule.measured - 15.7).abs() < 1.0,
+            "{}",
+            per_rule.measured
+        );
     }
 
     #[test]
@@ -618,7 +629,10 @@ max_regression_pct = 20.0
         // (1e9/eps_r − 1e9/eps_f)/376 = 400 → eps_r ≈ 1e9/(400*376 + 58.8) ≈ 6636
         let mut cfg = base_cfg();
         cfg.absolute.per_rule_ns_max = Some(300.0);
-        let wall = vec![row("floor", 17_000_000.0, 1_000_000), row("rules", 6_600.0, 1_000_000)];
+        let wall = vec![
+            row("floor", 17_000_000.0, 1_000_000),
+            row("rules", 6_600.0, 1_000_000),
+        ];
         let checks = evaluate_gate(&cfg, &wall).unwrap();
         assert!(!checks[0].passed);
         assert!(checks[0].measured > 300.0, "{}", checks[0].measured);
@@ -649,7 +663,11 @@ max_regression_pct = 20.0
         let _ = std::fs::remove_file(&base_path);
         assert_eq!(checks.len(), 1);
         assert!(!checks[0].passed);
-        assert!(checks[0].detail.contains("回退 25.0%"), "{}", checks[0].detail);
+        assert!(
+            checks[0].detail.contains("回退 25.0%"),
+            "{}",
+            checks[0].detail
+        );
     }
 
     #[test]
@@ -677,7 +695,10 @@ max_regression_pct = 20.0
         let mut cfg = base_cfg();
         cfg.relative.baseline = Some(base_path.clone());
         cfg.relative.max_regression_pct = Some(20.0);
-        let wall = vec![row("rules", 168_000.0, 1_000_000), row("rules", 170_000.0, 100_000)];
+        let wall = vec![
+            row("rules", 168_000.0, 1_000_000),
+            row("rules", 170_000.0, 100_000),
+        ];
         let err = evaluate_gate(&cfg, &wall).unwrap_err();
         let _ = std::fs::remove_file(&base_path);
         assert!(err.to_string().contains("同 n-list"), "{err}");
@@ -738,11 +759,10 @@ max_regression_pct = 20.0
         assert!(err.to_string().contains("必须为正数"), "{err}");
         let err = cfg_from_toml("[absolute]\nrules_eps_min = 0.0\n").unwrap_err();
         assert!(err.to_string().contains("rules_eps_min=0"));
-        let err = cfg_from_toml("rule_count = 10\n[absolute]\nper_rule_ns_max = -300.0\n")
-            .unwrap_err();
+        let err =
+            cfg_from_toml("rule_count = 10\n[absolute]\nper_rule_ns_max = -300.0\n").unwrap_err();
         assert!(err.to_string().contains("per_rule_ns_max=-300"));
-        let err = cfg_from_toml("rule_count = 10\n[absolute]\nper_rule_ns_max = 0\n")
-            .unwrap_err();
+        let err = cfg_from_toml("rule_count = 10\n[absolute]\nper_rule_ns_max = 0\n").unwrap_err();
         assert!(err.to_string().contains("必须为正数"));
         // 正值通过。
         assert!(cfg_from_toml("rule_count = 10\n[absolute]\nper_rule_ns_max = 300.0\n").is_ok());
@@ -751,8 +771,7 @@ max_regression_pct = 20.0
     #[test]
     fn gate_config_rejects_unknown_keys() {
         // 未知 key 静默忽略 = 断言悄悄消失；deny_unknown_fields 让它显式报错。
-        let err = cfg_from_toml("rule_cout = 376\n[absolute]\nrules_eps_min = 1.0\n")
-            .unwrap_err();
+        let err = cfg_from_toml("rule_cout = 376\n[absolute]\nrules_eps_min = 1.0\n").unwrap_err();
         assert!(err.to_string().contains("unknown field"), "{err}");
         let err = cfg_from_toml("[absolute]\nrule_eps_min = 1.0\n").unwrap_err();
         assert!(err.to_string().contains("unknown field"));
@@ -760,8 +779,9 @@ max_regression_pct = 20.0
             .unwrap_err();
         assert!(err.to_string().contains("unknown field"));
         // 合法配置不受影响。
-        assert!(cfg_from_toml("[relative]\nbaseline = \"b.txt\"\nmax_regression_pct = 10.0\n")
-            .is_ok());
+        assert!(
+            cfg_from_toml("[relative]\nbaseline = \"b.txt\"\nmax_regression_pct = 10.0\n").is_ok()
+        );
     }
 
     #[test]
@@ -803,7 +823,11 @@ max_regression_pct = 20.0
             row("rules", 60_000.0, 1_000_000),  // 大 N：稳态真值 60k < 100k
         ];
         let checks = evaluate_gate(&cfg, &wall).unwrap();
-        assert!(!checks[0].passed, "门禁必须用最大 N 行，现取 {:?}", checks[0].measured);
+        assert!(
+            !checks[0].passed,
+            "门禁必须用最大 N 行，现取 {:?}",
+            checks[0].measured
+        );
         assert_eq!(checks[0].measured, 60_000.0);
 
         // 反向：小 N 差、大 N 好 → 通过（测量噪声/启动固定开销不误伤）。
@@ -830,7 +854,10 @@ max_regression_pct = 20.0
         // 不产生负成本或误报。
         let mut cfg = base_cfg();
         cfg.absolute.per_rule_ns_max = Some(10.0);
-        let wall = vec![row("floor", 5_000_000.0, 1_000_000), row("rules", 9_000_000.0, 1_000_000)];
+        let wall = vec![
+            row("floor", 5_000_000.0, 1_000_000),
+            row("rules", 9_000_000.0, 1_000_000),
+        ];
         let checks = evaluate_gate(&cfg, &wall).unwrap();
         assert_eq!(checks[0].measured, 0.0);
         assert!(checks[0].passed);
@@ -899,7 +926,10 @@ max_regression_pct = 20.0
     fn write_baseline_creates_parent_dirs_and_roundtrips() {
         let dir = std::env::temp_dir().join(format!("wfgen_gate_nested_{}", std::process::id()));
         let path = dir.join("data/perf_wall.baseline.txt");
-        let rows = vec![row("rules", 168_000.0, 1_000_000), row("floor", 17_000_000.0, 1_000_000)];
+        let rows = vec![
+            row("rules", 168_000.0, 1_000_000),
+            row("floor", 17_000_000.0, 1_000_000),
+        ];
         write_baseline(&path, &rows).unwrap();
         let parsed = read_wall_file(&path).unwrap();
         let _ = std::fs::remove_dir_all(&dir);

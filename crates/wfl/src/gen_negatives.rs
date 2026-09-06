@@ -63,7 +63,11 @@ fn violating_value(op: BinOp, literal: &Expr) -> Expr {
     }
     match literal {
         Expr::StringLit(s) => Expr::StringLit(format!("not-{s}")),
-        Expr::Number(n) => Expr::Number(if n.is_sign_positive() { n + 1.0 } else { n - 1.0 }),
+        Expr::Number(n) => Expr::Number(if n.is_sign_positive() {
+            n + 1.0
+        } else {
+            n - 1.0
+        }),
         Expr::Bool(b) => Expr::Bool(!b),
         other => other.clone(),
     }
@@ -282,7 +286,8 @@ test t1 for r1 {
     fn tick_rows_are_preserved_and_not_duplicated() {
         let guards = vec![guard_eq("fail", "action", lit_string("failed"))];
         let mut test = sample_test();
-        test.input.push(InputStmt::Tick(std::time::Duration::from_secs(300)));
+        test.input
+            .push(InputStmt::Tick(std::time::Duration::from_secs(300)));
         let cases = gen_cases_for_guards(&test, &guards);
         assert_eq!(cases.len(), 1);
         // 反例 clone 原 input（row,tick）后 push → 顺序：row, tick, row反例

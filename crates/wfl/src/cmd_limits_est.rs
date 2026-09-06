@@ -195,14 +195,16 @@ fn derivation_lines(est: &RuleLimitEst, headroom: f64, stats: &HashSet<String>) 
     }
     if est.peak_memory_bytes == 0 {
         if stats.contains(rule) {
-            lines.push(format!(
+            lines.push(
                 "          max_memory 恒 0：stats 族规则不走 memory_bytes 记账（见 memory-limits.md §3）——\
                  看 stats_over_limit_total 与全局预算，本指令给不出建议"
-            ));
+                    .to_string(),
+            );
         } else {
-            lines.push(format!(
+            lines.push(
                 "          max_memory 无实测：memory_bytes 全 0（未配 max_memory 引擎不记账 / stats 族规则）——先设宽上限重跑再收紧"
-            ));
+                    .to_string(),
+            );
         }
     } else {
         let scaled = (est.peak_memory_bytes as f64 * headroom).round() as u64;
@@ -269,7 +271,7 @@ fn fmt_thousands(v: u64) -> String {
     let s = v.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
     for (i, ch) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(ch);

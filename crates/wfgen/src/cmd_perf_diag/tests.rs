@@ -703,11 +703,7 @@ async fn driver_gate_absolute_pass_within_budget() {
     // 墙表：floor/rules 均 EPS=20；门禁只断言 rules EPS ≥ 10 → PASS。
     let (_dir, verdict) = run_driver_patched(floor_rules_stages(), 2, |args| {
         let gate_path = args_diag_parent(args).join("perf-gate.toml");
-        std::fs::write(
-            &gate_path,
-            "[absolute]\nrules_eps_min = 10.0\n",
-        )
-        .unwrap();
+        std::fs::write(&gate_path, "[absolute]\nrules_eps_min = 10.0\n").unwrap();
         args.gate = Some(gate_path);
     })
     .await;
@@ -747,7 +743,7 @@ async fn driver_record_baseline_then_relative_gate_passes() {
         let gate_path = args_diag_parent(args).join("perf-gate.toml");
         std::fs::write(
             &gate_path,
-            &format!(
+            format!(
                 "[relative]\nbaseline = \"{}\"\nmax_regression_pct = 50.0\n",
                 base_path.display()
             ),
@@ -761,10 +757,7 @@ async fn driver_record_baseline_then_relative_gate_passes() {
 
 /// 取 args.diag 的父目录（patch 里放门禁配置用）。
 fn args_diag_parent(args: &Args) -> PathBuf {
-    args.diag
-        .parent()
-        .expect("diag path parent")
-        .to_path_buf()
+    args.diag.parent().expect("diag path parent").to_path_buf()
 }
 
 // -- review 追加：互斥旗标 / JSON 报告形态 --------------------------------

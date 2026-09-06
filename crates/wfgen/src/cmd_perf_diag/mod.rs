@@ -203,7 +203,10 @@ pub async fn run_perf_diag(args: Args) -> WfgenResult<GateVerdict> {
     for (k, stage) in stages.iter().enumerate() {
         // 1. 等引擎切到档 k（启动即 stages[0]，后续 sentinel 驱动）。
         wait_for_stage(&sentinels, k, timeout).await?;
-        speak(json, &format!("== stage {k} [{}] applied — sending ==", stage.name));
+        speak(
+            json,
+            &format!("== stage {k} [{}] applied — sending ==", stage.name),
+        );
         for &n_target in &n_list {
             let mut best_eps = 0.0f64;
             for r in 0..rounds {
@@ -267,7 +270,11 @@ pub async fn run_perf_diag(args: Args) -> WfgenResult<GateVerdict> {
         if json {
             return finish_report(&rows, None);
         }
-        println!("== 基线已记录: {} ({} 行墙表) ==", base.display(), rows.len());
+        println!(
+            "== 基线已记录: {} ({} 行墙表) ==",
+            base.display(),
+            rows.len()
+        );
         return Ok(GateVerdict::NotApplied);
     }
 
@@ -290,7 +297,10 @@ pub async fn run_perf_diag(args: Args) -> WfgenResult<GateVerdict> {
     }
 
     // human 输出保持现状：墙表 + done。
-    println!("\n== wall table ==\n{table}\n== done: 结果在 {} ==", output.display());
+    println!(
+        "\n== wall table ==\n{table}\n== done: 结果在 {} ==",
+        output.display()
+    );
     let verdict = match &gate {
         Some(g) => {
             println!("\n{}", render_gate_human(g));
