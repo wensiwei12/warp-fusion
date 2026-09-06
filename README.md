@@ -44,40 +44,28 @@ export PATH="$HOME/bin:$PATH"
 ### 快速体验（示例项目集合）
 
 示例项目在独立仓库 [wf-examples](https://github.com/wp-labs/wf-examples)。
-`nginx_log_stats/` 为最小业务示例——对 Nginx access 日志做**持续流式统计**
-（状态码 / 来源 IP，5s 固定桶）+ **5xx 突发检测**，看板实时展示
-（直读引擎输出 `data/alerts/nginx.ndjson`，每 3s 自动刷新）：
+
+`nginx_log_stats/` 对 Nginx access 日志做**持续流式统计**
 
 ```bash
-# 确保 wfadm / wfusion / wfgen 在 PATH（安装见上方；前置细节以
-# wf-examples/nginx_log_stats 的 README 为准），然后：
 git clone https://github.com/wp-labs/wf-examples
 cd wf-examples/nginx_log_stats
-./run.sh     # ① 持续运行：wfusion daemon + wfgen stream 实时注入（Ctrl-C 停止）
+./run.sh  
 ./view.sh    #   另开终端：实时看板 → http://localhost:8123/view/
 ```
-
-看板展示累计请求 / 独立 IP（Top 10 + 总数）/ 状态码分布 / 请求时间线，以及 5xx
-突发明细（时间 / IP / URI）。
 
 ## Workspace 组件
 
 | 二进制 | 作用 |
 | --- | --- |
-| `wfusion` | 引擎主二进制（本地文件/网络源回放 → 规则执行 → alert/错误输出） |
-| `wfl` | 规则开发工具：`lint` / `test`（规则内联用例）/ `replay` / `verify` |
-| `wfgen` | 数据生成与 oracle 验证；含 `nexmark_pk` 基准工具链 |
-| `wfadm` | 管理 CLI（Admin API 状态查询、在线 reload、发布流程） |
-
-各 crate 变更见 [CHANGELOG.md](./CHANGELOG.md) / [CHANGELOG.en.md](./CHANGELOG.en.md)。
+| `wfusion` | 引擎主二进制 |
+| `wfl` | 规则开发工具 |
+| `wfgen` | 数据生成与 oracle 验证；|
+| `wfadm` | 管理 CLI|
 
 ## 文档
 
-> **用 AI / Agent 辅助开发？建议优先使用 [wf-skills](https://github.com/wp-labs/wf-skills)**——
-> 产品级技能集（Claude Code / Codex / 各类 agent 通用），把本仓库经验沉淀为
-> 「何时用 → 怎么做 → 已踩过的坑 → 检查清单」，覆盖 schema / 规则 / 配置 /
-> **系统集成（5 步接入）** / 基准与正确性验证。一条命令安装：
->
+> **用 AI / Agent 辅助开发 [wf-skills](https://github.com/wp-labs/wf-skills)**
 > ```bash
 > curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wf-skills
 > ```
