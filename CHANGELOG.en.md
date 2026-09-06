@@ -3,6 +3,12 @@
 This file records user-facing changes to `wfusion` / `wfl` / `wfgen` / `wfadm`.
 Internal implementation details, dependency alignment, and test counts are not covered here.
 
+## [0.5.8]
+
+### Engine (aligned with wp-reactor 2.0.19)
+
+- Aligned to wp-reactor v2.0.19: memory-eviction WARN anti-flood (issue #86) — the first eviction logs a detailed report followed by rolling/end-of-window summaries instead of per-eviction spam; reject/jitter counters are kept for metric alerts. The rest of v2.0.19 is internal engineering refactors (public API and rule semantics unchanged).
+
 ## [0.5.7]
 
 ### Engine (aligned with wp-reactor 2.0.18)
