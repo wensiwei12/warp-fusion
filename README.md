@@ -108,10 +108,6 @@ cd wf-examples/nginx_log_stats
 | **Rust**   | 免去 Java 系引擎（Flink 等）的 JVM GC 停顿                 |
 | **规则即规划**     | 运行期逐事件解释（Stats/Match 编译期定型为执行计划）       |
 
-## 边界声明
-
-测试为**单机、无 exactly-once / checkpoint(规划)**。NEXMark 为合成基准。
-
 ## License
 
 `warp-fusion` 及核心运行时采用 **Elastic License 2.0 (ELv2)**。
