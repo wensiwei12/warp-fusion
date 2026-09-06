@@ -32,27 +32,16 @@ export PATH="$HOME/bin:$PATH"
 ### 快速体验（示例项目集合）
 
 示例项目在独立仓库 [wf-examples](https://github.com/wp-labs/wf-examples)。
-`nginx_log_stats/` 为最小业务示例——对 Nginx access 日志做**持续流式统计**
-（状态码 / 来源 IP，5s 固定桶）+ **5xx 突发检测**，页面实时展示：
+`nginx_log_stats/` 对 Nginx access 日志做**持续流式统计**
 
 ```bash
 # 确保 wfadm / wfusion / wfgen 在 PATH（安装见上方；前置细节以
 # wf-examples/nginx_log_stats 的 README 为准），然后：
 git clone https://github.com/wp-labs/wf-examples
 cd wf-examples/nginx_log_stats
+./view.sh &
+./run.sh 
 ```
-
-| 步骤 | 命令 | 说明 |
-| --- | --- | --- |
-| ① 持续运行 | `./run.sh` | 启动 `wfusion` daemon + `wfgen` stream 实时注入（Ctrl-C 停止；可 `./run.sh 30s` 限时自停） |
-| ② 实时看板 | `./view.sh` | 另开终端运行，浏览器打开 http://localhost:8123/view/（每 3s 自动刷新） |
-
-看板**直读引擎输出** `data/alerts/nginx.ndjson`（统计行随 5s 桶关闭追加、5xx 告警随注入增长），
-展示累计请求 / 独立 IP（Top 10 + 总数）/ 状态码分布 / 请求时间线，以及 5xx 突发明细（时间 / IP / URI）。
-
-更多示例见仓库内 [getting_started](https://github.com/wp-labs/wf-examples/tree/main/getting_started)
-（完整 CEP 管道 + TCP daemon 联调）、[core](https://github.com/wp-labs/wf-examples/tree/main/core)
-（安全检测规则库）与 [performance](https://github.com/wp-labs/wf-examples/tree/main/performance)（NEXMark 基准）。
 
 ## Workspace 组件
 
