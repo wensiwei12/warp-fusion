@@ -94,8 +94,6 @@ cd wf-examples/nginx_log_stats
 
 ### WFL 表达能力
 
-![WFL 五原语 Core IR](images/wfl-five-primitives.svg)
-
 - **五原语内核（Bind / Match / Stats / Join / Yield）**：既写逐事件流式检测，也写声明式窗口统计（`stats<dur> [group by] { 聚合 }`）。
 - **检测表达力为核心差异化**：时序链 + OR 分支 + 双阶段匹配（实时/窗口关闭），缺失检测（A→NOT B）；一等实体声明 `entity()` 驱动跨规则评分。
 - **覆盖范围**：哈希族、网络 `cidr_match`、多精度时间、对象 `merge`、HOP 跳窗、`anti`/延迟触发 join、规则级 `let`、表达式派生分组 key 等；。
