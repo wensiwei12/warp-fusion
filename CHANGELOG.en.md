@@ -3,6 +3,12 @@
 This file records user-facing changes to `wfusion` / `wfl` / `wfgen` / `wfadm`.
 Internal implementation details, dependency alignment, and test counts are not covered here.
 
+## [0.5.9]
+
+### Fixed
+
+- **TCP connection fix**: `wp-core-connectors` 0.8.3 → 0.8.4 — fixes the TCP connection regression (socket2 rolled back 0.6.x → 0.5.10). Rule language and public API unchanged.
+
 ## [0.5.8]
 
 ### Engine (aligned with wp-reactor 2.0.19)
