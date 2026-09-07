@@ -3,6 +3,16 @@
 This file records user-facing changes to `wfusion` / `wfl` / `wfgen` / `wfadm`.
 Internal implementation details, dependency alignment, and test counts are not covered here.
 
+## [0.5.10]
+
+### Language (aligned with wp-reactor 2.0.21)
+
+- **`events` conditions can reuse rule-level string-literal `let` regexes (issue #90)**: one regex referenced by name in `regex_match` across multiple fields (e.g. URI / headers / body); the `let` may sit before or after `events`. Semantics match inline; invalid/undefined references fail static check.
+
+### Engine
+
+- Aligned to wp-reactor v2.0.21 (the rest is internal refactor; public API and rule semantics unchanged); `wp-connectors` aligned to v0.20.0.
+
 ## [0.5.9]
 
 ### Fixed
