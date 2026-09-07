@@ -18,12 +18,9 @@
 # stable（默认通道，推荐生产）
 curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wfusion
  
-# 预发布通道：alpha / beta（新语法验证、与引擎开发线对齐时使用）
 curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wfusion alpha
 curl -sSf https://get.warpparse.ai/inst-x.sh | bash -s -- wfusion beta
 ```
-
-安装后确保 `~/bin` 在 PATH 中（脚本会提示）：
 
 ```bash
 export PATH="$HOME/bin:$PATH"
@@ -31,28 +28,15 @@ export PATH="$HOME/bin:$PATH"
 
 ### 快速体验（示例项目集合）
 
-示例项目在独立仓库 [wf-examples](https://github.com/wp-labs/wf-examples)。
-`nginx_log_stats/` 为最小业务示例——对 Nginx access 日志做**持续流式统计**
-（状态码 / 来源 IP，5s 固定桶）+ **5xx 突发检测**，页面实时展示：
+示例项目[wf-examples](https://github.com/wp-labs/wf-examples)。
+`nginx_log_stats/` 对 Nginx access 日志做**持续流式统计**
 
 ```bash
-# 确保 wfadm / wfusion / wfgen 在 PATH（安装见上方；前置细节以
-# wf-examples/nginx_log_stats 的 README 为准），然后：
 git clone https://github.com/wp-labs/wf-examples
 cd wf-examples/nginx_log_stats
+./view.sh &
+./run.sh 
 ```
-
-| 步骤 | 命令 | 说明 |
-| --- | --- | --- |
-| ① 持续运行 | `./run.sh` | 启动 `wfusion` daemon + `wfgen` stream 实时注入（Ctrl-C 停止；可 `./run.sh 30s` 限时自停） |
-| ② 实时看板 | `./view.sh` | 另开终端运行，浏览器打开 http://localhost:8123/view/（每 3s 自动刷新） |
-
-看板**直读引擎输出** `data/alerts/nginx.ndjson`（统计行随 5s 桶关闭追加、5xx 告警随注入增长），
-展示累计请求 / 独立 IP（Top 10 + 总数）/ 状态码分布 / 请求时间线，以及 5xx 突发明细（时间 / IP / URI）。
-
-更多示例见仓库内 [getting_started](https://github.com/wp-labs/wf-examples/tree/main/getting_started)
-（完整 CEP 管道 + TCP daemon 联调）、[core](https://github.com/wp-labs/wf-examples/tree/main/core)
-（安全检测规则库）与 [performance](https://github.com/wp-labs/wf-examples/tree/main/performance)（NEXMark 基准）。
 
 ## Workspace 组件
 
@@ -81,7 +65,7 @@ cd wf-examples/nginx_log_stats
 
 ### NEXMark 性能参照
 
-与 Flink 系**同方法论**对照（100M 事件、in-memory 源 + blackhole 汇、同型号云服务器）：
+与 Flink 系**同方法论**对照（100M 事件、in-memory 源 + blackhole、同型号云服务器）：
 
 | 对照基线                         | 几何平均领先    | 算术平均领先 |
 | ---------------------------- | --------- | ------ |
@@ -94,12 +78,9 @@ cd wf-examples/nginx_log_stats
 
 ### WFL 表达能力
 
-![WFL 五原语 Core IR](images/wfl-five-primitives.svg)
-
 - **五原语内核（Bind / Match / Stats / Join / Yield）**：既写逐事件流式检测，也写声明式窗口统计（`stats<dur> [group by] { 聚合 }`）。
 - **检测表达力为核心差异化**：时序链 + OR 分支 + 双阶段匹配（实时/窗口关闭），缺失检测（A→NOT B）；一等实体声明 `entity()` 驱动跨规则评分。
-- **覆盖范围**：哈希族、网络 `cidr_match`、多精度时间、对象 `merge`、HOP 跳窗、`anti`/延迟触发 join、规则级 `let`、表达式派生分组 key 等；与 SPL Top50 高频函数对齐率 100%（50/50）。
-- **诚实边界**：三角函数、行保留聚合（eventstats 类）等通用计算不在主战场；分项可解释评分为规划项。
+- **覆盖范围**：哈希族、网络 `cidr_match`、多精度时间、对象 `merge`、HOP 跳窗、`anti`/延迟触发 join、规则级 `let`、表达式派生分组 key 等；。
 
 ## 架构亮点
 
@@ -110,10 +91,6 @@ cd wf-examples/nginx_log_stats
 | **内存精确控制**   | 窗口数据仅过期且被下游全部消费后才释放、数据预读总量设上限 |
 | **Rust**   | 免去 Java 系引擎（Flink 等）的 JVM GC 停顿                 |
 | **规则即规划**     | 运行期逐事件解释（Stats/Match 编译期定型为执行计划）       |
-
-## 边界声明
-
-测试为**单机、无 exactly-once / checkpoint(规划)**。NEXMark 为合成基准。
 
 ## License
 
