@@ -20,6 +20,9 @@ pub fn register_connectors() {
     // Doris
     register_sink_factory(wp_connectors::doris::DorisSinkFactory);
 
+    // Postgres（baseline case 的 PG 事实库 sink）
+    register_sink_factory(wp_connectors::postgres::PostgresSinkFactory);
+
     // VictoriaMetrics
     register_sink_factory(wp_connectors::victoriametrics::VictoriaMetricFactory);
 }

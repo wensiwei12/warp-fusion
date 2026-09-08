@@ -1321,7 +1321,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1715,6 +1715,11 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "hashlink"
@@ -1936,7 +1941,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -2203,26 +2208,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jumo-derive"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d13031db93a0130ba158ff7f58fce8e21e80f5e2f149546ac081efb8dd44354"
-dependencies = [
- "jumo-derive-macros",
-]
-
-[[package]]
-name = "jumo-derive-macros"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faf1e38722eb62938f49051682ccce8d44fabfafe81ab329299eea936901e03e"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "language-tags"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2437,11 +2422,11 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.16.4"
+version = "0.18.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
+checksum = "ff9840bcc50b71349309900da0ce7279aa336ae71d73250b07998932c7d97c25"
 dependencies = [
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -3326,7 +3311,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -3365,9 +3350,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3800,7 +3785,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3859,7 +3844,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4784,7 +4769,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5530,15 +5515,14 @@ dependencies = [
 
 [[package]]
 name = "wf-cep"
-version = "2.0.21"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.21#13214796bc3b30385fd8135659328f86e9df821f"
+version = "2.0.19"
 dependencies = [
  "arrow",
  "chrono",
  "foldhash 0.2.0",
  "hex",
- "jumo-derive",
  "md-5 0.10.6",
+ "moju-derive",
  "orion-error",
  "regex",
  "serde_json",
@@ -5550,12 +5534,11 @@ dependencies = [
 
 [[package]]
 name = "wf-config"
-version = "2.0.21"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.21#13214796bc3b30385fd8135659328f86e9df821f"
+version = "2.0.19"
 dependencies = [
  "chrono",
  "glob",
- "jumo-derive",
+ "moju-derive",
  "orion-error",
  "serde",
  "serde_json",
@@ -5578,8 +5561,7 @@ dependencies = [
 
 [[package]]
 name = "wf-data"
-version = "2.0.21"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.21#13214796bc3b30385fd8135659328f86e9df821f"
+version = "2.0.19"
 dependencies = [
  "chrono",
  "serde_json",
@@ -5587,8 +5569,7 @@ dependencies = [
 
 [[package]]
 name = "wf-engine"
-version = "2.0.21"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.21#13214796bc3b30385fd8135659328f86e9df821f"
+version = "2.0.19"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5596,9 +5577,9 @@ dependencies = [
  "derive_more",
  "foldhash 0.2.0",
  "hex",
- "jumo-derive",
  "log",
  "md-5 0.10.6",
+ "moju-derive",
  "orion-error",
  "parking_lot",
  "redb",
@@ -5621,10 +5602,9 @@ dependencies = [
 
 [[package]]
 name = "wf-lang"
-version = "2.0.21"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.21#13214796bc3b30385fd8135659328f86e9df821f"
+version = "2.0.19"
 dependencies = [
- "jumo-derive",
+ "moju-derive",
  "orion-error",
  "regex-syntax",
  "winnow",
@@ -5647,8 +5627,7 @@ dependencies = [
 
 [[package]]
 name = "wf-runtime"
-version = "2.0.21"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.21#13214796bc3b30385fd8135659328f86e9df821f"
+version = "2.0.19"
 dependencies = [
  "arrow",
  "async-broadcast",
@@ -5657,8 +5636,8 @@ dependencies = [
  "clap",
  "csv",
  "derive_more",
- "jumo-derive",
  "log",
+ "moju-derive",
  "orion-error",
  "orion-variate",
  "serde_json",
@@ -5684,7 +5663,7 @@ dependencies = [
 
 [[package]]
 name = "wfadm"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "clap",
  "comfy-table",
@@ -5706,7 +5685,7 @@ dependencies = [
 
 [[package]]
 name = "wfgen"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "arrow",
  "chrono",
@@ -5736,7 +5715,7 @@ dependencies = [
 
 [[package]]
 name = "wfl"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "chrono",
  "clap",
@@ -5755,7 +5734,7 @@ dependencies = [
 
 [[package]]
 name = "wfusion"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "chrono",
  "clap",
@@ -5822,7 +5801,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6296,9 +6275,7 @@ dependencies = [
 
 [[package]]
 name = "wp-knowledge"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58839c5cc1d191590c964118e2196bc9c90a21da7ca1d1ea3a05226f49d68af9"
+version = "0.17.0"
 dependencies = [
  "anyhow",
  "async-trait",
