@@ -3,6 +3,12 @@
 This file records user-facing changes to `wfusion` / `wfl` / `wfgen` / `wfadm`.
 Internal implementation details, dependency alignment, and test counts are not covered here.
 
+## [0.6.0]
+
+### Changed
+
+- **alpha → beta channel promotion**: content matches alpha v0.5.10 — `events` conditions can reuse rule-level string-literal `let` regexes (issue #90), aligned with wp-reactor v2.0.21 and wp-connectors v0.20.0; the version line moves to 0.6.x.
+
 ## [0.5.10]
 
 ### Language (aligned with wp-reactor 2.0.21)

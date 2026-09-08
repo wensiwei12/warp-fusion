@@ -2,6 +2,12 @@
 
 本文件记录 `wfusion` / `wfl` / `wfgen` / `wfadm` 面向使用者的变更。内部实现细节、依赖版本对齐和测试计数不在此展开。
 
+## [0.6.0]
+
+### 变更
+
+- **alpha → beta 通道提升**：内容等同 alpha v0.5.10——`events` 条件复用规则级字符串字面量 `let` 正则（issue #90）、对齐 wp-reactor v2.0.21 与 wp-connectors v0.20.0；版本线进入 0.6.x。
+
 ## [0.5.10]
 
 ### 语言（对齐 wp-reactor 2.0.21）
