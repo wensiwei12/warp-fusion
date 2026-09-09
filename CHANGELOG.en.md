@@ -3,6 +3,38 @@
 This file records user-facing changes to `wfusion` / `wfl` / `wfgen` / `wfadm`.
 Internal implementation details, dependency alignment, and test counts are not covered here.
 
+## [0.6.1]
+
+### Fixed
+
+- **Kafka NDJSON numeric timestamps no longer become null (issue #95)**: NDJSON→Arrow decoding now accepts JSON numeric epoch timestamps (s / ms / us / ns normalized by digit width), numeric strings, and `%Y-%m-%d %H:%M:%S` — Kafka and file inputs now agree on time fields; boolean text (`1/0`, case, whitespace) aligned too (wp-connector-utils 0.2.1).
+
+### Changed
+
+- **Housekeeping**: removed leftover moju modeling annotations and their dependency from the `wfusion` CLI (public behavior unchanged); routine dependency-tree refresh (arrow 59.3 etc.).
+
+## [0.6.0]
+
+### Changed
+
+- **alpha → beta channel promotion**: content matches alpha v0.5.10 — `events` conditions can reuse rule-level string-literal `let` regexes (issue #90), aligned with wp-reactor v2.0.21 and wp-connectors v0.20.0; the version line moves to 0.6.x.
+
+## [0.5.10]
+
+### Language (aligned with wp-reactor 2.0.21)
+
+- **`events` conditions can reuse rule-level string-literal `let` regexes (issue #90)**: one regex referenced by name in `regex_match` across multiple fields (e.g. URI / headers / body); the `let` may sit before or after `events`. Semantics match inline; invalid/undefined references fail static check.
+
+### Engine
+
+- Aligned to wp-reactor v2.0.21 (the rest is internal refactor; public API and rule semantics unchanged); `wp-connectors` aligned to v0.20.0.
+
+## [0.5.9]
+
+### Fixed
+
+- **TCP connection fix**: `wp-core-connectors` 0.8.3 → 0.8.4 — fixes the TCP connection regression (socket2 rolled back 0.6.x → 0.5.10). Rule language and public API unchanged.
+
 ## [0.5.8]
 
 ### Engine (aligned with wp-reactor 2.0.19)

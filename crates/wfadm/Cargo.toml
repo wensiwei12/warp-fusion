@@ -1,6 +1,6 @@
 [package]
 name = "wfadm"
-version = "0.5.8" #@gxl:set(version)
+version = "0.6.1" #@gxl:set(version)
 edition.workspace = true
 license.workspace = true
 
