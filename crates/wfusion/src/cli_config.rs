@@ -23,12 +23,7 @@ use crate::error::{CliResult, into_cli_error};
 
 // -- CLI argument types ------------------------------------------------------
 
-#[derive(::moju_derive::MoJu, Args, Clone)]
-#[moju(
-    kind = "struct",
-    domain = "Orchestra",
-    module = "Orchestra.EngineEntry"
-)]
+#[derive(Args, Clone)]
 pub struct ConfigLoadArgs {
     #[arg(short, long, default_value = "conf/wfusion.toml")]
     pub config: PathBuf,
@@ -42,12 +37,6 @@ pub struct ConfigLoadArgs {
 
 // -- Config resolution (uses EngineResult internally) ------------------------
 
-#[derive(::moju_derive::MoJu)]
-#[moju(
-    kind = "struct",
-    domain = "Orchestra",
-    module = "Orchestra.EngineEntry"
-)]
 struct ResolvedConfigLoad {
     config_path: PathBuf,
     overlay_paths: Vec<PathBuf>,

@@ -3,6 +3,16 @@
 This file records user-facing changes to `wfusion` / `wfl` / `wfgen` / `wfadm`.
 Internal implementation details, dependency alignment, and test counts are not covered here.
 
+## [0.6.1]
+
+### Fixed
+
+- **Kafka NDJSON numeric timestamps no longer become null (issue #95)**: NDJSON→Arrow decoding now accepts JSON numeric epoch timestamps (s / ms / us / ns normalized by digit width), numeric strings, and `%Y-%m-%d %H:%M:%S` — Kafka and file inputs now agree on time fields; boolean text (`1/0`, case, whitespace) aligned too (wp-connector-utils 0.2.1).
+
+### Changed
+
+- **Housekeeping**: removed leftover moju modeling annotations and their dependency from the `wfusion` CLI (public behavior unchanged); routine dependency-tree refresh (arrow 59.3 etc.).
+
 ## [0.6.0]
 
 ### Changed
