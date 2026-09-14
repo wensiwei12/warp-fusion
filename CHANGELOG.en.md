@@ -3,6 +3,16 @@
 This file records user-facing changes to `wfusion` / `wfl` / `wfgen` / `wfadm`.
 Internal implementation details, dependency alignment, and test counts are not covered here.
 
+## [0.6.2]
+
+### Fixed
+
+- **L3 series functions produce empty output when only written inside a rule-level `let` (issue #99)**: `first` / `last` / `collect_*` used solely in a `let` (referenced indirectly by `yield`) yielded empty values (`alert_id` empty in entity output); fixed — now identical to writing them directly in `yield`.
+
+### Engine
+
+- Aligned to wp-reactor v2.0.23: includes the async-persist flush race fix and `@first_match_time` semantics docs/coverage (public API and rule semantics unchanged).
+
 ## [0.6.1]
 
 ### Fixed

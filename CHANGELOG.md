@@ -2,6 +2,16 @@
 
 本文件记录 `wfusion` / `wfl` / `wfgen` / `wfadm` 面向使用者的变更。内部实现细节、依赖版本对齐和测试计数不在此展开。
 
+## [0.6.2]
+
+### 修复
+
+- **L3 序列函数只写在规则级 `let` 中时输出为空（issue #99）**：`first` / `last` / `collect_*` 等只出现在 `let` 里（yield 以 let 名间接引用）时结果为空（entity 输出 `alert_id` 为空）；现已修复，与直接写在 `yield` 中一致。
+
+### 引擎
+
+- 对齐 wp-reactor v2.0.23：含异步落盘 flush 竞态修复与 `@first_match_time` 语义文档/覆盖（公开 API 与规则语义不变）。
+
 ## [0.6.1]
 
 ### 修复
