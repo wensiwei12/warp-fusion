@@ -9,24 +9,18 @@ scenario top_scanners_detect<seed=42> {
 
   injection {
     // 高扫描者：生成5个 SYN 事件；端口分布由字段生成器负责
-    hit<25%> conn_events {
-      sip seq {
-        use(action="syn") with(5)
-      }
+    hit<14400> for top_port_scanners conn_events {
+      use(action="syn") x 5
     }
 
     // 中等扫描者：生成3个 SYN 事件
-    near_miss<15%> conn_events {
-      sip seq {
-        use(action="syn") with(3)
-      }
+    near_miss<14400> for top_port_scanners conn_events {
+      use(action="syn") x 3
     }
 
     // 正常流量：1个端口（低于阈值）
-    miss<60%> conn_events {
-      sip seq {
-        use(action="syn") with(1)
-      }
+    miss<172800> for top_port_scanners conn_events {
+      use(action="syn") x 1
     }
   }
 

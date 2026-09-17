@@ -8,22 +8,16 @@ scenario port_scan_detect<seed=42> {
   }
 
   injection {
-    hit<40%> conn_events {
-      sip seq {
-        use(action="syn") with(12)
-      }
+    hit<2000> for port_scan conn_events {
+      use(action="syn") x 12
     }
 
-    near_miss<20%> conn_events {
-      sip seq {
-        use(action="syn") with(2)
-      }
+    near_miss<6000> for port_scan conn_events {
+      use(action="syn") x 2
     }
 
-    miss<40%> conn_events {
-      sip seq {
-        use(action="login") with(1)
-      }
+    miss<24000> for port_scan conn_events {
+      use(action="login") x 1
     }
   }
 

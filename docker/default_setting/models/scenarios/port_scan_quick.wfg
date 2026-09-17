@@ -7,20 +7,14 @@ scenario port_scan_quick<seed=42> {
     stream conn_events gen 500/s
   }
   injection {
-    hit<30%> conn_events {
-      sip seq {
-        use(action="syn") with(12)
-      }
+    hit<750> for port_scan conn_events {
+      use(action="syn") x 12
     }
-    near_miss<10%> conn_events {
-      sip seq {
-        use(action="syn") with(2)
-      }
+    near_miss<1500> for port_scan conn_events {
+      use(action="syn") x 2
     }
-    miss<60%> conn_events {
-      sip seq {
-        use(action="established") with(1)
-      }
+    miss<18000> for port_scan conn_events {
+      use(action="established") x 1
     }
   }
   expect {

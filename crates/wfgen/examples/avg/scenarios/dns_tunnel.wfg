@@ -8,22 +8,16 @@ scenario dns_tunnel_detect<seed=42> {
   }
 
   injection {
-    hit<30%> dns_events {
-      sip seq {
-        use(resp_size=1200) with(3)
-      }
+    hit<6000> for dns_tunnel dns_events {
+      use(resp_size=1200) x 3
     }
 
-    near_miss<10%> dns_events {
-      sip seq {
-        use(resp_size=200) with(2)
-      }
+    near_miss<3000> for dns_tunnel dns_events {
+      use(resp_size=200) x 2
     }
 
-    miss<60%> dns_events {
-      sip seq {
-        use(resp_size=60) with(1)
-      }
+    miss<36000> for dns_tunnel dns_events {
+      use(resp_size=60) x 1
     }
   }
 

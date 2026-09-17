@@ -30,6 +30,11 @@ pub(crate) fn compute_near_miss_counts(
     steps: &[StepInfo],
     overrides: &InjectOverrides,
 ) -> WfgenResult<Vec<u64>> {
+    // 新语法：模式不改数字——不夹取、不补全，`x N` 写多少就是多少。
+    if overrides.entity_count.is_some() {
+        return compute_use_step_counts(steps, &overrides.use_steps);
+    }
+
     if !overrides.use_steps.is_empty() {
         let planned = plan_use_steps(steps, &overrides.use_steps, true)?;
         if !planned.is_empty() {
@@ -154,6 +159,12 @@ pub(crate) fn compute_hit_counts(
     steps: &[StepInfo],
     overrides: &InjectOverrides,
 ) -> WfgenResult<Vec<u64>> {
+    // 新语法（显式实体数）：条数就是用户写的，未写的步骤就是 0——不做"补到阈值"。
+    // 补全是旧语法的行为（用户只写了部分步骤时，其余步骤靠随机事件凑够阈值）。
+    if overrides.entity_count.is_some() {
+        return compute_use_step_counts(steps, &overrides.use_steps);
+    }
+
     if overrides.use_steps.is_empty() {
         return Ok(steps.iter().map(|step| step.threshold).collect());
     }
