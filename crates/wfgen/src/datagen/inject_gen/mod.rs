@@ -6,8 +6,6 @@ mod near_miss;
 mod non_hit;
 mod structures;
 
-use std::collections::HashMap;
-
 use chrono::{DateTime, Utc};
 use rand::rngs::StdRng;
 use std::time::Duration;
@@ -20,7 +18,8 @@ use crate::wfg_ast::WfgFile;
 
 use dispatch::build_alias_map_for_syntax_case;
 use extract::extract_rule_structure;
-pub use structures::InjectGenResult;
+use structures::InjectEntities;
+pub use structures::{InjectEntityKey, InjectGenResult, InjectStepCount};
 
 /// Generate inject events driven by rule plans.
 ///
@@ -37,7 +36,7 @@ pub fn generate_inject_events(
     let scenario = &wfg.scenario;
 
     let mut all_events = Vec::new();
-    let mut inject_counts: HashMap<String, u64> = HashMap::new();
+    let mut entities = InjectEntities::default();
 
     if let Some(injection) = wfg
         .syntax
@@ -50,28 +49,28 @@ pub fn generate_inject_events(
             let rule_plan = resolve_rule_plan(&case.target_rule, rule_plans)?;
             let alias_map = build_alias_map_for_syntax_case(case, &scenario.streams, rule_plan)?;
             let rule_struct = extract_rule_structure(rule_plan, &alias_map)?;
+            // 每个用例独占一段实体 id：不同的用例（尤其 hit 与 near_miss）不能
+            // 指向同一个实体，否则两个模式的口径互相污染。
+            let entity_base = entities.next_entity_base();
             let events = dispatch::generate_for_syntax_case(
                 case,
                 &rule_struct,
+                entity_base,
                 schemas,
                 &scenario.streams,
                 start,
                 duration,
                 rng,
-                &mut inject_counts,
+                &mut entities,
             )?;
             all_events.extend(events);
         }
-
-        return Ok(InjectGenResult {
-            events: all_events,
-            inject_counts,
-        });
     }
 
     Ok(InjectGenResult {
         events: all_events,
-        inject_counts,
+        entity_keys: entities.keys,
+        unasserted_entities: entities.unasserted,
     })
 }
 

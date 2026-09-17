@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -10,20 +9,22 @@ use super::helpers::{
     compute_hit_counts, compute_window_bounds, generate_cluster_events, generate_key_values,
     resolve_cluster_count,
 };
-use super::structures::{InjectOverrides, RuleStructure};
+use super::structures::{InjectEntities, InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::WfgenResult;
-use crate::wfg_ast::StreamBlock;
+use crate::wfg_ast::{InjectCase, StreamBlock};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn generate_hit_clusters(
+    case: &InjectCase,
     rule_struct: &RuleStructure,
+    entity_base: u64,
     schemas: &[WindowSchema],
     scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     duration: &Duration,
     rng: &mut StdRng,
-    inject_counts: &mut HashMap<String, u64>,
+    entities: &mut InjectEntities,
     overrides: &InjectOverrides,
 ) -> WfgenResult<Vec<GenEvent>> {
     // 条数完全由 `use ... x N` 决定，模式不改数字、阈值只作断言口径（设计 §4.2）。
@@ -38,16 +39,6 @@ pub(super) fn generate_hit_clusters(
         return Ok(Vec::new());
     }
 
-    // Update inject counts
-    for (step, event_count) in effective_steps
-        .iter()
-        .zip(step_event_counts.iter().copied())
-    {
-        *inject_counts
-            .entry(step.scenario_alias.clone())
-            .or_insert(0) += event_count * num_clusters;
-    }
-
     let dur_secs = duration.as_secs_f64();
     let window_dur = overrides.within.unwrap_or(rule_struct.window_dur);
     let (window_secs, max_start_offset) = compute_window_bounds(dur_secs, window_dur);
@@ -55,13 +46,22 @@ pub(super) fn generate_hit_clusters(
     let mut events = Vec::new();
 
     for (entity_counter, _cluster_idx) in (0_u64..).zip(0..num_clusters) {
+        let entity_id = entity_base + entity_counter;
         let key_overrides = generate_key_values(
             &rule_struct.keys,
-            entity_counter,
+            entity_id,
             "hit",
             schemas,
             effective_steps,
             overrides.entity_field.as_deref(),
+        );
+        entities.record_entity(
+            case,
+            rule_struct,
+            entity_id,
+            entity_counter + 1,
+            &key_overrides,
+            &step_event_counts,
         );
 
         let cluster_start_secs = if max_start_offset > 0.0 {

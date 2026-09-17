@@ -13,9 +13,10 @@ scenario data_exfil_detect<seed=42> {
       use(action="send", bytes=30000000) x 4
     }
 
-    // 中等流量：5次12MB = 60MB > 50MB关闭阈值，触发on close
+    // 中等流量：5次9MB = 45MB —— 贴近但**低于** 50MB 的 on close 阈值
+    // （原为 5×12MB = 60MB > 50MB，靠 on close 触发，与 near_miss「不得报警」冲突）
     near_miss<3600> for data_exfil conn_events {
-      use(action="send", bytes=12000000) x 5
+      use(action="send", bytes=9000000) x 5
     }
 
     // 正常低流量

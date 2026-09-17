@@ -249,7 +249,7 @@ scenario inject_nm_syntax<seed=42> {
         stream LoginWindow gen 100/s
     }
     injection {
-        // 100 个实体 × 每个 2 条 = 200 条注入（配额 1000）
+        // 100 个实体 × 每个 2 条 = 200 条注入（背景另算：100/s × 10s = 1000 条）
         near_miss<username: 100> for brute_force LoginWindow {
             use(success=false) x 2
         }
@@ -261,7 +261,8 @@ scenario inject_nm_syntax<seed=42> {
     let plans = vec![make_brute_force_plan()];
 
     let result = generate(&wfg, &schemas, &plans).unwrap();
-    assert_eq!(result.events.len(), 1000);
+    // 总条数 = 背景 1000 + 注入 200
+    assert_eq!(result.events.len(), 1200);
 
     let mut by_entity: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for event in &result.events {
@@ -307,7 +308,7 @@ scenario inject_miss_syntax<seed=42> {
         stream LoginWindow gen 100/s
     }
     injection {
-        // 40 个实体 × 每个 5 条 = 200 条注入（配额 1000）
+        // 40 个实体 × 每个 5 条 = 200 条注入（背景另算：100/s × 10s = 1000 条）
         miss<username: 40> for brute_force LoginWindow {
             use(success=true) x 5
         }
@@ -319,7 +320,8 @@ scenario inject_miss_syntax<seed=42> {
     let plans = vec![make_brute_force_plan()];
 
     let result = generate(&wfg, &schemas, &plans).unwrap();
-    assert_eq!(result.events.len(), 1000);
+    // 总条数 = 背景 1000 + 注入 200
+    assert_eq!(result.events.len(), 1200);
 
     let mut by_entity: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for event in &result.events {
@@ -365,7 +367,7 @@ scenario inject_miss_filter_override<seed=42> {
         stream LoginWindow gen 100/s
     }
     injection {
-        // 40 个实体 × 每个 5 条 = 200 条注入（配额 1000）
+        // 40 个实体 × 每个 5 条 = 200 条注入（背景另算：100/s × 10s = 1000 条）
         miss<username: 40> for auth_fail_rule LoginWindow {
             use(success=true) x 5
         }
@@ -377,7 +379,8 @@ scenario inject_miss_filter_override<seed=42> {
     let plans = vec![make_auth_fail_plan()];
 
     let result = generate(&wfg, &schemas, &plans).unwrap();
-    assert_eq!(result.events.len(), 1000);
+    // 总条数 = 背景 1000 + 注入 200
+    assert_eq!(result.events.len(), 1200);
 
     let miss_events: Vec<_> = result
         .events

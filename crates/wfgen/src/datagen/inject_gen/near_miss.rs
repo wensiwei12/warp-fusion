@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -10,20 +9,22 @@ use super::helpers::{
     compute_near_miss_counts, compute_window_bounds, generate_cluster_events, generate_key_values,
     resolve_cluster_count,
 };
-use super::structures::{InjectOverrides, RuleStructure};
+use super::structures::{InjectEntities, InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::WfgenResult;
-use crate::wfg_ast::StreamBlock;
+use crate::wfg_ast::{InjectCase, StreamBlock};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn generate_near_miss_clusters(
+    case: &InjectCase,
     rule_struct: &RuleStructure,
+    entity_base: u64,
     schemas: &[WindowSchema],
     scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     duration: &Duration,
     rng: &mut StdRng,
-    inject_counts: &mut HashMap<String, u64>,
+    entities: &mut InjectEntities,
     overrides: &InjectOverrides,
 ) -> WfgenResult<Vec<GenEvent>> {
     let steps = &rule_struct.steps;
@@ -45,13 +46,6 @@ pub(super) fn generate_near_miss_clusters(
         return Ok(Vec::new());
     }
 
-    // Update inject counts
-    for (i, step) in steps.iter().enumerate() {
-        *inject_counts
-            .entry(step.scenario_alias.clone())
-            .or_insert(0) += near_miss_counts[i] * num_clusters;
-    }
-
     let dur_secs = duration.as_secs_f64();
     let window_dur = overrides.within.unwrap_or(rule_struct.window_dur);
     let (window_secs, max_start_offset) = compute_window_bounds(dur_secs, window_dur);
@@ -59,13 +53,22 @@ pub(super) fn generate_near_miss_clusters(
     let mut events = Vec::new();
 
     for (entity_counter, _cluster_idx) in (0_u64..).zip(0..num_clusters) {
+        let entity_id = entity_base + entity_counter;
         let key_overrides = generate_key_values(
             &rule_struct.keys,
-            entity_counter,
+            entity_id,
             "nm",
             schemas,
             &rule_struct.steps,
             overrides.entity_field.as_deref(),
+        );
+        entities.record_entity(
+            case,
+            rule_struct,
+            entity_id,
+            entity_counter + 1,
+            &key_overrides,
+            &near_miss_counts,
         );
 
         let cluster_start_secs = if max_start_offset > 0.0 {

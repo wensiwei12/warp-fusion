@@ -10,7 +10,7 @@ use super::extract::extract_syntax_case_overrides;
 use super::hit::generate_hit_clusters;
 use super::near_miss::generate_near_miss_clusters;
 use super::non_hit::generate_non_hit_events;
-use super::structures::{AliasMap, InjectOverrides, RuleStructure};
+use super::structures::{AliasMap, InjectEntities, InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::{self, WfgenReason, WfgenResult};
 use crate::wfg_ast::{InjectCase, InjectCaseMode, StreamBlock};
@@ -68,68 +68,77 @@ pub(super) fn build_alias_map_for_syntax_case(
 pub(super) fn generate_for_syntax_case(
     case: &InjectCase,
     rule_struct: &RuleStructure,
+    entity_base: u64,
     schemas: &[WindowSchema],
     scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     duration: &Duration,
     rng: &mut StdRng,
-    inject_counts: &mut HashMap<String, u64>,
+    entities: &mut InjectEntities,
 ) -> WfgenResult<Vec<GenEvent>> {
     let overrides = extract_syntax_case_overrides(case)?;
     generate_for_mode(
-        case.mode,
+        case,
         &overrides,
         rule_struct,
+        entity_base,
         schemas,
         scenario_streams,
         start,
         duration,
         rng,
-        inject_counts,
+        entities,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn generate_for_mode(
-    mode: InjectCaseMode,
+    case: &InjectCase,
     overrides: &InjectOverrides,
     rule_struct: &RuleStructure,
+    entity_base: u64,
     schemas: &[WindowSchema],
     scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     duration: &Duration,
     rng: &mut StdRng,
-    inject_counts: &mut HashMap<String, u64>,
+    entities: &mut InjectEntities,
 ) -> WfgenResult<Vec<GenEvent>> {
-    match mode {
+    match case.mode {
         InjectCaseMode::Hit => generate_hit_clusters(
+            case,
             rule_struct,
+            entity_base,
             schemas,
             scenario_streams,
             start,
             duration,
             rng,
-            inject_counts,
+            entities,
             overrides,
         ),
         InjectCaseMode::NearMiss => generate_near_miss_clusters(
+            case,
             rule_struct,
+            entity_base,
             schemas,
             scenario_streams,
             start,
             duration,
             rng,
-            inject_counts,
+            entities,
             overrides,
         ),
         InjectCaseMode::Miss => generate_non_hit_events(
+            case,
             rule_struct,
+            entity_base,
             schemas,
             scenario_streams,
             start,
             duration,
             rng,
-            inject_counts,
+            entities,
             overrides,
         ),
     }

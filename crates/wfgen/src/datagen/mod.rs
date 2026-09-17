@@ -7,7 +7,6 @@ mod tests;
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
-use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use rand::SeedableRng;
@@ -17,12 +16,17 @@ use wf_lang::plan::RulePlan;
 
 use crate::error::{self, WfgenReason, WfgenResult};
 use crate::wfg_ast::WfgFile;
+use inject_gen::InjectEntityKey;
 use inject_gen::generate_inject_events;
 use stream_gen::{GenEvent, generate_stream_events};
 
 /// Result of data generation.
 pub struct GenResult {
     pub events: Vec<GenEvent>,
+    /// 注入实体清单（生成期断言 INJ1/INJ2 的输入，设计 §4.2）；无注入用例时为空。
+    pub inject_entities: Vec<InjectEntityKey>,
+    /// 实体标识无法与 oracle `entity_id` 对齐、未纳入断言的实体个数。
+    pub unasserted_inject_entities: u64,
 }
 
 /// Generate events from a parsed and validated `.wfg` scenario.
@@ -53,8 +57,9 @@ pub fn generate(
     let mut rng = StdRng::seed_from_u64(scenario.seed);
 
     // --- Inject generation (if applicable) ---
-    let mut inject_counts: HashMap<String, u64> = HashMap::new();
     let mut sorted_chunks: Vec<Vec<GenEvent>> = Vec::new();
+    let mut inject_entities: Vec<InjectEntityKey> = Vec::new();
+    let mut unasserted_inject_entities = 0_u64;
 
     let has_syntax_inject = wfg
         .syntax
@@ -65,7 +70,8 @@ pub fn generate(
     if has_inject {
         let inject_result =
             generate_inject_events(wfg, rule_plans, schemas, &start, &duration, &mut rng)?;
-        inject_counts = inject_result.inject_counts;
+        inject_entities = inject_result.entity_keys;
+        unasserted_inject_entities = inject_result.unasserted_entities;
         let mut inject_events = inject_result.events;
         inject_events.sort_by_key(|a| a.timestamp);
         if !inject_events.is_empty() {
@@ -100,9 +106,10 @@ pub fn generate(
             count
         };
 
-        // Subtract inject events from this stream's budget
-        let inject_used = inject_counts.get(&stream.alias).copied().unwrap_or(0);
-        let bg_count = stream_total.saturating_sub(inject_used);
+        // 背景与注入**完全分离**（设计 §3.1/§3.4）：背景就是它自己的配额
+        // （`rate × duration`），注入事件是额外的——总条数 = 背景 + 注入，
+        // 改背景速率不会改变注入条数，注入也不会挤压背景。
+        let bg_count = stream_total;
 
         if bg_count == 0 {
             continue;
@@ -126,7 +133,11 @@ pub fn generate(
 
     let all_events = merge_sorted_chunks(sorted_chunks);
 
-    Ok(GenResult { events: all_events })
+    Ok(GenResult {
+        events: all_events,
+        inject_entities,
+        unasserted_inject_entities,
+    })
 }
 
 #[derive(Debug)]

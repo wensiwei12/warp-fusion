@@ -8,6 +8,7 @@ use rand::rngs::StdRng;
 use crate::datagen::fault_gen::apply_faults;
 use crate::datagen::generate;
 use crate::error::{self, WfgenReason, WfgenResult};
+use crate::inject_assert::assert_inject_modes;
 use crate::injection_targets::injected_rule_names;
 use crate::loader::load_from_uses;
 use crate::oracle::{extract_oracle_tolerances, run_oracle};
@@ -211,6 +212,20 @@ pub async fn run(args: Args) -> WfgenResult<()> {
             &duration,
             Some(&injected_rules),
         )?;
+
+        // 生成期硬断言（INJ1/INJ2，设计 §4.2）：复用上面刚算出的 oracle 结果，
+        // 失败在写 `.except.jsonl` 之前报——期望文件与场景语义必须一致。
+        let asserted = assert_inject_modes(&result.inject_entities, &expected_result.alerts)?;
+        if asserted > 0 {
+            println!("Inject assert: {asserted} entities match their hit/near_miss/miss mode");
+        }
+        if result.unasserted_inject_entities > 0 {
+            eprintln!(
+                "Warning: {} inject entities skipped by the mode assertion \
+                 (entity(...) is not a single field, so it cannot be matched against entity_id)",
+                result.unasserted_inject_entities
+            );
+        }
 
         let expected_file = out.join(format!("{}.except.jsonl", output_case));
         write_oracle_jsonl(&expected_result.alerts, &expected_file)?;

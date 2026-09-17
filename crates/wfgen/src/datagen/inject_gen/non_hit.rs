@@ -9,21 +9,23 @@ use super::helpers::{
     build_event_fields_with_predicates, generate_key_values,
     plan_use_steps_allowing_filter_conflicts, resolve_cluster_count,
 };
-use super::structures::{InjectOverrides, RuleStructure};
+use super::structures::{InjectEntities, InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::{self, WfgenReason, WfgenResult};
-use crate::wfg_ast::StreamBlock;
+use crate::wfg_ast::{InjectCase, StreamBlock};
 
 /// `miss` 用例：条数就是 `use ... x N`，每个实体一条独立键 → 永远不成簇、不触发规则。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn generate_non_hit_events(
+    case: &InjectCase,
     rule_struct: &RuleStructure,
+    entity_base: u64,
     schemas: &[WindowSchema],
     scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     duration: &Duration,
     rng: &mut StdRng,
-    inject_counts: &mut HashMap<String, u64>,
+    entities: &mut InjectEntities,
     overrides: &InjectOverrides,
 ) -> WfgenResult<Vec<GenEvent>> {
     if overrides.use_steps.is_empty() {
@@ -33,26 +35,30 @@ pub(super) fn generate_non_hit_events(
     }
 
     generate_non_hit_use_step_events(
+        case,
         rule_struct,
+        entity_base,
         schemas,
         scenario_streams,
         start,
         duration,
         rng,
-        inject_counts,
+        entities,
         overrides,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn generate_non_hit_use_step_events(
+    case: &InjectCase,
     rule_struct: &RuleStructure,
+    entity_base: u64,
     schemas: &[WindowSchema],
     scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     duration: &Duration,
     rng: &mut StdRng,
-    inject_counts: &mut HashMap<String, u64>,
+    entities: &mut InjectEntities,
     overrides: &InjectOverrides,
 ) -> WfgenResult<Vec<GenEvent>> {
     let steps = &rule_struct.steps;
@@ -76,16 +82,10 @@ fn generate_non_hit_use_step_events(
         return Ok(Vec::new());
     }
 
-    for (step, event_count) in steps.iter().zip(step_event_counts.iter().copied()) {
-        *inject_counts
-            .entry(step.scenario_alias.clone())
-            .or_insert(0) += event_count * shape_repeats;
-    }
-
     let dur_nanos = duration.as_nanos() as i64;
 
     let mut events = Vec::new();
-    let mut entity_counter = 1_000_000_u64;
+    let mut entity_index = 0_u64;
     let mut event_index = 0_i64;
     let total_events = (shape_repeats * step_event_counts.iter().sum::<u64>()).max(1) as i64;
 
@@ -128,15 +128,27 @@ fn generate_non_hit_use_step_events(
             })?;
 
             for _ in 0..event_count {
+                // 每个 miss 实体只有一条事件、且只落在本步骤上。
+                let entity_id = entity_base + entity_index;
+                entity_index += 1;
                 let key_overrides = generate_key_values(
                     &rule_struct.keys,
-                    entity_counter,
+                    entity_id,
                     "miss",
                     schemas,
                     steps,
                     overrides.entity_field.as_deref(),
                 );
-                entity_counter += 1;
+                let mut entity_step_counts = vec![0_u64; steps.len()];
+                entity_step_counts[step_idx] = 1;
+                entities.record_entity(
+                    case,
+                    rule_struct,
+                    entity_id,
+                    entity_index,
+                    &key_overrides,
+                    &entity_step_counts,
+                );
 
                 let offset_nanos = if total_events > 1 {
                     dur_nanos * event_index / total_events
