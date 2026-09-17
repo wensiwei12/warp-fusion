@@ -68,10 +68,10 @@ fn generate_non_hit_use_step_events(
 
     let planned_use_steps = plan_use_steps_allowing_filter_conflicts(steps, &overrides.use_steps)?;
     let mut step_event_counts = vec![0_u64; steps.len()];
-    let mut step_predicates = vec![None; steps.len()];
+    let mut step_records = vec![None; steps.len()];
     for planned in planned_use_steps {
         step_event_counts[planned.rule_step_idx] += planned.count;
-        step_predicates[planned.rule_step_idx] = Some(planned.predicates);
+        step_records[planned.rule_step_idx] = Some(planned.records);
     }
     if step_event_counts.iter().all(|count| *count == 0) {
         return Ok(Vec::new());
@@ -117,7 +117,7 @@ fn generate_non_hit_use_step_events(
                 .map(|o| (o.field_name.as_str(), &o.gen_expr))
                 .collect();
 
-            let predicates = step_predicates[step_idx].as_ref().ok_or_else(|| {
+            let records = step_records[step_idx].as_ref().ok_or_else(|| {
                 error::error(
                     WfgenReason::Validation,
                     format!(
@@ -127,7 +127,7 @@ fn generate_non_hit_use_step_events(
                 )
             })?;
 
-            for _ in 0..event_count {
+            for event_in_step in 0..event_count {
                 // 每个 miss 实体只有一条事件、且只落在本步骤上。
                 let entity_id = entity_base + entity_index;
                 entity_index += 1;
@@ -158,6 +158,8 @@ fn generate_non_hit_use_step_events(
                 event_index += 1;
                 let ts = *start + ChronoDuration::nanoseconds(offset_nanos);
 
+                // 记录按步骤内事件序号轮转（单记录形态恒为第 0 条）。
+                let predicates = &records[event_in_step as usize % records.len()];
                 let fields = build_event_fields_with_predicates(
                     schema,
                     &overrides_map,

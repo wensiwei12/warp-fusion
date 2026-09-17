@@ -4,7 +4,7 @@ use "../rules/02-initial_access/ssh_brute_force.wfl"
 #[duration=1m]
 scenario ssh_brute_quick<seed=42> {
   background { stream auth_events gen 500/s }
-  injection {
+  inject {
     hit<2500> for ssh_brute_force auth_events {
       use(result="failed", service="ssh", user="root") x 12
     }

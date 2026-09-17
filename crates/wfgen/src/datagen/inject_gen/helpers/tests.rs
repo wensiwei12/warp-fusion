@@ -16,10 +16,10 @@ fn matched_use_predicates_are_capped_to_step_event_count() {
         threshold: 5,
         filter_overrides: HashMap::from([("success".to_string(), serde_json::Value::Bool(false))]),
     }];
-    let use_steps = vec![InjectUseStepOverrides {
-        count: 1_000,
-        predicates: HashMap::from([("success".to_string(), serde_json::Value::Bool(false))]),
-    }];
+    let use_steps = vec![InjectUseStepOverrides::single(
+        1_000,
+        HashMap::from([("success".to_string(), serde_json::Value::Bool(false))]),
+    )];
 
     let mapped = map_use_predicates_to_rule_steps(&steps, &use_steps, &[4], true).unwrap();
 
@@ -38,10 +38,10 @@ fn matched_use_predicates_are_capped_to_step_event_count() {
 
 #[test]
 fn use_step_counts_return_empty_for_empty_steps() {
-    let use_steps = vec![InjectUseStepOverrides {
-        count: 1,
-        predicates: HashMap::from([("success".to_string(), serde_json::Value::Bool(false))]),
-    }];
+    let use_steps = vec![InjectUseStepOverrides::single(
+        1,
+        HashMap::from([("success".to_string(), serde_json::Value::Bool(false))]),
+    )];
 
     let counts = compute_use_step_counts(&[], &use_steps).unwrap();
 
@@ -72,14 +72,14 @@ fn planned_use_steps_bind_by_declaration_order() {
         },
     ];
     let use_steps = vec![
-        InjectUseStepOverrides {
-            count: 1,
-            predicates: HashMap::from([("success".to_string(), serde_json::Value::Bool(false))]),
-        },
-        InjectUseStepOverrides {
-            count: 1,
-            predicates: HashMap::from([("dport".to_string(), serde_json::json!(22))]),
-        },
+        InjectUseStepOverrides::single(
+            1,
+            HashMap::from([("success".to_string(), serde_json::Value::Bool(false))]),
+        ),
+        InjectUseStepOverrides::single(
+            1,
+            HashMap::from([("dport".to_string(), serde_json::json!(22))]),
+        ),
     ];
 
     let counts = compute_use_step_counts(&steps, &use_steps).unwrap();
@@ -113,10 +113,10 @@ fn one_use_step_does_not_spill_across_rule_steps() {
             filter_overrides: HashMap::new(),
         },
     ];
-    let use_steps = vec![InjectUseStepOverrides {
-        count: 2,
-        predicates: HashMap::from([("dport".to_string(), serde_json::json!(22))]),
-    }];
+    let use_steps = vec![InjectUseStepOverrides::single(
+        2,
+        HashMap::from([("dport".to_string(), serde_json::json!(22))]),
+    )];
 
     let counts = compute_use_step_counts(&steps, &use_steps).unwrap();
     let mapped = map_use_predicates_to_rule_steps(&steps, &use_steps, &[2, 1], true).unwrap();
@@ -140,14 +140,14 @@ fn extra_use_step_errors_when_rule_steps_exhausted() {
         filter_overrides: HashMap::from([("success".to_string(), serde_json::Value::Bool(false))]),
     }];
     let use_steps = vec![
-        InjectUseStepOverrides {
-            count: 5,
-            predicates: HashMap::from([("success".to_string(), serde_json::Value::Bool(false))]),
-        },
-        InjectUseStepOverrides {
-            count: 1,
-            predicates: HashMap::from([("success".to_string(), serde_json::Value::Bool(true))]),
-        },
+        InjectUseStepOverrides::single(
+            5,
+            HashMap::from([("success".to_string(), serde_json::Value::Bool(false))]),
+        ),
+        InjectUseStepOverrides::single(
+            1,
+            HashMap::from([("success".to_string(), serde_json::Value::Bool(true))]),
+        ),
     ];
 
     let err = compute_use_step_counts(&steps, &use_steps).unwrap_err();
@@ -169,10 +169,7 @@ fn zero_count_use_step_errors() {
         threshold: 5,
         filter_overrides: HashMap::new(),
     }];
-    let use_steps = vec![InjectUseStepOverrides {
-        count: 0,
-        predicates: HashMap::new(),
-    }];
+    let use_steps = vec![InjectUseStepOverrides::single(0, HashMap::new())];
 
     let err = compute_use_step_counts(&steps, &use_steps).unwrap_err();
     let rendered = err.report().render().to_string();
@@ -193,10 +190,10 @@ fn conflicting_use_step_predicates_error() {
         threshold: 5,
         filter_overrides: HashMap::from([("success".to_string(), serde_json::Value::Bool(false))]),
     }];
-    let use_steps = vec![InjectUseStepOverrides {
-        count: 5,
-        predicates: HashMap::from([("success".to_string(), serde_json::Value::Bool(true))]),
-    }];
+    let use_steps = vec![InjectUseStepOverrides::single(
+        5,
+        HashMap::from([("success".to_string(), serde_json::Value::Bool(true))]),
+    )];
 
     let err = compute_use_step_counts(&steps, &use_steps).unwrap_err();
     let rendered = err.report().render().to_string();
@@ -240,14 +237,14 @@ fn near_miss_counts_are_written_counts_not_clamped() {
         entity_field: None,
         within: None,
         use_steps: vec![
-            InjectUseStepOverrides {
-                count: 3,
-                predicates: HashMap::from([("stage".to_string(), serde_json::json!("first"))]),
-            },
-            InjectUseStepOverrides {
-                count: 4,
-                predicates: HashMap::from([("stage".to_string(), serde_json::json!("after"))]),
-            },
+            InjectUseStepOverrides::single(
+                3,
+                HashMap::from([("stage".to_string(), serde_json::json!("first"))]),
+            ),
+            InjectUseStepOverrides::single(
+                4,
+                HashMap::from([("stage".to_string(), serde_json::json!("after"))]),
+            ),
         ],
     };
 
@@ -299,10 +296,7 @@ fn hit_and_near_miss_share_the_same_counts() {
         entity_count: Some(5),
         entity_field: None,
         within: None,
-        use_steps: vec![InjectUseStepOverrides {
-            count: 12,
-            predicates: HashMap::new(),
-        }],
+        use_steps: vec![InjectUseStepOverrides::single(12, HashMap::new())],
     };
 
     let hit = compute_hit_counts(&steps, &overrides).unwrap();

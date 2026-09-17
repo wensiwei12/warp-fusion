@@ -195,10 +195,18 @@ hit<sip: 20> for sdm_rule sdm_event {
 ### 3.3 值与值模板（P2）
 
 - `use(preds)` / `use({json})` / `use from "f.json"` 提供该步骤的字段值。
-- 默认：该步骤的 N 条事件使用**同一份**值。
-- `use({...})` 的顶层键展开为字段；`_` 前缀的键（`_stream` / `_window` / `_timestamp`）**忽略**，方便把原始日志整份粘进来。
-- `use from` 的文件顶层若是**数组**：N 条事件应在记录间循环取用（`N > 记录数` 时回绕）——**未实现**（见 §7.2）。
-- 同一 `use` 内重复字段报 VN9；与实体键重复报 VN12；字段不在 schema 报 VN11。
+- 一条**记录** = 一组字段值；默认该步骤的 N 条事件都用同一份值。
+- `use({...})` 的顶层键展开为字段；`_` 前缀的键（`_stream` / `_window` / `_timestamp`）**忽略**，
+  方便把原始日志整份粘进来。
+- `use from "file"` 在**加载期**（`loader::resolve_inject_files`）就地解析成与 `use({...})` 完全
+  同构的内联 JSON，因此字段级校验（VN9/VN11/VN12）对文件内容同样生效：
+  - 顶层 **object** → 一条记录；
+  - 顶层 **object 数组** / **NDJSON**（每行一个 object，空行与 `//` 注释忽略）→ 多条记录，
+    按事件序号**循环取用**（`N > 记录数` 时回绕）；
+  - 路径相对 `.wfg` 所在目录（绝对路径原样用）；文件缺失、非 JSON、顶层不是 object /
+    object 数组、数组为空都在加载期明确报错——不做"静默产出空字段"的兜底。
+- 同一 `use` 内重复字段报 VN9（逐记录检查，不同记录重复同一字段是正常的）；与实体键重复报
+  VN12；字段不在 schema 报 VN11。
 
 ### 3.4 背景与注入分离（P5）
 
@@ -251,7 +259,7 @@ hit<sip: 20> for sdm_rule sdm_event {
 | VN11 | `use` 字段不在该 stream 的 schema | `… field '<f>' not found in schema '<w>'` |
 | VN12 | `use` 重复了实体字段 | `… repeats entity field '<f>'` |
 | VN14 | `for RULE` 指向的规则不在 `.wfl` | `… targets rule '<r>' not found in WFL files` |
-| VN17 | `use({...})` 顶层不是 object | `… use({...}) 的顶层必须是 JSON object` |
+| VN17 | `use({...})` 顶层不是 object / object 数组（或记录不是 object、数组为空） | `… use({...}) 的顶层必须是 JSON object 或 object 数组` |
 | VN20 | 使用旧语法 `hit<N%>` / `with(N)` | 见 §5.1（**解析期**报错） |
 | VN21 | 实体个数为 0、`x 0`、或没有任何事件组 | `… 实体个数必须大于 0 / 第 k 个事件组 x 0 / 至少需要一个 use … x N 事件组` |
 | VN25 | `spread` 超过 `#[duration]` | `spread 20m` 超过场景 duration `10m` |
@@ -296,8 +304,11 @@ VN20 旧注入语法已移除：`hit<N%>` 里的 N 是 stream 配额的百分比
 ```
 
 旧语法清单：`hit<20%>` / `near_miss<10%>` / `miss<60%>`、`<field> seq { … }`、
-`use(...) with(N)`、`not(...) within(...)`、`expect { … }`、`traffic` 关键字、`injection` 关键字、
-`oracle { … }`。
+`use(...) with(N)`、`not(...) within(...)`、`expect { … }`、`traffic` 关键字（→ `background`）、
+`injection` 关键字（→ `inject`）、`oracle { … }`。
+
+`traffic` / `injection` 在**解析期**各自被单独接住并给出改写方向（各一条静态文案），
+避免用户只看到笼统的"期望某个块"。
 
 ### 5.2 折算公式
 
@@ -374,6 +385,9 @@ wfg + wfs + wfl
   否则 `hit` 与 `near_miss` 会指向同一实体、两个口径互相污染。
 - 背景与注入完全分离：背景保留自己的配额（`rate × duration`），注入在其上叠加
   （旧口径 `背景 = 配额 − 注入` 及其 `inject_counts` 链路已删除）。
+- `use from "file"` 的值文件解析（`loader::resolve_inject_files`）：相对 `.wfg` 目录解析路径，
+  支持顶层 object / object 数组 / NDJSON，数组与 NDJSON 按事件序号循环取用；`gen` / `lint` /
+  `bench` / `send` / `stream` 都经 `loader::load_from_uses` 走同一条解析。
 - 14 个仓内语料在断言下**全部通过**；其中 2 个按断言口径调整过（§5.3）。
 
 ### 7.2 未落地 / 未决
@@ -382,8 +396,6 @@ wfg + wfs + wfl
 |---|---|
 | `replay STREAM { use from "f" }` 照单发货 | 未实现 |
 | `without(...)` 步骤（取代旧 `not(...) within(...)`） | 未实现 |
-| `use from "path"` 的路径解析（相对 `.wfg` 所在目录） | 未实现；残留 `File` 会明确报错而非静默空字段 |
-| 文件为数组时 N 条循环取用 | 未实现 |
 | 时间**均匀**铺开 | 部分：`spread` 已可写并覆盖窗口长度，铺开策略仍是"随机簇起点 + 窗口内铺开" |
 | VN22 / VN23（实体字段存在性与推断一致性）、VN24（事件组数 > 步骤数）、VN26（replay 文件） | 未实现；事件组数超限目前是生成期的 `exceeds rule step count` |
 | 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | 未迁移 |

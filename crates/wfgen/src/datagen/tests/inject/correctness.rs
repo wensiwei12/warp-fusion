@@ -8,7 +8,7 @@ scenario inject_hit<seed=42> {
     background {
         stream LoginWindow gen 100/s
     }
-    injection {
+    inject {
         // 100 个实体 × 每个 5 条 = 500 条注入（背景另算：100/s × 10s = 1000 条）
         hit<src_ip: 100> for auth_fail_rule LoginWindow {
             use(action="failed") x 5
@@ -67,7 +67,7 @@ scenario inject_filter<seed=42> {
     background {
         stream LoginWindow gen 100/s
     }
-    injection {
+    inject {
         // 30 个实体 × 每个 5 条 = 150 条注入（背景另算：100/s × 5s = 500 条）
         hit<src_ip: 30> for auth_fail_rule LoginWindow {
             use(success=false) x 5
@@ -141,7 +141,7 @@ scenario inject_filter_conflict<seed=42> {
     background {
         stream LoginWindow gen 100/s
     }
-    injection {
+    inject {
         hit<src_ip: 30> for auth_fail_rule LoginWindow {
             use(success=true) x 5
         }
@@ -171,7 +171,7 @@ scenario inject_filter_conflict_nm<seed=42> {
     background {
         stream LoginWindow gen 100/s
     }
-    injection {
+    inject {
         near_miss<src_ip: 30> for auth_fail_rule LoginWindow {
             use(success=true) x 5
         }
@@ -201,7 +201,7 @@ scenario inject_step_scope<seed=42> {
     background {
         stream LoginWindow gen 40/s
     }
-    injection {
+    inject {
         // 40 个实体 × (1 + 1) = 80 条注入（背景另算：40/s × 5s = 200 条）
         hit<src_ip: 40> for bool_chain LoginWindow {
             use(success=false) x 1
@@ -276,7 +276,7 @@ scenario inject_nm<seed=42> {
     background {
         stream LoginWindow gen 100/s
     }
-    injection {
+    inject {
         // 100 个实体 × 每个 4 条 = 400 条注入（背景另算：100/s × 10s = 1000 条）
         near_miss<src_ip: 100> for brute_force LoginWindow {
             use(action="failed") x 4
@@ -311,7 +311,7 @@ scenario inject_oracle<seed=42> {
     background {
         stream LoginWindow gen 100/s
     }
-    injection {
+    inject {
         // 100 个实体 × 每个 5 条 = 500 条注入 → 100 个簇
         hit<src_ip: 100> for brute_force LoginWindow {
             use(action="failed") x 5
@@ -356,7 +356,7 @@ scenario inject_budget<seed=42> {
     background {
         stream LoginWindow gen 100/s
     }
-    injection {
+    inject {
         hit<src_ip: 60> for brute_force LoginWindow {
             use(action="failed") x 5
         }
@@ -406,7 +406,7 @@ scenario inject_over_background<seed=42> {
     background {
         stream LoginWindow gen 10/s
     }
-    injection {
+    inject {
         hit<src_ip: 8> for brute_force LoginWindow {
             use(action="failed") x 5
         }
@@ -451,7 +451,7 @@ scenario inject_det<seed=42> {
     background {
         stream LoginWindow gen 100/s
     }
-    injection {
+    inject {
         hit<src_ip: 30> for brute_force LoginWindow {
             use(action="failed") x 5
         }

@@ -8,7 +8,7 @@ scenario brute_force_detect<seed=42> {
     stream auth_events gen wave(base=80/s, amp=40/s, period=2m, shape=sine)
   }
 
-  injection {
+  inject {
     hit<4800> for brute_force_then_scan auth_events {
       use(action="failed") x 3
     }

@@ -107,16 +107,19 @@ pub(super) fn validate_syntax(
                         ),
                     });
                 }
-                let predicates = source_predicates(&group.source, &mut errors, stream, idx);
-                check_predicate_fields(
-                    &mut errors,
-                    stream,
-                    idx,
-                    "use",
-                    &predicates,
-                    case.entity_field.as_deref(),
-                    case_schema,
-                );
+                // 逐条记录检查（`use from` 的数组形态有多条）：字段级校验必须按记录
+                // 分别做——不同记录重复出现同一字段是正常的（每条记录都有实体键）。
+                for record in source_records(&group.source, &mut errors, stream, idx) {
+                    check_predicate_fields(
+                        &mut errors,
+                        stream,
+                        idx,
+                        "use",
+                        &record,
+                        case.entity_field.as_deref(),
+                        case_schema,
+                    );
+                }
             }
         }
     }
@@ -140,37 +143,79 @@ pub(super) fn validate_syntax(
     errors
 }
 
-/// 事件组的字段覆盖：`use({...})` 物化顶层键；`use from` 的内容由 loader 校验。
-fn source_predicates(
+/// 事件组的字段覆盖记录：`use({...})` 与 loader 解析后的 `use from` 同构。
+///
+/// - 顶层 object → 一条记录（顶层键展开为字段）；
+/// - 顶层 object 数组 → 多条记录，生成时按事件序号循环取用（设计 §3.3）。
+///
+/// 记录条数为 0 表示该来源无法物化（VN17 已报），调用方无需再检查字段。
+fn source_records(
     source: &ValueSource,
     errors: &mut Vec<ValidationError>,
     stream: &str,
     idx: usize,
-) -> Vec<FieldPredicate> {
+) -> Vec<Vec<FieldPredicate>> {
     match source {
-        ValueSource::Predicates(predicates) => predicates.clone(),
-        ValueSource::Json(json) => {
-            let entries = json_top_level_entries(json).unwrap_or_else(|| {
+        ValueSource::Predicates(predicates) => vec![predicates.clone()],
+        ValueSource::Json(json) => match json {
+            serde_json::Value::Object(_) => vec![object_record(json)],
+            serde_json::Value::Array(items) => {
+                let mut records = Vec::with_capacity(items.len());
+                for (record_idx, item) in items.iter().enumerate() {
+                    if !item.is_object() {
+                        errors.push(ValidationError {
+                            code: "VN17",
+                            message: format!(
+                                "injection case '{}' 第 {} 个事件组 use({{...}}) 的记录数组第 {} 个元素不是 JSON object",
+                                stream,
+                                idx + 1,
+                                record_idx + 1
+                            ),
+                        });
+                        return Vec::new();
+                    }
+                    records.push(object_record(item));
+                }
+                if records.is_empty() {
+                    errors.push(ValidationError {
+                        code: "VN17",
+                        message: format!(
+                            "injection case '{}' 第 {} 个事件组 use({{...}}) 的记录数组为空",
+                            stream,
+                            idx + 1
+                        ),
+                    });
+                }
+                records
+            }
+            _ => {
                 errors.push(ValidationError {
                     code: "VN17",
                     message: format!(
-                        "injection case '{}' 第 {} 个事件组 use({{...}}) 的顶层必须是 JSON object",
+                        "injection case '{}' 第 {} 个事件组 use({{...}}) 的顶层必须是 JSON object 或 object 数组",
                         stream,
                         idx + 1
                     ),
                 });
                 Vec::new()
-            });
-            entries
-                .into_iter()
-                .map(|(field, value)| FieldPredicate {
-                    field,
-                    value: AttrValue::Json(value),
-                })
-                .collect()
-        }
+            }
+        },
+        // loader 应已把 `File` 解析成 `Json`（见 loader::resolve_inject_files）；
+        // 未解析时 datagen 会明确报错，这里不重复报。
         ValueSource::File(_) => Vec::new(),
     }
+}
+
+/// 一条记录：顶层键展开为字段。
+fn object_record(json: &serde_json::Value) -> Vec<FieldPredicate> {
+    json_top_level_entries(json)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(field, value)| FieldPredicate {
+            field,
+            value: AttrValue::Json(value),
+        })
+        .collect()
 }
 
 /// 注入用例里字段覆盖的公共检查（重名 / 与实体键重复 / 字段不在 schema）。

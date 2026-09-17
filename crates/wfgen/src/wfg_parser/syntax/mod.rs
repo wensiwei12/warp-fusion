@@ -7,6 +7,12 @@ use winnow::token::literal;
 
 use crate::wfg_ast::*;
 use crate::wfg_parser::primitives::ws_skip;
+/// VN20：旧的块关键字 `traffic` 已改名为 `background`（设计 §5.1）。
+const VN20_LEGACY_TRAFFIC_KEYWORD: &str = "VN20 旧注入语法已移除：块关键字 `traffic` 已改名为 `background`（只描述背景流量）。请把 `traffic { … }` 改写为 `background { … }`。";
+
+/// VN20：旧的关键字 `injection` 已改名为 `inject`（设计 §1.1 P7 / §5.1）。
+const VN20_LEGACY_INJECTION_KEYWORD: &str = "VN20 旧注入语法已移除：块关键字 `injection` 已改名为 `inject`（`background` / `inject` 两个块名成对）。请把 `injection { … }` 改写为 `inject { … }`。";
+
 pub(super) fn parse_syntax_body(
     input: &mut &str,
     name: String,
@@ -36,12 +42,41 @@ pub(super) fn parse_syntax_body(
             background = Some(parse_background_block(input)?);
             continue;
         }
-        if opt(wf_lang::parse_utils::kw("injection"))
+        if opt(wf_lang::parse_utils::kw("inject"))
             .parse_next(input)?
             .is_some()
         {
             injection = Some(parse_injection_block(input)?);
             continue;
+        }
+        // VN20：`traffic` 是旧关键字（设计 §5.1 旧语法清单），已改名为 `background`。
+        if opt(wf_lang::parse_utils::kw("traffic"))
+            .parse_next(input)?
+            .is_some()
+        {
+            return Err(winnow::error::ErrMode::Cut(
+                winnow::error::ContextError::new().add_context(
+                    input,
+                    &input.checkpoint(),
+                    StrContext::Expected(StrContextValue::Description(VN20_LEGACY_TRAFFIC_KEYWORD)),
+                ),
+            ));
+        }
+        // VN20：`injection` 是旧关键字（设计 §5.1 旧语法清单），已改名为 `inject`。
+        // 这里单独接住并给出改写方向——否则用户只会看到"期望 background/inject"。
+        if opt(wf_lang::parse_utils::kw("injection"))
+            .parse_next(input)?
+            .is_some()
+        {
+            return Err(winnow::error::ErrMode::Cut(
+                winnow::error::ContextError::new().add_context(
+                    input,
+                    &input.checkpoint(),
+                    StrContext::Expected(StrContextValue::Description(
+                        VN20_LEGACY_INJECTION_KEYWORD,
+                    )),
+                ),
+            ));
         }
 
         return Err(winnow::error::ErrMode::Cut(
@@ -49,7 +84,7 @@ pub(super) fn parse_syntax_body(
                 input,
                 &input.checkpoint(),
                 StrContext::Expected(StrContextValue::Description(
-                    "background, injection, or closing brace",
+                    "background, inject, or closing brace",
                 )),
             ),
         ));

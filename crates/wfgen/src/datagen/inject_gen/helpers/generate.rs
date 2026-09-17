@@ -160,9 +160,15 @@ pub(crate) fn map_use_predicates_to_rule_steps(
                 .get(planned.rule_step_idx)
                 .copied()
                 .unwrap_or(0) as usize;
-            let remaining_slots = expected.saturating_sub(step_predicates.len());
-            for _ in 0..remaining_slots.min(planned.count as usize) {
-                step_predicates.push(planned.predicates.clone());
+            // 事件序号 `step_predicates.len()` 就是循环取用的下标：单记录形态
+            // （长度 1）恒取第 0 条，`use from` 的数组形态按记录顺序轮转。
+            let records = &planned.records;
+            let slots = expected
+                .saturating_sub(step_predicates.len())
+                .min(planned.count as usize);
+            for _ in 0..slots {
+                let record_idx = step_predicates.len() % records.len();
+                step_predicates.push(records[record_idx].clone());
             }
         }
     }

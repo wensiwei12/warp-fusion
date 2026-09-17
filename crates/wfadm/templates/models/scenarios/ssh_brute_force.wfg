@@ -6,7 +6,7 @@ scenario brute_force_detect<seed=42> {
   background {
     stream auth_events gen 50/s
   }
-  injection {
+  inject {
     hit<500> for ssh_brute_force auth_events {
       use(result="failed", service="ssh") x 12
     }

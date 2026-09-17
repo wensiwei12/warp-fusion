@@ -7,7 +7,7 @@ scenario top_scanners_detect<seed=42> {
     stream conn_events gen 40/s
   }
 
-  injection {
+  inject {
     // 高扫描者：5 个 SYN 事件 → distinct 端口 5 >= 3，满足 on close 阈值。
     // 规则带 conv `sort(-scan) | top(2)`：**只有进入 top-2 的实体才会产出告警**，
     // 因此 hit 实体数取 2（写多了必然 INJ1——这就是硬断言要抓的东西）。

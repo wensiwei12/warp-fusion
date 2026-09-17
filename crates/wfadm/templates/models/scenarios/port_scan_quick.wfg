@@ -6,7 +6,7 @@ scenario port_scan_quick<seed=42> {
   background {
     stream conn_events gen 500/s
   }
-  injection {
+  inject {
     hit<750> for port_scan conn_events {
       use(action="syn") x 12
     }

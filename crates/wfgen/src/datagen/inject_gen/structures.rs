@@ -160,8 +160,29 @@ pub(super) struct InjectOverrides {
     pub(super) use_steps: Vec<InjectUseStepOverrides>,
 }
 
-/// Overrides extracted from one `use(...)` clause.
+/// Overrides extracted from one `use …` event group.
+///
+/// 每条事件取用的字段值来自 `records`：`use(preds)` / `use({object})` 只有一条
+/// 记录（该步骤所有事件共用）；`use from` 的文件顶层是数组时有多条记录，生成时
+/// 按事件序号**循环取用**（`N > 记录数` 回绕，设计 §3.3）。
 pub(super) struct InjectUseStepOverrides {
     pub(super) count: u64,
-    pub(super) predicates: HashMap<String, serde_json::Value>,
+    pub(super) records: Vec<HashMap<String, serde_json::Value>>,
+}
+
+impl InjectUseStepOverrides {
+    /// 单记录形态（`use(preds)` / `use({object})`）：该步骤所有事件共用一份值。
+    /// 生产路径统一走 [`Self::cycled`]（长度 1 的列表同义），这里只给测试用。
+    #[cfg(test)]
+    pub(super) fn single(count: u64, predicates: HashMap<String, serde_json::Value>) -> Self {
+        Self {
+            count,
+            records: vec![predicates],
+        }
+    }
+
+    /// 多记录形态（`use from` 的数组 / NDJSON）：按事件序号循环取用。
+    pub(super) fn cycled(count: u64, records: Vec<HashMap<String, serde_json::Value>>) -> Self {
+        Self { count, records }
+    }
 }

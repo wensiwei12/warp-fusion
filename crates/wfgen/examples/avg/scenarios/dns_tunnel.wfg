@@ -7,7 +7,7 @@ scenario dns_tunnel_detect<seed=42> {
     stream dns_events gen 100/s
   }
 
-  injection {
+  inject {
     hit<6000> for dns_tunnel dns_events {
       use(resp_size=1200) x 3
     }

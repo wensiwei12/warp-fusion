@@ -28,7 +28,7 @@ fn hit_entities_all_alert_pass() {
 #[duration=5s]
 scenario hit_ok<seed=42> {
     background { stream LoginWindow gen 100/s }
-    injection {
+    inject {
         hit<src_ip: 8> for auth_fail_rule LoginWindow {
             use(success=false) x 5
         }
@@ -47,7 +47,7 @@ fn hit_below_threshold_reports_inj1() {
 #[duration=5s]
 scenario hit_low<seed=42> {
     background { stream LoginWindow gen 100/s }
-    injection {
+    inject {
         hit<src_ip: 4> for auth_fail_rule LoginWindow {
             use(success=false) x 2
         }
@@ -77,7 +77,7 @@ fn near_miss_reaching_threshold_reports_inj2() {
 #[duration=5s]
 scenario nm_over<seed=42> {
     background { stream LoginWindow gen 100/s }
-    injection {
+    inject {
         near_miss<src_ip: 3> for auth_fail_rule LoginWindow {
             use(success=false) x 5
         }
@@ -111,7 +111,7 @@ fn near_miss_and_miss_below_threshold_pass() {
 #[duration=5s]
 scenario nm_ok<seed=42> {
     background { stream LoginWindow gen 100/s }
-    injection {
+    inject {
         near_miss<src_ip: 3> for auth_fail_rule LoginWindow {
             use(success=false) x 4
         }
@@ -135,7 +135,7 @@ fn composite_entity_expression_is_reported_as_unasserted() {
 #[duration=5s]
 scenario composite_entity<seed=42> {
     background { stream LoginWindow gen 100/s }
-    injection {
+    inject {
         hit<src_ip: 4> for auth_fail_rule LoginWindow {
             use(success=false) x 5
         }
@@ -180,7 +180,7 @@ fn inject_cases_use_disjoint_entity_values() {
 #[duration=5s]
 scenario disjoint<seed=42> {
     background { stream LoginWindow gen 100/s }
-    injection {
+    inject {
         hit<src_ip: 6> for auth_fail_rule LoginWindow {
             use(success=false) x 5
         }

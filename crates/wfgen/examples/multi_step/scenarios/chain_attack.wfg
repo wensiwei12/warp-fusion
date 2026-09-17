@@ -7,7 +7,7 @@ scenario chain_attack_detect<seed=42> {
     stream conn_events gen 50/s
   }
 
-  injection {
+  inject {
     // 完整攻击链：扫描(5次) + 登录失败(3次)
     hit<5625> for chain_attack conn_events {
       use(action="syn") x 5

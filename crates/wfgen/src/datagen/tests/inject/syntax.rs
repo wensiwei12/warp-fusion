@@ -8,7 +8,7 @@ scenario inject_extra_use<seed=42> {
     background {
         stream LoginWindow gen 20/s
     }
-    injection {
+    inject {
         hit<src_ip: 10> for auth_fail_rule LoginWindow {
             use(success=false) x 5
             then use(success=true) x 1
@@ -39,7 +39,7 @@ scenario inject_distinct_close<seed=42> {
     background {
         stream LoginWindow gen 20/s
     }
-    injection {
+    inject {
         hit<src_ip: 10> for distinct_close LoginWindow {
             use(success=false, dport=80) x 1
             then use(success=false, dport=443) x 1
@@ -71,7 +71,7 @@ scenario inject_chain_attack<seed=42> {
     background {
         stream LoginWindow gen 20/s
     }
-    injection {
+    inject {
         // 20 个实体 × (5 scan + 3 login) = 160 条注入
         hit<src_ip: 20> for chain_attack LoginWindow {
             use(success=false, dport=80) x 5
@@ -127,7 +127,7 @@ scenario inject_entity<seed=42> {
     background {
         stream LoginWindow gen 20/s
     }
-    injection {
+    inject {
         // 10 个实体 × 每个 5 条 = 50 条注入
         hit<username: 10> for brute_force LoginWindow {
             use(success=false) x 5
@@ -169,7 +169,7 @@ scenario inject_targets<seed=42> {
     background {
         stream LoginWindow gen 40/s
     }
-    injection {
+    inject {
         hit<src_ip: 5> for brute_force LoginWindow {
             use(success=false) x 5
         }
@@ -215,7 +215,7 @@ scenario inject_window_mismatch<seed=42> {
     background {
         stream LoginWindow gen 40/s
     }
-    injection {
+    inject {
         hit<src_ip: 5> for other_window LoginWindow {
             use(success=false) x 5
         }
@@ -248,7 +248,7 @@ scenario inject_nm_syntax<seed=42> {
     background {
         stream LoginWindow gen 100/s
     }
-    injection {
+    inject {
         // 100 个实体 × 每个 2 条 = 200 条注入（背景另算：100/s × 10s = 1000 条）
         near_miss<username: 100> for brute_force LoginWindow {
             use(success=false) x 2
@@ -307,7 +307,7 @@ scenario inject_miss_syntax<seed=42> {
     background {
         stream LoginWindow gen 100/s
     }
-    injection {
+    inject {
         // 40 个实体 × 每个 5 条 = 200 条注入（背景另算：100/s × 10s = 1000 条）
         miss<username: 40> for brute_force LoginWindow {
             use(success=true) x 5
@@ -366,7 +366,7 @@ scenario inject_miss_filter_override<seed=42> {
     background {
         stream LoginWindow gen 100/s
     }
-    injection {
+    inject {
         // 40 个实体 × 每个 5 条 = 200 条注入（背景另算：100/s × 10s = 1000 条）
         miss<username: 40> for auth_fail_rule LoginWindow {
             use(success=true) x 5
@@ -429,7 +429,7 @@ scenario explicit_count<seed=42> {
     background {
         stream LoginWindow gen 100/s
     }
-    injection {
+    inject {
         hit<10> for auth_fail_rule LoginWindow {
             use(success=false) x 5
         }
@@ -481,7 +481,7 @@ fn test_explicit_entity_field_parsed() {
 #[duration=1s]
 scenario explicit_field<seed=1> {
     background { stream LoginWindow gen 100/s }
-    injection {
+    inject {
         hit<src_ip: 7> for auth_fail_rule LoginWindow { use(success=false) x 1 }
     }
 }

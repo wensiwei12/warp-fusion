@@ -319,14 +319,14 @@ fn load_scenarios(
 
         let content = std::fs::read_to_string(&path)
             .source_err(WfgenReason::Io, format!("reading {}", path.display()))?;
-        let wfg = parse_wfg(&content).source_err(
+        let mut wfg = parse_wfg(&content).source_err(
             WfgenReason::Io,
             format!("parse {}: {}", path.display(), "parse error"),
         )?;
 
         // Load schemas referenced by the scenario's `use` declarations
         let (mut scenario_schemas, _) =
-            load_from_uses(&wfg, &path, &std::collections::HashMap::new(), false)?;
+            load_from_uses(&mut wfg, &path, &std::collections::HashMap::new(), false)?;
         // Merge with global schemas (avoid duplicates by name)
         for s in global_schemas {
             if !scenario_schemas.iter().any(|x| x.name == s.name) {

@@ -73,7 +73,7 @@ scenario brute_force_detect<seed=7> {
     stream auth_events gen 200/s
   }
 
-  injection {
+  inject {
     hit<user: 500> for brute_force_then_scan auth_events {
       use(login="failed") x 3
       then use(action="port_scan") x 1
@@ -115,7 +115,7 @@ fn test_parse_then_requires_use_event_group() {
 #[duration=10m]
 scenario invalid_then_not<seed=1> {
   background { stream auth_events gen 100/s }
-  injection {
+  inject {
     near_miss<user: 10> for rule_a auth_events {
       use(login="failed") x 1
       then not(action="port_scan") within(1m)
@@ -134,7 +134,7 @@ fn test_parse_injection_case_target_rule() {
 #[duration=10m]
 scenario targeted<seed=1> {
   background { stream auth_events gen 100/s }
-  injection {
+  inject {
     hit<user: 30> for brute_force auth_events {
       use(login="failed") x 3
     }
@@ -193,7 +193,7 @@ fn test_parse_use_whole_json_inline() {
 #[duration=1s]
 scenario obj_inline<seed=1> {
   background { stream sdm_event gen 100/s }
-  injection {
+  inject {
     hit<sip: 5> for sdm_rule sdm_event {
       use({
         "tenant_id": "tenant02",
@@ -246,7 +246,7 @@ fn test_parse_use_allows_newline_after_paren() {
 #[duration=1s]
 scenario multi_line<seed=1> {
   background { stream sdm_event gen 100/s }
-  injection {
+  inject {
     hit<sip: 1> for sdm_rule sdm_event {
       use(
         tenant_id="tenant02",
@@ -279,7 +279,7 @@ fn test_parse_predicate_structured_values() {
 #[duration=1s]
 scenario structured<seed=1> {
   background { stream sdm_event gen 100/s }
-  injection {
+  inject {
     hit<sip: 1> for sdm_rule sdm_event {
       use(
         obj={"k": {"n": 1}},
@@ -329,7 +329,7 @@ fn test_reject_use_json_array_toplevel() {
 #[duration=1s]
 scenario arr<seed=1> {
   background { stream sdm_event gen 100/s }
-  injection {
+  inject {
     hit<sip: 1> for sdm_rule sdm_event { use([1, 2]) x 1 }
   }
 }
@@ -345,7 +345,7 @@ fn test_parse_spread_and_use_from_file() {
 #[duration=10m]
 scenario spread_from<seed=1> {
   background { stream sdm_event gen 100/s }
-  injection {
+  inject {
     hit<sip: 20> for sdm_rule sdm_event {
       use from "raw/big.ndjson" x 3
       spread 5m
@@ -374,6 +374,69 @@ scenario spread_from<seed=1> {
 // VN20：旧的按比例注入语法在解析期就被拒绝
 // ---------------------------------------------------------------------------
 
+/// 新关键字 `inject { … }`（与 `background` 成对）正常解析。
+#[test]
+fn test_inject_block_keyword_is_accepted() {
+    let input = r#"
+#[duration=10m]
+scenario inject_keyword<seed=1> {
+  background { stream auth_events gen 100/s }
+  inject {
+    hit<sip: 3> for rule_a auth_events {
+      use(action="failed") x 2
+    }
+  }
+}
+"#;
+
+    let wfg = parse_wfg(input).expect("`inject` 块应被接受");
+    let cases = &wfg
+        .syntax
+        .as_ref()
+        .and_then(|syntax| syntax.injection.as_ref())
+        .expect("injection block")
+        .cases;
+    assert_eq!(cases.len(), 1);
+}
+
+/// VN20：旧的块关键字 `traffic` 已改名为 `background`，必须报错并指出改写方向。
+#[test]
+fn test_legacy_traffic_keyword_is_rejected_with_vn20() {
+    let input = r#"
+#[duration=10m]
+scenario legacy_traffic<seed=1> {
+  traffic { stream auth_events gen 100/s }
+}
+"#;
+
+    let err = parse_wfg(input).unwrap_err().to_string();
+    assert!(err.contains("VN20"), "unexpected parse error: {err}");
+    assert!(
+        err.contains("`background`"),
+        "错误信息应指明新关键字: {err}"
+    );
+}
+
+/// VN20：旧的块关键字 `injection` 已改名为 `inject`，必须报错并指出改写方向。
+#[test]
+fn test_legacy_injection_keyword_is_rejected_with_vn20() {
+    let input = r#"
+#[duration=10m]
+scenario legacy_keyword<seed=1> {
+  background { stream auth_events gen 100/s }
+  injection {
+    hit<sip: 3> for rule_a auth_events {
+      use(action="failed") x 2
+    }
+  }
+}
+"#;
+
+    let err = parse_wfg(input).unwrap_err().to_string();
+    assert!(err.contains("VN20"), "unexpected parse error: {err}");
+    assert!(err.contains("`inject`"), "错误信息应指明新关键字: {err}");
+}
+
 /// VN20：`hit<20%> ... with(N)` 已移除，必须报错并给出改写方向。
 #[test]
 fn test_legacy_percent_form_is_rejected_with_vn20() {
@@ -381,7 +444,7 @@ fn test_legacy_percent_form_is_rejected_with_vn20() {
 #[duration=10m]
 scenario legacy_percent<seed=1> {
   background { stream auth_events gen 100/s }
-  injection {
+  inject {
     hit<20%> auth_events {
       user seq {
         use(login="failed") with(3)
@@ -408,7 +471,7 @@ fn test_legacy_percent_form_is_rejected_for_all_modes() {
 #[duration=10m]
 scenario legacy_{mode}<seed=1> {{
   background {{ stream auth_events gen 100/s }}
-  injection {{
+  inject {{
     {mode}<20%> auth_events {{ user seq {{ use(login="failed") with(3) }} }}
   }}
 }}

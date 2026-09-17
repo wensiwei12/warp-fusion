@@ -117,10 +117,10 @@ pub(crate) fn field_ref_field_name(fr: &FieldRef) -> &str {
 pub(super) fn extract_syntax_case_overrides(case: &InjectCase) -> WfgenResult<InjectOverrides> {
     let mut use_steps = Vec::with_capacity(case.groups.len());
     for group in &case.groups {
-        use_steps.push(InjectUseStepOverrides {
-            count: group.count,
-            predicates: source_to_predicates(&group.source)?,
-        });
+        use_steps.push(InjectUseStepOverrides::cycled(
+            group.count,
+            source_to_records(&group.source)?,
+        ));
     }
     Ok(InjectOverrides {
         entity_field: case.entity_field.clone(),
@@ -130,27 +130,69 @@ pub(super) fn extract_syntax_case_overrides(case: &InjectCase) -> WfgenResult<In
     })
 }
 
-/// 事件组的值来源 → 字段覆盖表。
+/// 事件组的值来源 → 记录列表（一条记录 = 一组字段值）。
 ///
-/// `use from "file"` 必须已由 loader 解析成 [`ValueSource::Json`]；残留的
-/// `File` 会**报错**而不是静默生成空字段。
-fn source_to_predicates(source: &ValueSource) -> WfgenResult<HashMap<String, serde_json::Value>> {
-    match source {
-        ValueSource::Predicates(predicates) => Ok(predicates
-            .iter()
-            .filter_map(|p| attr_value_to_json(&p.value).map(|v| (p.field.clone(), v)))
-            .collect()),
-        ValueSource::Json(json) => Ok(crate::wfg_ast::json_top_level_entries(json)
-            .unwrap_or_default()
-            .into_iter()
-            .collect()),
-        ValueSource::File(path) => error::fail(
+/// `use from "file"` 必须已由 `loader::resolve_inject_files` 解析成
+/// [`ValueSource::Json`]（`gen` / `lint` / `bench` / `send` 都会走
+/// `loader::load_from_uses`）；残留的 `File` 会**报错**而不是静默生成空字段。
+fn source_to_records(source: &ValueSource) -> WfgenResult<Vec<HashMap<String, serde_json::Value>>> {
+    let records = match source {
+        ValueSource::Predicates(predicates) => vec![
+            predicates
+                .iter()
+                .filter_map(|p| attr_value_to_json(&p.value).map(|v| (p.field.clone(), v)))
+                .collect(),
+        ],
+        ValueSource::Json(json) => json_records(json)?,
+        ValueSource::File(path) => {
+            return error::fail(
+                WfgenReason::Validation,
+                format!(
+                    "use from `{path}` 尚未解析为内联 JSON；请通过 CLI（wfgen gen / lint）加载场景，或先调用 loader::resolve_inject_files 做路径解析"
+                ),
+            );
+        }
+    };
+
+    if records.is_empty() {
+        return error::fail(
             WfgenReason::Validation,
-            format!(
-                "use from `{path}` 尚未解析为内联 JSON；请通过 CLI（wfgen gen / lint）加载场景，或先调用 loader::resolve_inject_files 做路径解析"
-            ),
+            "use 的值来源没有任何记录（数组 / NDJSON 文件为空？）",
+        );
+    }
+    Ok(records)
+}
+
+/// 已解析的 JSON 值 → 记录列表：object 一条，object 数组多条。
+fn json_records(json: &serde_json::Value) -> WfgenResult<Vec<HashMap<String, serde_json::Value>>> {
+    match json {
+        serde_json::Value::Object(_) => Ok(vec![json_object_to_map(json)]),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .map(|item| {
+                if item.is_object() {
+                    Ok(json_object_to_map(item))
+                } else {
+                    error::fail(
+                        WfgenReason::Validation,
+                        "use 的记录数组元素必须是 JSON object".to_string(),
+                    )
+                }
+            })
+            .collect(),
+        _ => error::fail(
+            WfgenReason::Validation,
+            "use 的记录必须是 JSON object 或 object 数组".to_string(),
         ),
     }
+}
+
+/// 一条记录：顶层键展开为字段（`_` 前缀的内部键忽略）。
+fn json_object_to_map(json: &serde_json::Value) -> HashMap<String, serde_json::Value> {
+    crate::wfg_ast::json_top_level_entries(json)
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
 }
 
 fn attr_value_to_json(value: &crate::wfg_ast::AttrValue) -> Option<serde_json::Value> {
@@ -246,7 +288,7 @@ mod tests {
 #[duration=1s]
 scenario s<seed=1> {
   background { stream sdm_event gen 100/s }
-  injection {
+  inject {
     hit<sip: 5> for sdm_rule sdm_event {
       use({
         "tenant_id": "tenant02",
@@ -267,21 +309,21 @@ scenario s<seed=1> {
         let step = &ov.use_steps[0];
         assert_eq!(step.count, 2);
         assert_eq!(
-            step.predicates.get("tenant_id"),
+            step.records[0].get("tenant_id"),
             Some(&serde_json::json!("tenant02"))
         );
         assert_eq!(
-            step.predicates
+            step.records[0]
                 .get("source_finding_obj")
                 .and_then(|v| v.pointer("/rule/label")),
             Some(&serde_json::json!("账号攻击"))
         );
         assert_eq!(
-            step.predicates.get("tags"),
+            step.records[0].get("tags"),
             Some(&serde_json::json!(["a", "b"]))
         );
         assert!(
-            !step.predicates.contains_key("_stream"),
+            !step.records[0].contains_key("_stream"),
             "`_` 前缀的内部字段必须被忽略"
         );
     }
@@ -294,7 +336,7 @@ scenario s<seed=1> {
 #[duration=1s]
 scenario s<seed=1> {
   background { stream sdm_event gen 100/s }
-  injection {
+  inject {
     hit<sip: 2> for sdm_rule sdm_event { use(tenant_id="t", n=3) x 1 }
   }
 }
@@ -305,9 +347,9 @@ scenario s<seed=1> {
         assert_eq!(ov.entity_count, Some(2));
         assert_eq!(step.count, 1);
         assert_eq!(
-            step.predicates.get("tenant_id"),
+            step.records[0].get("tenant_id"),
             Some(&serde_json::json!("t"))
         );
-        assert_eq!(step.predicates.get("n"), Some(&serde_json::json!(3.0)));
+        assert_eq!(step.records[0].get("n"), Some(&serde_json::json!(3.0)));
     }
 }

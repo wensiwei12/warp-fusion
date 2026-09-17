@@ -107,7 +107,7 @@ pub async fn run(args: Args) -> WfgenResult<()> {
         WfgenReason::Io,
         format!("reading .wfg file: {}", scenario.display()),
     )?;
-    let wfg = parse_wfg(&wfg_content)?;
+    let mut wfg = parse_wfg(&wfg_content)?;
     let output_case = scenario
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -121,7 +121,8 @@ pub async fn run(args: Args) -> WfgenResult<()> {
     // only skips oracle / expected output.
     let skip_wfl = no_wfl;
 
-    let (mut schemas, mut wfl_files) = load_from_uses(&wfg, &scenario, &HashMap::new(), skip_wfl)?;
+    let (mut schemas, mut wfl_files) =
+        load_from_uses(&mut wfg, &scenario, &HashMap::new(), skip_wfl)?;
     schemas.extend(load_ws_files(&ws)?);
     if !skip_wfl {
         wfl_files.extend(load_wfl_files(&wfl)?);

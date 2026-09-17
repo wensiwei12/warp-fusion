@@ -7,7 +7,8 @@ use crate::error::{self, WfgenReason, WfgenResult};
 pub(crate) struct UseStepPlan {
     pub(crate) rule_step_idx: usize,
     pub(crate) count: u64,
-    pub(crate) predicates: HashMap<String, serde_json::Value>,
+    /// 记录列表：单记录形态长度 1；`use from` 的数组多条 → 按事件序号循环取用。
+    pub(crate) records: Vec<HashMap<String, serde_json::Value>>,
 }
 
 /// Compute the time window bounds for cluster generation.
@@ -114,7 +115,7 @@ pub(crate) fn plan_use_steps(
         planned.push(UseStepPlan {
             rule_step_idx: step_idx,
             count: use_step.count,
-            predicates: use_step.predicates.clone(),
+            records: use_step.records.clone(),
         });
     }
 
@@ -126,21 +127,32 @@ fn validate_use_step_predicates(
     use_step: &InjectUseStepOverrides,
     step: &StepInfo,
 ) -> WfgenResult<()> {
-    for (field, expected) in &step.filter_overrides {
-        let Some(actual) = use_step.predicates.get(field) else {
-            continue;
-        };
-        if actual != expected {
-            return error::fail(
-                WfgenReason::Validation,
-                format!(
-                    "injection use step {} field '{}' conflicts with rule step filter: use has {}, rule requires {}",
-                    step_idx + 1,
-                    field,
-                    actual,
-                    expected
-                ),
-            );
+    // 多记录形态（`use from` 数组）逐条检查：任何一条与规则 filter 冲突都要报，
+    // 否则那条记录生成的事件根本不会进入规则窗口（静默少报警）。
+    let multi = use_step.records.len() > 1;
+    for (record_idx, record) in use_step.records.iter().enumerate() {
+        for (field, expected) in &step.filter_overrides {
+            let Some(actual) = record.get(field) else {
+                continue;
+            };
+            if actual != expected {
+                let record_note = if multi {
+                    format!(" (记录 #{}/{})", record_idx + 1, use_step.records.len())
+                } else {
+                    String::new()
+                };
+                return error::fail(
+                    WfgenReason::Validation,
+                    format!(
+                        "injection use step {} field '{}' conflicts with rule step filter: use has {}, rule requires {}{}",
+                        step_idx + 1,
+                        field,
+                        actual,
+                        expected,
+                        record_note
+                    ),
+                );
+            }
         }
     }
     Ok(())

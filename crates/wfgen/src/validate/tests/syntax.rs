@@ -12,7 +12,7 @@ scenario brute_force_detect<seed=42> {
     background {
         stream auth_events gen 100/s
     }
-    injection {
+    inject {
         hit<user: 500> for brute_force_then_scan auth_events {
             use(login="failed") x 3
         }
@@ -50,7 +50,7 @@ fn test_syntax_legacy_percent_is_rejected_at_parse_time() {
 #[duration=10m]
 scenario s<seed=1> {
     background { stream auth_events gen 100/s }
-    injection {
+    inject {
         hit<30%> for rule_a auth_events {
             user seq {
                 use(login="failed") with(3)
@@ -87,7 +87,7 @@ fn test_syntax_use_step_duplicate_field_rejected() {
 #[duration=10m]
 scenario s<seed=1> {
     background { stream auth_events gen 100/s }
-    injection {
+    inject {
         hit<user: 50> for rule_a auth_events {
             use(login="failed", login="success") x 1
         }
@@ -110,7 +110,7 @@ fn test_syntax_injection_stream_must_be_declared_in_background() {
 #[duration=10m]
 scenario s<seed=1> {
     background { stream auth_events gen 100/s }
-    injection {
+    inject {
         hit<user: 50> for rule_a typo_events {
             use(login="failed") x 1
         }
@@ -142,7 +142,7 @@ fn test_syntax_injection_fields_must_exist_in_schema() {
 #[duration=10m]
 scenario s<seed=1> {
     background { stream auth_events gen 100/s }
-    injection {
+    inject {
         hit<missing_user: 50> for rule_a auth_events {
             use(missing_login="failed") x 1
         }
@@ -165,7 +165,7 @@ fn test_syntax_entity_field_must_not_be_redeclared_in_use() {
 #[duration=10m]
 scenario s<seed=1> {
     background { stream auth_events gen 100/s }
-    injection {
+    inject {
         hit<user: 50> for rule_a auth_events {
             use(user="alice", login="failed") x 1
         }
@@ -192,7 +192,7 @@ fn test_syntax_injection_multi_rule_cases_are_allowed() {
 #[duration=10m]
 scenario s<seed=1> {
     background { stream auth_events gen 100/s }
-    injection {
+    inject {
         hit<user: 50> for rule_a auth_events {
             use(login="failed") x 1
         }
@@ -223,7 +223,7 @@ fn test_syntax_injection_target_rule_must_exist() {
 #[duration=10m]
 scenario s<seed=1> {
     background { stream auth_events gen 100/s }
-    injection {
+    inject {
         hit<user: 50> for missing_rule auth_events {
             use(login="failed") x 1
         }
@@ -252,7 +252,7 @@ fn test_syntax_spread_over_duration_rejected() {
 #[duration=10m]
 scenario spread_case<seed=1> {{
     background {{ stream auth_events gen 100/s }}
-    injection {{
+    inject {{
         hit<user: 5> for rule_a auth_events {{
             use(login="failed") x 1
             spread {spread}
@@ -283,7 +283,7 @@ fn test_syntax_explicit_counts_valid() {
 #[duration=10m]
 scenario explicit_ok<seed=1> {
     background { stream auth_events gen 100/s }
-    injection {
+    inject {
         hit<500> for brute_force_then_scan auth_events {
             use(login="failed") x 12
         }
@@ -326,7 +326,7 @@ fn test_syntax_explicit_zero_counts_rejected() {
 #[duration=10m]
 scenario zero_count<seed=1> {{
     background {{ stream auth_events gen 100/s }}
-    injection {{ {snippet} }}
+    inject {{ {snippet} }}
 }}
 "#
         );
@@ -358,7 +358,7 @@ fn test_syntax_empty_groups_rejected() {
 #[duration=10m]
 scenario empty_groups<seed=1> {
     background { stream auth_events gen 100/s }
-    injection {
+    inject {
         hit<5> for rule_a auth_events { }
     }
 }
@@ -382,7 +382,7 @@ fn test_syntax_target_rule_check_skipped_when_skip_wfl() {
 #[duration=10m]
 scenario s<seed=1> {
     background { stream auth_events gen 100/s }
-    injection {
+    inject {
         hit<user: 5> for missing_rule auth_events {
             use(login="failed") x 1
         }
@@ -408,4 +408,113 @@ scenario s<seed=1> {
         "VN14 must be skipped under skip_wfl: {:?}",
         errs_skipped
     );
+}
+
+// ---------------------------------------------------------------------------
+// `use from` 的记录形态（loader 解析后与 `use({...})` 同构）
+// ---------------------------------------------------------------------------
+
+/// 造一个注入用例，并把它的值来源替换成给定的 JSON（模拟 `use from` 解析结果）。
+fn wfg_with_inject_json(json: serde_json::Value) -> WfgFile {
+    let input = r#"
+#[duration=10m]
+scenario s<seed=1> {
+    background { stream auth_events gen 100/s }
+    inject {
+        hit<login: 2> for rule_a auth_events {
+            use(login="failed") x 3
+        }
+    }
+}
+"#;
+    let mut wfg = parse_wfg(input).unwrap();
+    let group = &mut wfg
+        .syntax
+        .as_mut()
+        .and_then(|syntax| syntax.injection.as_mut())
+        .expect("injection block")
+        .cases[0]
+        .groups[0];
+    group.source = ValueSource::Json(json);
+    wfg
+}
+
+/// 数组（多记录）不再触发 VN17——它是 `use from` 解析后的正常形态。
+#[test]
+fn test_use_records_array_is_accepted() {
+    let wfg = wfg_with_inject_json(serde_json::json!([
+        {"action": "failed"},
+        {"action": "failed"}
+    ]));
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![("action", BaseType::Chars)],
+    )];
+    let errors = validate_wfg(&wfg, &schemas, &[], true);
+    assert!(
+        !errors.iter().any(|e| e.code.starts_with("VN")),
+        "记录数组应被接受: {:?}",
+        errors
+    );
+}
+
+/// 多记录里重复出现同一字段是正常的（每条记录都有实体键），不得报 VN9。
+#[test]
+fn test_use_records_repeating_a_field_is_not_vn9() {
+    let wfg = wfg_with_inject_json(serde_json::json!([
+        {"action": "a", "sip": "10.0.0.1"},
+        {"action": "a", "sip": "10.0.0.2"},
+        {"action": "a", "sip": "10.0.0.3"}
+    ]));
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![("action", BaseType::Chars), ("sip", BaseType::Ip)],
+    )];
+    let errors = validate_wfg(&wfg, &schemas, &[], true);
+    assert!(
+        !errors.iter().any(|e| e.code == "VN9"),
+        "记录之间重复字段不是 VN9: {:?}",
+        errors
+    );
+}
+
+/// 某条记录出现 schema 之外的字段 → VN11（每条记录都要各自检查）。
+#[test]
+fn test_use_records_field_outside_schema_is_vn11() {
+    let wfg = wfg_with_inject_json(serde_json::json!([
+        {"action": "failed"},
+        {"action": "failed", "nope": 1}
+    ]));
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![("action", BaseType::Chars)],
+    )];
+    let errors = validate_wfg(&wfg, &schemas, &[], true);
+    assert!(
+        errors.iter().any(|e| e.code == "VN11"),
+        "记录里 schema 之外的字段应报 VN11: {:?}",
+        errors
+    );
+}
+
+/// 非 object 记录 / 空数组 / 标量顶层 → VN17。
+#[test]
+fn test_use_records_shape_errors_are_vn17() {
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![("action", BaseType::Chars)],
+    )];
+    for json in [
+        serde_json::json!([{"action": "failed"}, "oops"]),
+        serde_json::json!([]),
+        serde_json::json!(42),
+    ] {
+        let wfg = wfg_with_inject_json(json.clone());
+        let errors = validate_wfg(&wfg, &schemas, &[], true);
+        assert!(
+            errors.iter().any(|e| e.code == "VN17"),
+            "形态非法应报 VN17（json={json}）: {:?}",
+            errors
+        );
+    }
 }

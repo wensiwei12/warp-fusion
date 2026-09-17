@@ -7,7 +7,7 @@ scenario data_exfil_detect<seed=42> {
     stream conn_events gen 100/s
   }
 
-  injection {
+  inject {
     // 高流量外泄：4次30MB = 120MB > 100MB阈值，触发on event
     hit<5625> for data_exfil conn_events {
       use(action="send", bytes=30000000) x 4
