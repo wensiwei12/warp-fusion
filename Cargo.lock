@@ -5502,8 +5502,8 @@ dependencies = [
 
 [[package]]
 name = "wf-cep"
-version = "2.0.24"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.24#1cf300eab29b7cb7d3bb9d59322f817540225c88"
+version = "2.1.0"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.1.0#d9e45254e524fbf205b9b80e957a1c85afd1e4d3"
 dependencies = [
  "arrow",
  "chrono",
@@ -5522,8 +5522,8 @@ dependencies = [
 
 [[package]]
 name = "wf-config"
-version = "2.0.24"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.24#1cf300eab29b7cb7d3bb9d59322f817540225c88"
+version = "2.1.0"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.1.0#d9e45254e524fbf205b9b80e957a1c85afd1e4d3"
 dependencies = [
  "chrono",
  "glob",
@@ -5550,8 +5550,8 @@ dependencies = [
 
 [[package]]
 name = "wf-data"
-version = "2.0.24"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.24#1cf300eab29b7cb7d3bb9d59322f817540225c88"
+version = "2.1.0"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.1.0#d9e45254e524fbf205b9b80e957a1c85afd1e4d3"
 dependencies = [
  "chrono",
  "serde_json",
@@ -5559,8 +5559,8 @@ dependencies = [
 
 [[package]]
 name = "wf-engine"
-version = "2.0.24"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.24#1cf300eab29b7cb7d3bb9d59322f817540225c88"
+version = "2.1.0"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.1.0#d9e45254e524fbf205b9b80e957a1c85afd1e4d3"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5593,8 +5593,8 @@ dependencies = [
 
 [[package]]
 name = "wf-lang"
-version = "2.0.24"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.24#1cf300eab29b7cb7d3bb9d59322f817540225c88"
+version = "2.1.0"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.1.0#d9e45254e524fbf205b9b80e957a1c85afd1e4d3"
 dependencies = [
  "jumo-derive",
  "orion-error",
@@ -5619,8 +5619,8 @@ dependencies = [
 
 [[package]]
 name = "wf-runtime"
-version = "2.0.24"
-source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.0.24#1cf300eab29b7cb7d3bb9d59322f817540225c88"
+version = "2.1.0"
+source = "git+https://github.com/wp-labs/wp-reactor.git?tag=v2.1.0#d9e45254e524fbf205b9b80e957a1c85afd1e4d3"
 dependencies = [
  "arrow",
  "async-broadcast",
@@ -6267,9 +6267,9 @@ dependencies = [
 
 [[package]]
 name = "wp-knowledge"
-version = "0.16.3"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b8024b0362695ad53f6b323796d69b9116eb4ab661661fae2ca5330202a9134"
+checksum = "10ec71abc9ed0fbcf049865d372c51c7af2716c42f23c96808faeec93963f660"
 dependencies = [
  "anyhow",
  "async-trait",
