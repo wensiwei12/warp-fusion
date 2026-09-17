@@ -78,6 +78,10 @@ pub enum AttrValue {
     Duration(Duration),
     String(String),
     Bool(bool),
+    /// 结构化值（object / array / null）——`use(field={"a": {"b": 1}})`、
+    /// `use(tags=["x"])`、`use(v=null)`。直接持 `serde_json::Value`，避免再
+    /// 造一套嵌套枚举，也天然复用 serde_json 的整数/转义语义。
+    Json(serde_json::Value),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -181,10 +185,28 @@ pub enum SeqStep {
         predicates: Vec<FieldPredicate>,
         count: u64,
     },
+    /// `use({...}) with(N)` —— 整份 JSON 内联（顶层对象即整组字段）。
+    UseJson { json: serde_json::Value, count: u64 },
     Not {
         predicates: Vec<FieldPredicate>,
         within: Duration,
     },
+}
+
+/// 把整份 JSON 对象的顶层键展开为 `(字段, 值)` 列表。
+///
+/// - 顶层必须是 object，否则返回 `None`（由调用方报错）；
+/// - `_` 前缀的键视为 WFGen 内部字段（`_stream` / `_window` / `_timestamp` 等），
+///   直接忽略——用户可以把 WParse 原始输出整份粘进来。
+pub fn json_top_level_entries(
+    json: &serde_json::Value,
+) -> Option<Vec<(String, serde_json::Value)>> {
+    json.as_object().map(|map| {
+        map.iter()
+            .filter(|(k, _)| !k.starts_with('_'))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]

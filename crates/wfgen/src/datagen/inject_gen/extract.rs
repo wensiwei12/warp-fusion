@@ -8,7 +8,7 @@ use super::structures::{
     AliasMap, InjectOverrides, InjectUseStepOverrides, RuleStructure, StepInfo,
 };
 use crate::error::{self, WfgenReason, WfgenResult};
-use crate::wfg_ast::{InjectLine, ParamValue, SeqStep, SyntaxInjectCase};
+use crate::wfg_ast::{FieldPredicate, InjectLine, ParamValue, SeqStep, SyntaxInjectCase};
 
 pub(super) fn extract_rule_structure(
     rule_plan: &RulePlan,
@@ -167,11 +167,29 @@ pub(super) fn extract_syntax_case_overrides(case: &SyntaxInjectCase) -> InjectOv
     };
 
     for step in &case.seq.steps {
-        let SeqStep::Use {
-            predicates, count, ..
-        } = step
-        else {
-            continue;
+        let (predicates, count) = match step {
+            SeqStep::Use { predicates, count } => (predicates.as_slice(), *count),
+            // `use({...})`：顶层键即字段覆盖；`_` 前缀的内部字段已由
+            // [`crate::wfg_ast::json_top_level_entries`] 过滤掉。
+            SeqStep::UseJson { json, count } => {
+                let entries = crate::wfg_ast::json_top_level_entries(json).unwrap_or_default();
+                let predicates: Vec<FieldPredicate> = entries
+                    .into_iter()
+                    .map(|(field, value)| FieldPredicate {
+                        field,
+                        value: crate::wfg_ast::AttrValue::Json(value),
+                    })
+                    .collect();
+                overrides.use_steps.push(InjectUseStepOverrides {
+                    count: *count,
+                    predicates: predicates
+                        .iter()
+                        .filter_map(|p| attr_value_to_json(&p.value).map(|v| (p.field.clone(), v)))
+                        .collect(),
+                });
+                continue;
+            }
+            SeqStep::Not { .. } => continue,
         };
 
         let mut pred_map = HashMap::new();
@@ -181,7 +199,7 @@ pub(super) fn extract_syntax_case_overrides(case: &SyntaxInjectCase) -> InjectOv
             }
         }
         overrides.use_steps.push(InjectUseStepOverrides {
-            count: *count,
+            count,
             predicates: pred_map,
         });
     }
@@ -191,6 +209,7 @@ pub(super) fn extract_syntax_case_overrides(case: &SyntaxInjectCase) -> InjectOv
 
 fn attr_value_to_json(value: &crate::wfg_ast::AttrValue) -> Option<serde_json::Value> {
     match value {
+        crate::wfg_ast::AttrValue::Json(v) => Some(v.clone()),
         crate::wfg_ast::AttrValue::String(s) => Some(serde_json::Value::String(s.clone())),
         crate::wfg_ast::AttrValue::Number(n) => Some(serde_json::json!(*n)),
         crate::wfg_ast::AttrValue::Bool(b) => Some(serde_json::Value::Bool(*b)),
@@ -256,5 +275,95 @@ fn expr_to_json_value(expr: &Expr) -> Option<serde_json::Value> {
         Expr::Number(n) => Some(serde_json::json!(*n)),
         Expr::Bool(b) => Some(serde_json::Value::Bool(*b)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn case_of(input: &str) -> SyntaxInjectCase {
+        let wfg = crate::wfg_parser::parse_wfg(input).expect("parse");
+        wfg.syntax
+            .as_ref()
+            .and_then(|s| s.injection.as_ref())
+            .map(|inj| inj.cases[0].clone())
+            .expect("injection case")
+    }
+
+    /// `use({...})` 的顶层键必须原样进入 predicates，且值保持嵌套结构；
+    /// `_` 前缀的内部字段被忽略。
+    #[test]
+    fn use_whole_json_expands_to_predicates() {
+        let case = case_of(
+            r#"
+#[duration=1s]
+scenario s<seed=1> {
+  traffic { stream sdm_event gen 100/s }
+  injection {
+    hit<100%> sdm_event {
+      sip seq {
+        use({
+          "tenant_id": "tenant02",
+          "source_finding_obj": { "title": "t", "rule": { "label": "账号攻击" } },
+          "tags": ["a", "b"],
+          "_stream": "ignored"
+        }) with(2)
+      }
+    }
+  }
+}
+"#,
+        );
+
+        let ov = extract_syntax_case_overrides(&case);
+        assert_eq!(ov.entity_field.as_deref(), Some("sip"));
+        assert_eq!(ov.use_steps.len(), 1);
+        let step = &ov.use_steps[0];
+        assert_eq!(step.count, 2);
+        assert_eq!(
+            step.predicates.get("tenant_id"),
+            Some(&serde_json::json!("tenant02"))
+        );
+        assert_eq!(
+            step.predicates
+                .get("source_finding_obj")
+                .and_then(|v| v.pointer("/rule/label")),
+            Some(&serde_json::json!("账号攻击"))
+        );
+        assert_eq!(
+            step.predicates.get("tags"),
+            Some(&serde_json::json!(["a", "b"]))
+        );
+        assert!(
+            !step.predicates.contains_key("_stream"),
+            "`_` 前缀的内部字段必须被忽略"
+        );
+    }
+
+    /// 旧的按字段覆盖形态保持不变。
+    #[test]
+    fn use_predicates_unchanged() {
+        let case = case_of(
+            r#"
+#[duration=1s]
+scenario s<seed=1> {
+  traffic { stream sdm_event gen 100/s }
+  injection {
+    hit<100%> sdm_event {
+      sip seq { use(tenant_id="t", n=3) with(1) }
+    }
+  }
+}
+"#,
+        );
+        let ov = extract_syntax_case_overrides(&case);
+        let step = &ov.use_steps[0];
+        assert_eq!(step.count, 1);
+        assert_eq!(
+            step.predicates.get("tenant_id"),
+            Some(&serde_json::json!("t"))
+        );
+        assert_eq!(step.predicates.get("n"), Some(&serde_json::json!(3.0)));
     }
 }

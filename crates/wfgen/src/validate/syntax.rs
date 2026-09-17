@@ -88,10 +88,34 @@ pub(super) fn validate_syntax(
             }
 
             for (step_idx, step) in case.seq.steps.iter().enumerate() {
+                // `use({...})` 的顶层键就是字段覆盖：物化成 predicates 后走同一套
+                // 检查（重名 / 与 seq 实体键重复 / 字段不在 schema）。
+                let json_predicates: Vec<crate::wfg_ast::FieldPredicate>;
                 let (step_kind, predicates, count) = match step {
                     crate::wfg_ast::SeqStep::Use {
                         predicates, count, ..
-                    } => ("use(...)", predicates, Some(*count)),
+                    } => ("use(...)", predicates.as_slice(), Some(*count)),
+                    crate::wfg_ast::SeqStep::UseJson { json, count } => {
+                        let entries =
+                            crate::wfg_ast::json_top_level_entries(json).unwrap_or_else(|| {
+                                errors.push(ValidationError {
+                                    code: "VN17",
+                                    message: format!(
+                                        "injection case '{}' step {} use({{...}}) 的顶层必须是 JSON object",
+                                        case.stream, step_idx
+                                    ),
+                                });
+                                Vec::new()
+                            });
+                        json_predicates = entries
+                            .into_iter()
+                            .map(|(field, value)| crate::wfg_ast::FieldPredicate {
+                                field,
+                                value: crate::wfg_ast::AttrValue::Json(value),
+                            })
+                            .collect();
+                        ("use({...})", json_predicates.as_slice(), Some(*count))
+                    }
                     crate::wfg_ast::SeqStep::Not { predicates, .. } => {
                         errors.push(ValidationError {
                             code: "VN16",
@@ -100,7 +124,7 @@ pub(super) fn validate_syntax(
                                 case.stream, step_idx
                             ),
                         });
-                        ("not(...)", predicates, None)
+                        ("not(...)", predicates.as_slice(), None)
                     }
                 };
                 if count == Some(0) {

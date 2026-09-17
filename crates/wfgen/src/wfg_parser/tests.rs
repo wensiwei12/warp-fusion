@@ -209,3 +209,165 @@ scenario legacy seed 1 {
 "#;
     assert!(parse_wfg(input).is_err());
 }
+
+// ---------------------------------------------------------------------------
+// 结构化值 / 整份 JSON 内联（use({...})）与 use(...) 内空白
+// ---------------------------------------------------------------------------
+
+/// `use({...})`：整份 JSON 内联，顶层对象即整组字段；值可多层嵌套。
+#[test]
+fn test_parse_use_whole_json_inline() {
+    let input = r#"
+#[duration=1s]
+scenario obj_inline<seed=1> {
+  traffic { stream sdm_event gen 100/s }
+  injection {
+    hit<100%> sdm_event {
+      sip seq {
+        use({
+          "tenant_id": "tenant02",
+          "source_finding_obj": {
+            "title": "自定义威胁情报",
+            "rule": { "label": "账号攻击" }
+          },
+          "tags": ["a", "b"],
+          "unmapped": null,
+          "_stream": "ignored"
+        }) with(2)
+      }
+    }
+  }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let case = &wfg
+        .syntax
+        .as_ref()
+        .unwrap()
+        .injection
+        .as_ref()
+        .unwrap()
+        .cases[0];
+    let SeqStep::UseJson { json, count } = &case.seq.steps[0] else {
+        panic!("应为 UseJson，实际 {:?}", case.seq.steps[0]);
+    };
+    assert_eq!(*count, 2);
+
+    // `_` 前缀的内部字段被忽略
+    let entries = json_top_level_entries(json).expect("顶层应为 object");
+    let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys.len(), 4, "实际: {keys:?}");
+    assert!(!keys.contains(&"_stream"));
+
+    // 多层嵌套与数组/ null 原样保留
+    let by_key = |k: &str| entries.iter().find(|(n, _)| n == k).map(|(_, v)| v);
+    assert_eq!(
+        by_key("source_finding_obj").and_then(|v| v.pointer("/rule/label")),
+        Some(&serde_json::json!("账号攻击"))
+    );
+    assert_eq!(by_key("tags"), Some(&serde_json::json!(["a", "b"])));
+    assert_eq!(by_key("unmapped"), Some(&serde_json::Value::Null));
+}
+
+/// `use(` 之后允许换行与缩进（整份 JSON 内联必然是多行排版）。
+#[test]
+fn test_parse_use_allows_newline_after_paren() {
+    let input = r#"
+#[duration=1s]
+scenario multi_line<seed=1> {
+  traffic { stream sdm_event gen 100/s }
+  injection {
+    hit<100%> sdm_event {
+      sip seq {
+        use(
+          tenant_id="tenant02",
+          event_id="evt-1"
+        ) with(1)
+      }
+    }
+  }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let case = &wfg
+        .syntax
+        .as_ref()
+        .unwrap()
+        .injection
+        .as_ref()
+        .unwrap()
+        .cases[0];
+    let SeqStep::Use { predicates, count } = &case.seq.steps[0] else {
+        panic!("应为 Use");
+    };
+    assert_eq!(*count, 1);
+    assert_eq!(predicates.len(), 2);
+}
+
+/// 字段值为 object / array / null 时走 `AttrValue::Json`（不再被当成字符串）。
+#[test]
+fn test_parse_predicate_structured_values() {
+    let input = r#"
+#[duration=1s]
+scenario structured<seed=1> {
+  traffic { stream sdm_event gen 100/s }
+  injection {
+    hit<100%> sdm_event {
+      sip seq {
+        use(
+          obj={"k": {"n": 1}},
+          arr=[1, 2, 3],
+          none=null
+        ) with(1)
+      }
+    }
+  }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let case = &wfg
+        .syntax
+        .as_ref()
+        .unwrap()
+        .injection
+        .as_ref()
+        .unwrap()
+        .cases[0];
+    let SeqStep::Use { predicates, .. } = &case.seq.steps[0] else {
+        panic!("应为 Use");
+    };
+    let value_of = |name: &str| {
+        predicates
+            .iter()
+            .find(|p| p.field == name)
+            .map(|p| &p.value)
+    };
+    assert_eq!(
+        value_of("obj"),
+        Some(&AttrValue::Json(serde_json::json!({"k": {"n": 1}})))
+    );
+    assert_eq!(
+        value_of("arr"),
+        Some(&AttrValue::Json(serde_json::json!([1, 2, 3])))
+    );
+    assert_eq!(
+        value_of("none"),
+        Some(&AttrValue::Json(serde_json::Value::Null))
+    );
+}
+
+/// 顶层不是 object 的 `use([...])` 必须被解析层拒绝（避免静默无字段）。
+#[test]
+fn test_reject_use_json_array_toplevel() {
+    let input = r#"
+#[duration=1s]
+scenario arr<seed=1> {
+  traffic { stream sdm_event gen 100/s }
+  injection {
+    hit<100%> sdm_event { sip seq { use([1, 2]) with(1) } }
+  }
+}
+"#;
+    // 数组不是合法 predicate 列表、也不是合法的内联 JSON 顶层 → 解析失败
+    assert!(parse_wfg(input).is_err());
+}

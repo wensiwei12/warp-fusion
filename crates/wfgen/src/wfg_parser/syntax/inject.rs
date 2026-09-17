@@ -162,7 +162,10 @@ fn parse_seq_step(input: &mut &str) -> ModalResult<SeqStep> {
 fn parse_use_step_after_keyword(input: &mut &str) -> ModalResult<SeqStep> {
     ws_skip(input)?;
     cut_err(literal("(")).parse_next(input)?;
-    let predicates = parse_predicates(input)?;
+    // `(` 之后允许换行/缩进——整份 JSON 内联时必然是多行排版。
+    ws_skip(input)?;
+    let payload = parse_use_payload(input)?;
+    ws_skip(input)?;
     cut_err(literal(")")).parse_next(input)?;
     ws_skip(input)?;
     cut_err(wf_lang::parse_utils::kw("with")).parse_next(input)?;
@@ -174,7 +177,24 @@ fn parse_use_step_after_keyword(input: &mut &str) -> ModalResult<SeqStep> {
     cut_err(literal(")")).parse_next(input)?;
     ws_skip(input)?;
     let _ = opt(literal(";")).parse_next(input)?;
-    Ok(SeqStep::Use { predicates, count })
+    Ok(match payload {
+        UsePayload::Predicates(predicates) => SeqStep::Use { predicates, count },
+        UsePayload::Json(json) => SeqStep::UseJson { json, count },
+    })
+}
+
+/// `use(...)` 的载荷：按字段覆盖，或整份 JSON 内联（`{` 开头）。
+enum UsePayload {
+    Predicates(Vec<FieldPredicate>),
+    Json(serde_json::Value),
+}
+
+fn parse_use_payload(input: &mut &str) -> ModalResult<UsePayload> {
+    if input.starts_with('{') {
+        let json = crate::wfg_parser::primitives::json_container(input)?;
+        return Ok(UsePayload::Json(json));
+    }
+    Ok(UsePayload::Predicates(parse_predicates(input)?))
 }
 
 fn parse_predicates(input: &mut &str) -> ModalResult<Vec<FieldPredicate>> {

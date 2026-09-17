@@ -48,3 +48,67 @@ pub fn percent(input: &mut &str) -> ModalResult<f64> {
     literal("%").parse_next(input)?;
     Ok(num)
 }
+
+// ---------------------------------------------------------------------------
+// 结构化 JSON 值：`{...}` / `[...]`
+// ---------------------------------------------------------------------------
+
+/// 消费一个**平衡**的 JSON 容器（`{...}` 或 `[...]`，尊重字符串与转义），
+/// 交给 `serde_json` 解析。
+///
+/// 用整段扫描而不是递归下降：容器内部是纯 JSON（不是 WFG 语法），逐字符记录
+/// 深度与字符串状态最简单，也避免为正则嵌套再写一套 CST。
+pub fn json_container(input: &mut &str) -> ModalResult<serde_json::Value> {
+    let s: &str = input;
+    let first = s.chars().next();
+    if !matches!(first, Some('{') | Some('[')) {
+        return Err(winnow::error::ErrMode::Backtrack(
+            winnow::error::ContextError::new(),
+        ));
+    }
+
+    let mut depth = 0_i32;
+    let mut in_str = false;
+    let mut escaped = false;
+    let mut end: Option<usize> = None;
+
+    for (idx, c) in s.char_indices() {
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            '{' | '[' => depth += 1,
+            '}' | ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(idx + c.len_utf8());
+                    break;
+                }
+                if depth < 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let Some(end) = end else {
+        return Err(winnow::error::ErrMode::Backtrack(
+            winnow::error::ContextError::new(),
+        ));
+    };
+
+    let text = &s[..end];
+    let value: serde_json::Value = serde_json::from_str(text)
+        .map_err(|_| winnow::error::ErrMode::Backtrack(winnow::error::ContextError::new()))?;
+    *input = &s[end..];
+    Ok(value)
+}
