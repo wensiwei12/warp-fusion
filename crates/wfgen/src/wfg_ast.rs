@@ -150,17 +150,92 @@ pub struct TimelineSegment {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct SyntaxInjectionBlock {
-    pub cases: Vec<SyntaxInjectCase>,
+    pub cases: Vec<InjectCase>,
 }
 
+/// 注入用例：旧语法（按比例）与新语法（显式数量）并存于同一 `inject` 块，
+/// 由 `mode <` 之后是否带 `%` 区分。旧形态会在迁移完成后删除（VN20）。
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub struct SyntaxInjectCase {
+pub enum InjectCase {
+    /// `hit<20%> [for RULE] STREAM { FIELD seq { ... } }` —— 待迁移
+    Legacy(LegacyInjectCase),
+    /// `hit<[FIELD:]N> for RULE STREAM { use ... x N }` —— 显式数量
+    Explicit(ExplicitInjectCase),
+}
+
+impl InjectCase {
+    pub fn mode(&self) -> InjectCaseMode {
+        match self {
+            Self::Legacy(c) => c.mode,
+            Self::Explicit(c) => c.mode,
+        }
+    }
+
+    pub fn stream(&self) -> &str {
+        match self {
+            Self::Legacy(c) => &c.stream,
+            Self::Explicit(c) => &c.stream,
+        }
+    }
+
+    /// 目标规则：新形态必填；旧形态可省（由 `expect` 反推）。
+    pub fn target_rule(&self) -> Option<&str> {
+        match self {
+            Self::Legacy(c) => c.target_rule.as_deref(),
+            Self::Explicit(c) => Some(c.target_rule.as_str()),
+        }
+    }
+}
+
+/// 旧语法用例：数量由「stream 配额 × 比例 ÷ 每实体条数」推出。
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct LegacyInjectCase {
     pub mode: InjectCaseMode,
     pub percent: f64,
     pub target_rule: Option<String>,
     pub stream: String,
     pub seq: SeqBlock,
+}
+
+/// 新语法用例：数量是写出来的。
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct ExplicitInjectCase {
+    pub mode: InjectCaseMode,
+    /// 实体个数。
+    pub entity_count: u64,
+    /// 实体标识字段；`None` = 从规则推断（match key / entity 表达式字段）。
+    pub entity_field: Option<String>,
+    /// 目标规则（必填）。
+    pub target_rule: String,
+    pub stream: String,
+    /// 按步骤顺序的事件组；每组给出「每实体几条」与「值从哪来」。
+    pub groups: Vec<UseGroup>,
+    /// 时间铺开窗口；`None` = 均匀铺满场景 duration。
+    pub spread: Option<Duration>,
+}
+
+/// 一个事件组（对应规则的一个步骤）。
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct UseGroup {
+    /// 每个实体在该步骤上的条数。
+    pub count: u64,
+    pub source: ValueSource,
+}
+
+/// 事件字段值的来源。
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum ValueSource {
+    /// `use(field=value, ...)`
+    Predicates(Vec<FieldPredicate>),
+    /// `use({...})` 整份 JSON 内联
+    Json(serde_json::Value),
+    /// `use from "path"` 整份 JSON 来自文件（相对 `.wfg` 所在目录）
+    File(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

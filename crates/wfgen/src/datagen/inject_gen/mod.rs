@@ -54,10 +54,8 @@ pub fn generate_inject_events(
             .unwrap_or_default();
 
         for case in &injection.cases {
-            let rule_plan = resolve_rule_plan(
-                case.target_rule.as_deref().unwrap_or(default_rule),
-                rule_plans,
-            )?;
+            let rule_plan =
+                resolve_rule_plan(case.target_rule().unwrap_or(default_rule), rule_plans)?;
             let alias_map = build_alias_map_for_syntax_case(case, &scenario.streams, rule_plan)?;
             let rule_struct = extract_rule_structure(rule_plan, &alias_map)?;
             let events = dispatch::generate_for_syntax_case(

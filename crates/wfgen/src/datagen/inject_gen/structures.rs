@@ -43,8 +43,11 @@ pub(super) struct AliasMap {
 
 /// Override parameters extracted from inject line params.
 pub(super) struct InjectOverrides {
-    /// Entity field named by new syntax `ENTITY seq { ... }`.
+    /// Entity field named by the injection case (new syntax: `hit<sip: 500>`
+    /// or inferred from the rule when omitted).
     pub(super) entity_field: Option<String>,
+    /// 显式实体个数（新语法）。`None` = 旧语法，由「配额 × 比例 ÷ 每实体条数」推出。
+    pub(super) entity_count: Option<u64>,
     /// Override the threshold (events per entity) for hit/near_miss clusters.
     pub(super) count_per_entity: Option<u64>,
     /// For legacy near_miss overrides: 0-indexed last completed step.

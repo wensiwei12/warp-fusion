@@ -7,8 +7,8 @@ use rand::rngs::StdRng;
 use wf_lang::WindowSchema;
 
 use super::helpers::{
-    compute_cluster_count_for_step_counts, compute_near_miss_counts, compute_window_bounds,
-    generate_cluster_events, generate_key_values,
+    compute_near_miss_counts, compute_window_bounds, generate_cluster_events, generate_key_values,
+    resolve_cluster_count,
 };
 use super::structures::{InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
@@ -42,7 +42,7 @@ pub(super) fn generate_near_miss_clusters(
     }
 
     let num_clusters =
-        compute_cluster_count_for_step_counts(percent, steps, &near_miss_counts, stream_totals);
+        resolve_cluster_count(overrides, percent, steps, &near_miss_counts, stream_totals);
 
     if num_clusters == 0 {
         return Ok(Vec::new());

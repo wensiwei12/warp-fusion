@@ -543,3 +543,78 @@ scenario s<seed=1> {
         errs_skipped
     );
 }
+
+/// 新语法：合法的显式数量用例不产生任何 VN 错误（不受旧的 percent/seq 检查影响）。
+#[test]
+fn test_syntax_explicit_counts_valid() {
+    let input = r#"
+#[duration=10m]
+scenario explicit_ok<seed=1> {
+    traffic { stream auth_events gen 100/s }
+    injection {
+        hit<500> for brute_force_then_scan auth_events {
+            use(login="failed") x 12
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![
+            ("sip", BaseType::Ip),
+            ("login", BaseType::Chars),
+            ("action", BaseType::Chars),
+        ],
+    )];
+    let wfl = make_wfl("brute_force_then_scan", vec![("fail", "auth_events")]);
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        !errors.iter().any(|e| e.code.starts_with("VN")),
+        "unexpected VN errors: {:?}",
+        errors
+    );
+}
+
+/// VN21：实体个数为 0、或某个事件组 `x 0`，都必须报错（而不是静默不生成）。
+#[test]
+fn test_syntax_explicit_zero_counts_rejected() {
+    for (snippet, expect) in [
+        (
+            "hit<0> for brute_force_then_scan auth_events { use(login=\"failed\") x 1 }",
+            "实体个数必须大于 0",
+        ),
+        (
+            "hit<5> for brute_force_then_scan auth_events { use(login=\"failed\") x 0 }",
+            "x 0",
+        ),
+    ] {
+        let input = format!(
+            r#"
+#[duration=10m]
+scenario zero_count<seed=1> {{
+    traffic {{ stream auth_events gen 100/s }}
+    injection {{ {snippet} }}
+}}
+"#
+        );
+        let wfg = parse_wfg(&input).unwrap();
+        let schemas = vec![make_schema(
+            "auth_events",
+            vec![
+                ("sip", BaseType::Ip),
+                ("login", BaseType::Chars),
+                ("action", BaseType::Chars),
+            ],
+        )];
+        let wfl = make_wfl("brute_force_then_scan", vec![("fail", "auth_events")]);
+        let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == "VN21" && e.message.contains(expect)),
+            "期望 VN21 含 {expect:?}，实际: {:?}",
+            errors
+        );
+    }
+}

@@ -8,7 +8,7 @@ use super::structures::{
     AliasMap, InjectOverrides, InjectUseStepOverrides, RuleStructure, StepInfo,
 };
 use crate::error::{self, WfgenReason, WfgenResult};
-use crate::wfg_ast::{FieldPredicate, InjectLine, ParamValue, SeqStep, SyntaxInjectCase};
+use crate::wfg_ast::{InjectCase, InjectLine, LegacyInjectCase, ParamValue, SeqStep, ValueSource};
 
 pub(super) fn extract_rule_structure(
     rule_plan: &RulePlan,
@@ -114,6 +114,7 @@ pub(crate) fn field_ref_field_name(fr: &FieldRef) -> &str {
 pub(super) fn extract_inject_overrides(inject_line: &InjectLine) -> InjectOverrides {
     let mut overrides = InjectOverrides {
         entity_field: None,
+        entity_count: None,
         count_per_entity: None,
         steps_completed: None,
         within: None,
@@ -157,9 +158,34 @@ pub(super) fn extract_inject_overrides(inject_line: &InjectLine) -> InjectOverri
     overrides
 }
 
-pub(super) fn extract_syntax_case_overrides(case: &SyntaxInjectCase) -> InjectOverrides {
+pub(super) fn extract_syntax_case_overrides(case: &InjectCase) -> WfgenResult<InjectOverrides> {
+    match case {
+        InjectCase::Legacy(legacy) => Ok(extract_legacy_overrides(legacy)),
+        InjectCase::Explicit(explicit) => {
+            let mut use_steps = Vec::with_capacity(explicit.groups.len());
+            for group in &explicit.groups {
+                use_steps.push(InjectUseStepOverrides {
+                    count: group.count,
+                    predicates: source_to_predicates(&group.source)?,
+                });
+            }
+            Ok(InjectOverrides {
+                entity_field: explicit.entity_field.clone(),
+                entity_count: Some(explicit.entity_count),
+                count_per_entity: None,
+                steps_completed: None,
+                within: explicit.spread,
+                use_steps,
+            })
+        }
+    }
+}
+
+/// 旧语法用例的提取（数量仍由配额推导）。
+fn extract_legacy_overrides(case: &LegacyInjectCase) -> InjectOverrides {
     let mut overrides = InjectOverrides {
         entity_field: Some(case.seq.entity.clone()),
+        entity_count: None,
         count_per_entity: None,
         steps_completed: None,
         within: None,
@@ -169,22 +195,12 @@ pub(super) fn extract_syntax_case_overrides(case: &SyntaxInjectCase) -> InjectOv
     for step in &case.seq.steps {
         let (predicates, count) = match step {
             SeqStep::Use { predicates, count } => (predicates.as_slice(), *count),
-            // `use({...})`：顶层键即字段覆盖；`_` 前缀的内部字段已由
-            // [`crate::wfg_ast::json_top_level_entries`] 过滤掉。
             SeqStep::UseJson { json, count } => {
-                let entries = crate::wfg_ast::json_top_level_entries(json).unwrap_or_default();
-                let predicates: Vec<FieldPredicate> = entries
-                    .into_iter()
-                    .map(|(field, value)| FieldPredicate {
-                        field,
-                        value: crate::wfg_ast::AttrValue::Json(value),
-                    })
-                    .collect();
                 overrides.use_steps.push(InjectUseStepOverrides {
                     count: *count,
-                    predicates: predicates
-                        .iter()
-                        .filter_map(|p| attr_value_to_json(&p.value).map(|v| (p.field.clone(), v)))
+                    predicates: crate::wfg_ast::json_top_level_entries(json)
+                        .unwrap_or_default()
+                        .into_iter()
                         .collect(),
                 });
                 continue;
@@ -205,6 +221,30 @@ pub(super) fn extract_syntax_case_overrides(case: &SyntaxInjectCase) -> InjectOv
     }
 
     overrides
+}
+
+/// 事件组的值来源 → 字段覆盖表。
+///
+/// `use from "file"` 必须已由 loader 解析成 [`ValueSource::Json`]；残留的
+/// `File` 会**报错**而不是静默生成空字段。
+fn source_to_predicates(source: &ValueSource) -> WfgenResult<HashMap<String, serde_json::Value>> {
+    match source {
+        ValueSource::Predicates(predicates) => Ok(predicates
+            .iter()
+            .filter_map(|p| attr_value_to_json(&p.value).map(|v| (p.field.clone(), v)))
+            .collect()),
+        ValueSource::Json(json) => Ok(crate::wfg_ast::json_top_level_entries(json)
+            .unwrap_or_default()
+            .into_iter()
+            .collect()),
+        ValueSource::File(path) => error::fail(
+            WfgenReason::Validation,
+            format!(
+                "use from `{path}` 尚未解析为内联 JSON；请通过 CLI（wfgen gen / lint）加载场景，\
+                 或先调用 loader::resolve_inject_files 做路径解析"
+            ),
+        ),
+    }
 }
 
 fn attr_value_to_json(value: &crate::wfg_ast::AttrValue) -> Option<serde_json::Value> {
@@ -282,7 +322,7 @@ fn expr_to_json_value(expr: &Expr) -> Option<serde_json::Value> {
 mod tests {
     use super::*;
 
-    fn case_of(input: &str) -> SyntaxInjectCase {
+    fn case_of(input: &str) -> InjectCase {
         let wfg = crate::wfg_parser::parse_wfg(input).expect("parse");
         wfg.syntax
             .as_ref()
@@ -316,7 +356,7 @@ scenario s<seed=1> {
 "#,
         );
 
-        let ov = extract_syntax_case_overrides(&case);
+        let ov = extract_syntax_case_overrides(&case).expect("extract");
         assert_eq!(ov.entity_field.as_deref(), Some("sip"));
         assert_eq!(ov.use_steps.len(), 1);
         let step = &ov.use_steps[0];
@@ -357,7 +397,7 @@ scenario s<seed=1> {
 }
 "#,
         );
-        let ov = extract_syntax_case_overrides(&case);
+        let ov = extract_syntax_case_overrides(&case).expect("extract");
         let step = &ov.use_steps[0];
         assert_eq!(step.count, 1);
         assert_eq!(

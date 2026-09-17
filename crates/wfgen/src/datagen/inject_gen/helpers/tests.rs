@@ -236,6 +236,7 @@ fn near_miss_use_steps_drop_events_after_near_miss_step() {
         },
     ];
     let overrides = InjectOverrides {
+        entity_count: None,
         entity_field: None,
         count_per_entity: None,
         steps_completed: Some(1),

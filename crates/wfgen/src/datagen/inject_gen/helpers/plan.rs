@@ -76,6 +76,27 @@ pub(crate) fn compute_near_miss_counts(
 }
 
 /// Compute the number of clusters based on per-stream event budgets.
+/// 簇（实体）个数。
+///
+/// 新语法（`hit<N>`）直接取用户写的实体数——不做任何隐式除法；旧语法按
+/// 「stream 配额 × 比例 ÷ 每实体条数」推导（待迁移，见 docs/design/wfg_injection_design.md）。
+pub(crate) fn resolve_cluster_count(
+    overrides: &InjectOverrides,
+    percent: f64,
+    steps: &[StepInfo],
+    step_event_counts: &[u64],
+    stream_totals: &HashMap<String, u64>,
+) -> u64 {
+    if let Some(explicit) = overrides.entity_count {
+        return explicit;
+    }
+    if overrides.use_steps.is_empty() {
+        compute_cluster_count(percent, steps, stream_totals)
+    } else {
+        compute_cluster_count_for_step_counts(percent, steps, step_event_counts, stream_totals)
+    }
+}
+
 pub(crate) fn compute_cluster_count(
     percent: f64,
     steps: &[StepInfo],
@@ -127,15 +148,6 @@ pub(crate) fn compute_cluster_count_for_step_counts(
     } else {
         min_clusters
     }
-}
-
-pub(crate) fn compute_repeat_count_for_step_counts(
-    percent: f64,
-    steps: &[StepInfo],
-    step_event_counts: &[u64],
-    stream_totals: &HashMap<String, u64>,
-) -> u64 {
-    compute_cluster_count_for_step_counts(percent, steps, step_event_counts, stream_totals)
 }
 
 pub(crate) fn compute_hit_counts(

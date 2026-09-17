@@ -13,7 +13,7 @@ use super::non_hit::generate_non_hit_events;
 use super::structures::{AliasMap, InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::{self, WfgenReason, WfgenResult};
-use crate::wfg_ast::{InjectCaseMode, InjectLine, InjectMode, StreamBlock, SyntaxInjectCase};
+use crate::wfg_ast::{InjectCase, InjectCaseMode, InjectLine, InjectMode, StreamBlock};
 
 pub(super) fn compute_stream_totals(
     scenario: &crate::wfg_ast::ScenarioDecl,
@@ -109,17 +109,17 @@ pub(super) fn build_alias_map(
 }
 
 pub(super) fn build_alias_map_for_syntax_case(
-    case: &SyntaxInjectCase,
+    case: &InjectCase,
     scenario_streams: &[StreamBlock],
     rule_plan: &RulePlan,
 ) -> WfgenResult<AliasMap> {
     let stream_block = scenario_streams
         .iter()
-        .find(|s| s.alias == case.stream)
+        .find(|s| s.alias == case.stream())
         .ok_or_else(|| {
             error::error(
                 WfgenReason::Validation,
-                format!("inject stream '{}' not found in scenario", case.stream),
+                format!("inject stream '{}' not found in scenario", case.stream()),
             )
         })?;
 
@@ -149,7 +149,8 @@ pub(super) fn build_alias_map_for_syntax_case(
             WfgenReason::Validation,
             format!(
                 "inject stream '{}' cannot be mapped to any event step bind in rule '{}'",
-                case.stream, rule_plan.name
+                case.stream(),
+                rule_plan.name
             ),
         );
     }
@@ -187,7 +188,7 @@ pub(super) fn generate_for_line(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn generate_for_syntax_case(
-    case: &SyntaxInjectCase,
+    case: &InjectCase,
     rule_struct: &RuleStructure,
     stream_totals: &HashMap<String, u64>,
     schemas: &[WindowSchema],
@@ -197,10 +198,10 @@ pub(super) fn generate_for_syntax_case(
     rng: &mut StdRng,
     inject_counts: &mut HashMap<String, u64>,
 ) -> WfgenResult<Vec<GenEvent>> {
-    let overrides = extract_syntax_case_overrides(case);
+    let overrides = extract_syntax_case_overrides(case)?;
     generate_for_mode(
-        inject_mode_from_case(case.mode),
-        case.percent,
+        inject_mode_from_case(case.mode()),
+        legacy_percent_of(case),
         &overrides,
         rule_struct,
         stream_totals,
@@ -211,6 +212,15 @@ pub(super) fn generate_for_syntax_case(
         rng,
         inject_counts,
     )
+}
+
+/// 旧形态的比例（新形态的数量已由 `overrides.entity_count` 直接决定，比例只作
+/// 日志/比例口径使用，取 100% 表示"把该 stream 的注入部分全部用满"）。
+fn legacy_percent_of(case: &InjectCase) -> f64 {
+    match case {
+        InjectCase::Legacy(legacy) => legacy.percent,
+        InjectCase::Explicit(_) => 100.0,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

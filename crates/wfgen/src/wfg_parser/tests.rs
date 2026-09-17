@@ -113,16 +113,22 @@ scenario brute_force_detect<seed=7> {
         "new syntax injection must not be converted into ScenarioDecl.injects"
     );
     assert_eq!(inj.cases.len(), 3);
-    assert_eq!(inj.cases[0].mode, InjectCaseMode::Hit);
-    assert_eq!(inj.cases[1].mode, InjectCaseMode::NearMiss);
-    assert_eq!(inj.cases[2].mode, InjectCaseMode::Miss);
-    assert_eq!(inj.cases[0].target_rule, None);
-    assert_eq!(inj.cases[0].percent, 30.0);
+    assert_eq!(inj.cases[0].mode(), InjectCaseMode::Hit);
+    assert_eq!(inj.cases[1].mode(), InjectCaseMode::NearMiss);
+    assert_eq!(inj.cases[2].mode(), InjectCaseMode::Miss);
+    assert_eq!(inj.cases[0].target_rule(), None);
 
-    let steps = &inj.cases[0].seq.steps;
+    let InjectCase::Legacy(legacy) = &inj.cases[0] else {
+        panic!("按比例的旧形态应解析为 InjectCase::Legacy");
+    };
+    assert_eq!(legacy.percent, 30.0);
+    let steps = &legacy.seq.steps;
     assert!(matches!(steps[0], SeqStep::Use { .. }));
     assert!(matches!(steps[1], SeqStep::Use { .. }));
-    assert!(matches!(inj.cases[1].seq.steps[1], SeqStep::Not { .. }));
+    let InjectCase::Legacy(near_miss) = &inj.cases[1] else {
+        panic!("legacy");
+    };
+    assert!(matches!(near_miss.seq.steps[1], SeqStep::Not { .. }));
 
     let expect = syntax.expect.as_ref().unwrap();
     assert_eq!(expect.checks.len(), 7);
@@ -179,8 +185,8 @@ scenario targeted<seed=1> {
         .as_ref()
         .unwrap()
         .cases[0];
-    assert_eq!(case.target_rule.as_deref(), Some("brute_force"));
-    assert_eq!(case.stream, "auth_events");
+    assert_eq!(case.target_rule(), Some("brute_force"));
+    assert_eq!(case.stream(), "auth_events");
 }
 
 #[test]
@@ -248,8 +254,11 @@ scenario obj_inline<seed=1> {
         .as_ref()
         .unwrap()
         .cases[0];
-    let SeqStep::UseJson { json, count } = &case.seq.steps[0] else {
-        panic!("应为 UseJson，实际 {:?}", case.seq.steps[0]);
+    let InjectCase::Legacy(legacy) = &case else {
+        panic!("legacy 形态");
+    };
+    let SeqStep::UseJson { json, count } = &legacy.seq.steps[0] else {
+        panic!("应为 UseJson，实际 {:?}", legacy.seq.steps[0]);
     };
     assert_eq!(*count, 2);
 
@@ -297,7 +306,10 @@ scenario multi_line<seed=1> {
         .as_ref()
         .unwrap()
         .cases[0];
-    let SeqStep::Use { predicates, count } = &case.seq.steps[0] else {
+    let InjectCase::Legacy(legacy) = &case else {
+        panic!("legacy 形态");
+    };
+    let SeqStep::Use { predicates, count } = &legacy.seq.steps[0] else {
         panic!("应为 Use");
     };
     assert_eq!(*count, 1);
@@ -333,7 +345,10 @@ scenario structured<seed=1> {
         .as_ref()
         .unwrap()
         .cases[0];
-    let SeqStep::Use { predicates, .. } = &case.seq.steps[0] else {
+    let InjectCase::Legacy(legacy) = &case else {
+        panic!("legacy 形态");
+    };
+    let SeqStep::Use { predicates, .. } = &legacy.seq.steps[0] else {
         panic!("应为 Use");
     };
     let value_of = |name: &str| {

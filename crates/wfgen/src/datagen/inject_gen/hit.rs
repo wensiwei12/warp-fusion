@@ -7,8 +7,8 @@ use rand::rngs::StdRng;
 use wf_lang::WindowSchema;
 
 use super::helpers::{
-    compute_cluster_count, compute_cluster_count_for_step_counts, compute_hit_counts,
-    compute_window_bounds, generate_cluster_events, generate_key_values,
+    compute_hit_counts, compute_window_bounds, generate_cluster_events, generate_key_values,
+    resolve_cluster_count,
 };
 use super::structures::{InjectOverrides, RuleStructure, StepInfo};
 use crate::datagen::stream_gen::GenEvent;
@@ -50,16 +50,13 @@ pub(super) fn generate_hit_clusters(
     }
 
     let step_event_counts = compute_hit_counts(&effective_steps, overrides)?;
-    let num_clusters = if overrides.use_steps.is_empty() {
-        compute_cluster_count(percent, &effective_steps, stream_totals)
-    } else {
-        compute_cluster_count_for_step_counts(
-            percent,
-            &effective_steps,
-            &step_event_counts,
-            stream_totals,
-        )
-    };
+    let num_clusters = resolve_cluster_count(
+        overrides,
+        percent,
+        &effective_steps,
+        &step_event_counts,
+        stream_totals,
+    );
     if num_clusters == 0 {
         return Ok(Vec::new());
     }

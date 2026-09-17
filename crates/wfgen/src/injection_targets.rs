@@ -27,7 +27,7 @@ pub fn injected_rule_names(wfg: &WfgFile) -> WfgenResult<HashSet<String>> {
 
         let mut rules = HashSet::new();
         for case in &injection.cases {
-            if let Some(rule) = case.target_rule.as_deref().or(default_rule.as_deref()) {
+            if let Some(rule) = case.target_rule().or(default_rule.as_deref()) {
                 rules.insert(rule.to_string());
                 continue;
             }
@@ -36,7 +36,7 @@ pub fn injected_rule_names(wfg: &WfgFile) -> WfgenResult<HashSet<String>> {
                 WfgenReason::Validation,
                 format!(
                     "injection case '{}' requires 'for RULE' because expect does not identify a unique target rule",
-                    case.stream
+                    case.stream()
                 ),
             );
         }

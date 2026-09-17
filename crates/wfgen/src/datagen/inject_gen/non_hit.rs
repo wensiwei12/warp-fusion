@@ -6,8 +6,8 @@ use rand::rngs::StdRng;
 use wf_lang::WindowSchema;
 
 use super::helpers::{
-    build_event_fields, build_event_fields_with_predicates, compute_repeat_count_for_step_counts,
-    generate_key_values, plan_use_steps_allowing_filter_conflicts,
+    build_event_fields, build_event_fields_with_predicates, generate_key_values,
+    plan_use_steps_allowing_filter_conflicts, resolve_cluster_count,
 };
 use super::structures::{InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
@@ -159,7 +159,7 @@ fn generate_non_hit_use_step_events(
     }
 
     let shape_repeats =
-        compute_repeat_count_for_step_counts(percent, steps, &step_event_counts, stream_totals);
+        resolve_cluster_count(overrides, percent, steps, &step_event_counts, stream_totals);
     if shape_repeats == 0 {
         return Ok(Vec::new());
     }

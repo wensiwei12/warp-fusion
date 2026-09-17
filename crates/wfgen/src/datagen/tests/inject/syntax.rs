@@ -444,3 +444,93 @@ scenario inject_miss_filter_override<seed=42> {
         "miss filter overrides should not trigger auth_fail_rule alerts"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 新语法：显式实体数量（hit<[field:]N> ... use ... x N）
+// ---------------------------------------------------------------------------
+
+/// `hit<N> ... x M` 生成的事件数恰好是 `N × M`——不再由「配额 × 比例 ÷ 每实体条数」推导。
+#[test]
+fn test_explicit_entity_count_is_honored() {
+    // LoginWindow 100/s × 1s = 100 条配额；hit<10> x 5 = 10 实体 × 5 = 50 条注入
+    let input = r#"
+#[duration=1s]
+scenario explicit_count<seed=42> {
+    traffic {
+        stream LoginWindow gen 100/s
+    }
+    injection {
+        hit<10> for auth_fail_rule LoginWindow {
+            use(success=false) x 5
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_login_schema()];
+    let plans = vec![make_auth_fail_plan()];
+
+    let result = generate(&wfg, &schemas, &plans).unwrap();
+
+    let injected: Vec<_> = result
+        .events
+        .iter()
+        .filter(|e| {
+            e.fields
+                .get("src_ip")
+                .and_then(|v| v.as_str())
+                .map(|s| s.starts_with("10.") && s.len() <= 15)
+                .unwrap_or(false)
+        })
+        .collect();
+    let entities: std::collections::HashSet<&str> = injected
+        .iter()
+        .filter_map(|e| e.fields.get("src_ip").and_then(|v| v.as_str()))
+        .collect();
+
+    assert_eq!(
+        injected.len(),
+        50,
+        "10 个实体 × 每个 5 条 = 50 条注入事件；实际 {}",
+        injected.len()
+    );
+    assert_eq!(entities.len(), 10, "实体数应恰好为 hit<10> 写的 10");
+
+    let syntax = wfg.syntax.as_ref().unwrap();
+    let case = &syntax.injection.as_ref().unwrap().cases[0];
+    let crate::wfg_ast::InjectCase::Explicit(explicit) = case else {
+        panic!("新语法应解析为 InjectCase::Explicit");
+    };
+    assert_eq!(explicit.entity_count, 10);
+    assert_eq!(explicit.entity_field, None, "实体键省略时从规则推断");
+    assert_eq!(explicit.groups.len(), 1);
+    assert_eq!(explicit.groups[0].count, 5);
+}
+
+/// 显式实体键（`hit<sip: N>`）被记入 AST（多 key 规则或需要消歧时使用）。
+#[test]
+fn test_explicit_entity_field_parsed() {
+    let input = r#"
+#[duration=1s]
+scenario explicit_field<seed=1> {
+    traffic { stream LoginWindow gen 100/s }
+    injection {
+        hit<src_ip: 7> for auth_fail_rule LoginWindow { use(success=false) x 1 }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let case = &wfg
+        .syntax
+        .as_ref()
+        .unwrap()
+        .injection
+        .as_ref()
+        .unwrap()
+        .cases[0];
+    let crate::wfg_ast::InjectCase::Explicit(explicit) = case else {
+        panic!("Explicit");
+    };
+    assert_eq!(explicit.entity_field.as_deref(), Some("src_ip"));
+    assert_eq!(explicit.entity_count, 7);
+}
