@@ -5670,6 +5670,7 @@ dependencies = [
  "wf-config",
  "wf-lang",
  "wf-project-remote",
+ "wfgen",
  "wp-connector-api",
  "wp-connectors",
  "wp-core-connectors",

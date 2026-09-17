@@ -22,7 +22,8 @@ use std::path::{Path, PathBuf};
 use clap::Args;
 use comfy_table::{Cell as TCell, ContentArrangement, Table, presets::UTF8_FULL};
 use serde::Serialize;
-use wf_lang::{lint_wfl, parse_wfg, parse_wfl, parse_wfs};
+use wf_lang::{lint_wfl, parse_wfl, parse_wfs};
+use wfgen::wfg_parser::parse_wfg;
 
 use crate::connectors;
 
@@ -1912,7 +1913,7 @@ rule no_close {
             r#"
 #[duration=5m]
 scenario test_case<seed=42> {
-  traffic { stream auth_events gen 10/s }
+  background { stream auth_events gen 10/s }
 }
 "#,
         )
@@ -1943,7 +1944,7 @@ use "../schemas/auth.wfs"
 use "../rules/some_rule.wfl"
 #[duration=5m]
 scenario with_use<seed=1> {
-  traffic { stream auth_events gen 10/s }
+  background { stream auth_events gen 10/s }
 }
 "#,
         )
