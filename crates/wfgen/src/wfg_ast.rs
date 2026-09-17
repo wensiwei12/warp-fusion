@@ -34,7 +34,6 @@ pub struct ScenarioDecl {
     pub time_clause: TimeClause,
     pub total: u64,
     pub streams: Vec<StreamBlock>,
-    pub injects: Vec<InjectBlock>,
     pub faults: Option<FaultsBlock>,
     pub oracle: Option<OracleBlock>,
 }
@@ -59,9 +58,8 @@ pub struct SyntaxScenario {
     pub attrs: Vec<ScenarioAttr>,
     /// `scenario name<k=v, ...>` inline annotations.
     pub inline_annos: Vec<ScenarioAttr>,
-    pub traffic: TrafficBlock,
+    pub background: BackgroundBlock,
     pub injection: Option<SyntaxInjectionBlock>,
-    pub expect: Option<ExpectBlock>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,7 +84,7 @@ pub enum AttrValue {
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub struct TrafficBlock {
+pub struct BackgroundBlock {
     pub streams: Vec<SyntaxStreamDecl>,
 }
 
@@ -153,62 +151,20 @@ pub struct SyntaxInjectionBlock {
     pub cases: Vec<InjectCase>,
 }
 
-/// 注入用例：旧语法（按比例）与新语法（显式数量）并存于同一 `inject` 块，
-/// 由 `mode <` 之后是否带 `%` 区分。旧形态会在迁移完成后删除（VN20）。
+/// 注入用例：数量是**写下来的**（设计 §4.1）。
+///
+/// 旧的按比例形态（`hit<20%> ... with(N)`）已删除：它的数量由「stream 配额 ×
+/// 比例 ÷ 每实体条数」推出，与「数量可见」直接冲突。解析期遇到 `mode<N%>`
+/// 会报 VN20。
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum InjectCase {
-    /// `hit<20%> [for RULE] STREAM { FIELD seq { ... } }` —— 待迁移
-    Legacy(LegacyInjectCase),
-    /// `hit<[FIELD:]N> for RULE STREAM { use ... x N }` —— 显式数量
-    Explicit(ExplicitInjectCase),
-}
-
-impl InjectCase {
-    pub fn mode(&self) -> InjectCaseMode {
-        match self {
-            Self::Legacy(c) => c.mode,
-            Self::Explicit(c) => c.mode,
-        }
-    }
-
-    pub fn stream(&self) -> &str {
-        match self {
-            Self::Legacy(c) => &c.stream,
-            Self::Explicit(c) => &c.stream,
-        }
-    }
-
-    /// 目标规则：新形态必填；旧形态可省（由 `expect` 反推）。
-    pub fn target_rule(&self) -> Option<&str> {
-        match self {
-            Self::Legacy(c) => c.target_rule.as_deref(),
-            Self::Explicit(c) => Some(c.target_rule.as_str()),
-        }
-    }
-}
-
-/// 旧语法用例：数量由「stream 配额 × 比例 ÷ 每实体条数」推出。
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct LegacyInjectCase {
-    pub mode: InjectCaseMode,
-    pub percent: f64,
-    pub target_rule: Option<String>,
-    pub stream: String,
-    pub seq: SeqBlock,
-}
-
-/// 新语法用例：数量是写出来的。
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct ExplicitInjectCase {
+pub struct InjectCase {
     pub mode: InjectCaseMode,
     /// 实体个数。
     pub entity_count: u64,
     /// 实体标识字段；`None` = 从规则推断（match key / entity 表达式字段）。
     pub entity_field: Option<String>,
-    /// 目标规则（必填）。
+    /// 目标规则（必填：`for RULE`）。
     pub target_rule: String,
     pub stream: String,
     /// 按步骤顺序的事件组；每组给出「每实体几条」与「值从哪来」。
@@ -246,28 +202,6 @@ pub enum InjectCaseMode {
     Miss,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct SeqBlock {
-    pub entity: String,
-    pub steps: Vec<SeqStep>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum SeqStep {
-    Use {
-        predicates: Vec<FieldPredicate>,
-        count: u64,
-    },
-    /// `use({...}) with(N)` —— 整份 JSON 内联（顶层对象即整组字段）。
-    UseJson { json: serde_json::Value, count: u64 },
-    Not {
-        predicates: Vec<FieldPredicate>,
-        within: Duration,
-    },
-}
-
 /// 把整份 JSON 对象的顶层键展开为 `(字段, 值)` 列表。
 ///
 /// - 顶层必须是 object，否则返回 `None`（由调用方报错）；
@@ -289,51 +223,6 @@ pub fn json_top_level_entries(
 pub struct FieldPredicate {
     pub field: String,
     pub value: AttrValue,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct ExpectBlock {
-    pub checks: Vec<ExpectCheck>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct ExpectCheck {
-    pub metric: ExpectMetric,
-    pub rule: String,
-    pub op: CompareOp,
-    pub value: ExpectValue,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ExpectMetric {
-    Hit,
-    NearMiss,
-    Miss,
-    Precision,
-    Recall,
-    Fpr,
-    LatencyP95,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CompareOp {
-    Gte,
-    Lte,
-    Gt,
-    Lt,
-    Eq,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum ExpectValue {
-    Percent(f64),
-    Number(f64),
-    Duration(Duration),
 }
 
 // ---------------------------------------------------------------------------
@@ -424,50 +313,6 @@ impl GenArg {
             value,
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Inject
-// ---------------------------------------------------------------------------
-
-/// `inject for RULE on [STREAM, ...] { inject_line* }`
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct InjectBlock {
-    pub rule: String,
-    pub streams: Vec<String>,
-    pub lines: Vec<InjectLine>,
-}
-
-/// Inject line.
-///
-/// Supported forms:
-/// - inline params: `MODE PERCENT% key=value key2=value2;`
-/// - block params: `MODE PERCENT% { key=value; key2=value2; };`
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct InjectLine {
-    pub mode: InjectMode,
-    pub percent: f64,
-    pub params: Vec<ParamAssign>,
-    /// Ordered `use(...)` declarations; each declaration describes one rule step.
-    pub use_steps: Vec<InjectUseStep>,
-}
-
-/// One `use(...) with(count)` declaration captured for inject generation.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct InjectUseStep {
-    pub count: u64,
-    pub predicates: Vec<FieldPredicate>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum InjectMode {
-    Hit,
-    NearMiss,
-    NonHit,
 }
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ fn test_parse_minimal_syntax_scenario() {
     let input = r#"
 #[duration=10m]
 scenario brute_force_detect<seed=42> {
-  traffic {
+  background {
     stream auth_events gen 100/s
   }
 }
@@ -17,10 +17,10 @@ scenario brute_force_detect<seed=42> {
     assert_eq!(wfg.scenario.seed, 42);
     assert!(wfg.syntax.is_some());
     let syntax = wfg.syntax.as_ref().unwrap();
-    assert_eq!(syntax.traffic.streams.len(), 1);
-    assert_eq!(syntax.traffic.streams[0].stream, "auth_events");
+    assert_eq!(syntax.background.streams.len(), 1);
+    assert_eq!(syntax.background.streams[0].stream, "auth_events");
     assert!(matches!(
-        syntax.traffic.streams[0].rate,
+        syntax.background.streams[0].rate,
         RateExpr::Constant(_)
     ));
 }
@@ -33,7 +33,7 @@ use "../rules/brute_force.wfl"
 
 #[duration=10m]
 scenario s<seed=1> {
-  traffic { stream auth_events gen 50/s }
+  background { stream auth_events gen 50/s }
 }
 "#;
     let wfg = parse_wfg(input).unwrap();
@@ -47,7 +47,7 @@ fn test_parse_rate_expressions_wave_burst_timeline() {
     let input = r#"
 #[duration=10m]
 scenario rates<seed=2> {
-  traffic {
+  background {
     stream s1 gen wave(base=80/s, amp=20/s, period=2m, shape=triangle)
     stream s2 gen burst(base=40/s, peak=300/s, every=3m, hold=20s)
     stream s3 gen timeline {
@@ -58,49 +58,32 @@ scenario rates<seed=2> {
 }
 "#;
     let wfg = parse_wfg(input).unwrap();
-    let t = &wfg.syntax.as_ref().unwrap().traffic.streams;
+    let t = &wfg.syntax.as_ref().unwrap().background.streams;
     assert!(matches!(t[0].rate, RateExpr::Wave { .. }));
     assert!(matches!(t[1].rate, RateExpr::Burst { .. }));
     assert!(matches!(t[2].rate, RateExpr::Timeline(_)));
 }
 
 #[test]
-fn test_parse_injection_and_expect_extensions() {
+fn test_parse_injection_extensions() {
     let input = r#"
 #[duration=30m]
 scenario brute_force_detect<seed=7> {
-  traffic {
+  background {
     stream auth_events gen 200/s
   }
 
   injection {
-    hit<30%> auth_events {
-      user seq {
-        use(login="failed") with(3)
-        then use(action="port_scan") with(1)
-      }
+    hit<user: 500> for brute_force_then_scan auth_events {
+      use(login="failed") x 3
+      then use(action="port_scan") x 1
     }
-    near_miss<10%> auth_events {
-      user seq {
-        use(login="failed") with(2)
-        not(action="port_scan") within(1m)
-      }
+    near_miss<user: 200> for brute_force_then_scan auth_events {
+      use(login="failed") x 2
     }
-    miss<60%> auth_events {
-      user seq {
-        use(login="success") with(1)
-      }
+    miss<user: 100> for brute_force_then_scan auth_events {
+      use(login="success") x 1
     }
-  }
-
-  expect {
-    hit(brute_force_then_scan) >= 95%
-    near_miss(brute_force_then_scan) <= 1%
-    miss(brute_force_then_scan) <= 0.1%
-    precision(brute_force_then_scan) >= 99%
-    recall(brute_force_then_scan) >= 95%
-    fpr(brute_force_then_scan) <= 0.5%
-    latency_p95(brute_force_then_scan) <= 2s
   }
 }
 "#;
@@ -108,56 +91,41 @@ scenario brute_force_detect<seed=7> {
     let wfg = parse_wfg(input).unwrap();
     let syntax = wfg.syntax.as_ref().unwrap();
     let inj = syntax.injection.as_ref().unwrap();
-    assert!(
-        wfg.scenario.injects.is_empty(),
-        "new syntax injection must not be converted into ScenarioDecl.injects"
-    );
     assert_eq!(inj.cases.len(), 3);
-    assert_eq!(inj.cases[0].mode(), InjectCaseMode::Hit);
-    assert_eq!(inj.cases[1].mode(), InjectCaseMode::NearMiss);
-    assert_eq!(inj.cases[2].mode(), InjectCaseMode::Miss);
-    assert_eq!(inj.cases[0].target_rule(), None);
+    assert_eq!(inj.cases[0].mode, InjectCaseMode::Hit);
+    assert_eq!(inj.cases[1].mode, InjectCaseMode::NearMiss);
+    assert_eq!(inj.cases[2].mode, InjectCaseMode::Miss);
 
-    let InjectCase::Legacy(legacy) = &inj.cases[0] else {
-        panic!("按比例的旧形态应解析为 InjectCase::Legacy");
-    };
-    assert_eq!(legacy.percent, 30.0);
-    let steps = &legacy.seq.steps;
-    assert!(matches!(steps[0], SeqStep::Use { .. }));
-    assert!(matches!(steps[1], SeqStep::Use { .. }));
-    let InjectCase::Legacy(near_miss) = &inj.cases[1] else {
-        panic!("legacy");
-    };
-    assert!(matches!(near_miss.seq.steps[1], SeqStep::Not { .. }));
-
-    let expect = syntax.expect.as_ref().unwrap();
-    assert_eq!(expect.checks.len(), 7);
-    assert!(matches!(expect.checks[6].metric, ExpectMetric::LatencyP95));
-    assert!(matches!(expect.checks[6].value, ExpectValue::Duration(_)));
+    let hit = &inj.cases[0];
+    assert_eq!(hit.target_rule, "brute_force_then_scan");
+    assert_eq!(hit.stream, "auth_events");
+    assert_eq!(hit.entity_field.as_deref(), Some("user"));
+    assert_eq!(hit.entity_count, 500);
+    assert_eq!(hit.groups.len(), 2);
+    assert_eq!(hit.groups[0].count, 3);
+    assert_eq!(hit.groups[1].count, 1);
+    assert!(matches!(hit.groups[0].source, ValueSource::Predicates(_)));
+    assert_eq!(hit.spread, None);
 }
 
+/// `then` 后面必须跟一个 `use ... x N` 事件组（旧的 `then not(...) within(...)` 已删除）。
 #[test]
-fn test_parse_then_only_allows_use_step() {
+fn test_parse_then_requires_use_event_group() {
     let input = r#"
 #[duration=10m]
 scenario invalid_then_not<seed=1> {
-  traffic { stream auth_events gen 100/s }
+  background { stream auth_events gen 100/s }
   injection {
-    near_miss<10%> auth_events {
-      user seq {
-        use(login="failed") with(1)
-        then not(action="port_scan") within(1m)
-      }
+    near_miss<user: 10> for rule_a auth_events {
+      use(login="failed") x 1
+      then not(action="port_scan") within(1m)
     }
   }
 }
 "#;
 
     let err = parse_wfg(input).unwrap_err().to_string();
-    assert!(
-        err.contains("'use' after 'then'"),
-        "unexpected parse error: {err}"
-    );
+    assert!(err.contains("event group"), "unexpected parse error: {err}");
 }
 
 #[test]
@@ -165,12 +133,10 @@ fn test_parse_injection_case_target_rule() {
     let input = r#"
 #[duration=10m]
 scenario targeted<seed=1> {
-  traffic { stream auth_events gen 100/s }
+  background { stream auth_events gen 100/s }
   injection {
-    hit<30%> for brute_force auth_events {
-      user seq {
-        use(login="failed") with(3)
-      }
+    hit<user: 30> for brute_force auth_events {
+      use(login="failed") x 3
     }
   }
 }
@@ -185,8 +151,8 @@ scenario targeted<seed=1> {
         .as_ref()
         .unwrap()
         .cases[0];
-    assert_eq!(case.target_rule(), Some("brute_force"));
-    assert_eq!(case.stream(), "auth_events");
+    assert_eq!(case.target_rule, "brute_force");
+    assert_eq!(case.stream, "auth_events");
 }
 
 #[test]
@@ -195,7 +161,7 @@ fn test_parse_comments_and_optional_semicolon() {
 // header
 #[duration=10m]
 scenario s<seed=1> {
-  traffic {
+  background {
     stream auth_events gen 100/s; // optional semicolon
   }
 }
@@ -226,21 +192,19 @@ fn test_parse_use_whole_json_inline() {
     let input = r#"
 #[duration=1s]
 scenario obj_inline<seed=1> {
-  traffic { stream sdm_event gen 100/s }
+  background { stream sdm_event gen 100/s }
   injection {
-    hit<100%> sdm_event {
-      sip seq {
-        use({
-          "tenant_id": "tenant02",
-          "source_finding_obj": {
-            "title": "自定义威胁情报",
-            "rule": { "label": "账号攻击" }
-          },
-          "tags": ["a", "b"],
-          "unmapped": null,
-          "_stream": "ignored"
-        }) with(2)
-      }
+    hit<sip: 5> for sdm_rule sdm_event {
+      use({
+        "tenant_id": "tenant02",
+        "source_finding_obj": {
+          "title": "自定义威胁情报",
+          "rule": { "label": "账号攻击" }
+        },
+        "tags": ["a", "b"],
+        "unmapped": null,
+        "_stream": "ignored"
+      }) x 2
     }
   }
 }
@@ -254,13 +218,10 @@ scenario obj_inline<seed=1> {
         .as_ref()
         .unwrap()
         .cases[0];
-    let InjectCase::Legacy(legacy) = &case else {
-        panic!("legacy 形态");
+    let ValueSource::Json(json) = &case.groups[0].source else {
+        panic!("应为 ValueSource::Json，实际 {:?}", case.groups[0].source);
     };
-    let SeqStep::UseJson { json, count } = &legacy.seq.steps[0] else {
-        panic!("应为 UseJson，实际 {:?}", legacy.seq.steps[0]);
-    };
-    assert_eq!(*count, 2);
+    assert_eq!(case.groups[0].count, 2);
 
     // `_` 前缀的内部字段被忽略
     let entries = json_top_level_entries(json).expect("顶层应为 object");
@@ -284,15 +245,13 @@ fn test_parse_use_allows_newline_after_paren() {
     let input = r#"
 #[duration=1s]
 scenario multi_line<seed=1> {
-  traffic { stream sdm_event gen 100/s }
+  background { stream sdm_event gen 100/s }
   injection {
-    hit<100%> sdm_event {
-      sip seq {
-        use(
-          tenant_id="tenant02",
-          event_id="evt-1"
-        ) with(1)
-      }
+    hit<sip: 1> for sdm_rule sdm_event {
+      use(
+        tenant_id="tenant02",
+        event_id="evt-1"
+      ) x 1
     }
   }
 }
@@ -306,13 +265,10 @@ scenario multi_line<seed=1> {
         .as_ref()
         .unwrap()
         .cases[0];
-    let InjectCase::Legacy(legacy) = &case else {
-        panic!("legacy 形态");
+    let ValueSource::Predicates(predicates) = &case.groups[0].source else {
+        panic!("应为 Predicates");
     };
-    let SeqStep::Use { predicates, count } = &legacy.seq.steps[0] else {
-        panic!("应为 Use");
-    };
-    assert_eq!(*count, 1);
+    assert_eq!(case.groups[0].count, 1);
     assert_eq!(predicates.len(), 2);
 }
 
@@ -322,16 +278,14 @@ fn test_parse_predicate_structured_values() {
     let input = r#"
 #[duration=1s]
 scenario structured<seed=1> {
-  traffic { stream sdm_event gen 100/s }
+  background { stream sdm_event gen 100/s }
   injection {
-    hit<100%> sdm_event {
-      sip seq {
-        use(
-          obj={"k": {"n": 1}},
-          arr=[1, 2, 3],
-          none=null
-        ) with(1)
-      }
+    hit<sip: 1> for sdm_rule sdm_event {
+      use(
+        obj={"k": {"n": 1}},
+        arr=[1, 2, 3],
+        none=null
+      ) x 1
     }
   }
 }
@@ -345,11 +299,8 @@ scenario structured<seed=1> {
         .as_ref()
         .unwrap()
         .cases[0];
-    let InjectCase::Legacy(legacy) = &case else {
-        panic!("legacy 形态");
-    };
-    let SeqStep::Use { predicates, .. } = &legacy.seq.steps[0] else {
-        panic!("应为 Use");
+    let ValueSource::Predicates(predicates) = &case.groups[0].source else {
+        panic!("应为 Predicates");
     };
     let value_of = |name: &str| {
         predicates
@@ -377,12 +328,93 @@ fn test_reject_use_json_array_toplevel() {
     let input = r#"
 #[duration=1s]
 scenario arr<seed=1> {
-  traffic { stream sdm_event gen 100/s }
+  background { stream sdm_event gen 100/s }
   injection {
-    hit<100%> sdm_event { sip seq { use([1, 2]) with(1) } }
+    hit<sip: 1> for sdm_rule sdm_event { use([1, 2]) x 1 }
   }
 }
 "#;
     // 数组不是合法 predicate 列表、也不是合法的内联 JSON 顶层 → 解析失败
     assert!(parse_wfg(input).is_err());
+}
+
+/// `spread <duration>` 与 `use from "<file>"` 进入 AST（文件读取由 loader 负责）。
+#[test]
+fn test_parse_spread_and_use_from_file() {
+    let input = r#"
+#[duration=10m]
+scenario spread_from<seed=1> {
+  background { stream sdm_event gen 100/s }
+  injection {
+    hit<sip: 20> for sdm_rule sdm_event {
+      use from "raw/big.ndjson" x 3
+      spread 5m
+    }
+  }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let case = &wfg
+        .syntax
+        .as_ref()
+        .unwrap()
+        .injection
+        .as_ref()
+        .unwrap()
+        .cases[0];
+    assert_eq!(case.groups[0].count, 3);
+    assert_eq!(
+        case.groups[0].source,
+        ValueSource::File("raw/big.ndjson".to_string())
+    );
+    assert_eq!(case.spread, Some(std::time::Duration::from_secs(300)));
+}
+
+// ---------------------------------------------------------------------------
+// VN20：旧的按比例注入语法在解析期就被拒绝
+// ---------------------------------------------------------------------------
+
+/// VN20：`hit<20%> ... with(N)` 已移除，必须报错并给出改写方向。
+#[test]
+fn test_legacy_percent_form_is_rejected_with_vn20() {
+    let input = r#"
+#[duration=10m]
+scenario legacy_percent<seed=1> {
+  background { stream auth_events gen 100/s }
+  injection {
+    hit<20%> auth_events {
+      user seq {
+        use(login="failed") with(3)
+      }
+    }
+  }
+}
+"#;
+
+    let err = parse_wfg(input).unwrap_err().to_string();
+    assert!(err.contains("VN20"), "unexpected parse error: {err}");
+    assert!(
+        err.contains("hit<sip: 500>"),
+        "错误信息应给出改写形态: {err}"
+    );
+}
+
+/// 三个模式走同一条判定——旧语法不能只在 `hit` 上报错。
+#[test]
+fn test_legacy_percent_form_is_rejected_for_all_modes() {
+    for mode in ["hit", "near_miss", "miss"] {
+        let input = format!(
+            r#"
+#[duration=10m]
+scenario legacy_{mode}<seed=1> {{
+  background {{ stream auth_events gen 100/s }}
+  injection {{
+    {mode}<20%> auth_events {{ user seq {{ use(login="failed") with(3) }} }}
+  }}
+}}
+"#
+        );
+        let err = parse_wfg(&input).unwrap_err().to_string();
+        assert!(err.contains("VN20"), "[{mode}] unexpected error: {err}");
+    }
 }

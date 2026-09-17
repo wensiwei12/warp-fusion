@@ -20,9 +20,8 @@ pub(super) fn parse_syntax_body(
         )))
         .parse_next(input)?;
 
-    let mut traffic: Option<TrafficBlock> = None;
+    let mut background: Option<BackgroundBlock> = None;
     let mut injection: Option<SyntaxInjectionBlock> = None;
-    let mut expect: Option<ExpectBlock> = None;
 
     loop {
         ws_skip(input)?;
@@ -30,11 +29,11 @@ pub(super) fn parse_syntax_body(
             break;
         }
 
-        if opt(wf_lang::parse_utils::kw("traffic"))
+        if opt(wf_lang::parse_utils::kw("background"))
             .parse_next(input)?
             .is_some()
         {
-            traffic = Some(parse_traffic_block(input)?);
+            background = Some(parse_background_block(input)?);
             continue;
         }
         if opt(wf_lang::parse_utils::kw("injection"))
@@ -44,39 +43,32 @@ pub(super) fn parse_syntax_body(
             injection = Some(parse_injection_block(input)?);
             continue;
         }
-        if opt(wf_lang::parse_utils::kw("expect"))
-            .parse_next(input)?
-            .is_some()
-        {
-            expect = Some(parse_expect_block(input)?);
-            continue;
-        }
 
         return Err(winnow::error::ErrMode::Cut(
             winnow::error::ContextError::new().add_context(
                 input,
                 &input.checkpoint(),
                 StrContext::Expected(StrContextValue::Description(
-                    "traffic, injection, expect, or closing brace",
+                    "background, injection, or closing brace",
                 )),
             ),
         ));
     }
 
-    let Some(traffic) = traffic else {
+    let Some(background) = background else {
         return Err(winnow::error::ErrMode::Cut(
             winnow::error::ContextError::new().add_context(
                 input,
                 &input.checkpoint(),
-                StrContext::Expected(StrContextValue::Description("traffic block")),
+                StrContext::Expected(StrContextValue::Description("background block")),
             ),
         ));
     };
 
     let seed = extract_seed(&inline_annos).unwrap_or(0);
     let duration = extract_duration(&attrs).unwrap_or_else(|| Duration::from_secs(60));
-    let total = derive_total(&traffic, duration);
-    let streams = derive_legacy_streams(&traffic);
+    let total = derive_total(&background, duration);
+    let streams = derive_legacy_streams(&background);
 
     let scenario = ScenarioDecl {
         name,
@@ -87,7 +79,6 @@ pub(super) fn parse_syntax_body(
         },
         total,
         streams,
-        injects: Vec::new(),
         faults: None,
         oracle: None,
     };
@@ -95,9 +86,8 @@ pub(super) fn parse_syntax_body(
     let syntax = SyntaxScenario {
         attrs,
         inline_annos,
-        traffic,
+        background,
         injection,
-        expect,
     };
 
     Ok((scenario, syntax))
@@ -123,8 +113,8 @@ fn extract_duration(attrs: &[ScenarioAttr]) -> Option<Duration> {
         })
 }
 
-fn derive_legacy_streams(traffic: &TrafficBlock) -> Vec<StreamBlock> {
-    traffic
+fn derive_legacy_streams(background: &BackgroundBlock) -> Vec<StreamBlock> {
+    background
         .streams
         .iter()
         .map(|s| StreamBlock {
@@ -148,8 +138,8 @@ fn rate_from_expr(rate_expr: &RateExpr) -> Rate {
     }
 }
 
-fn derive_total(traffic: &TrafficBlock, duration: Duration) -> u64 {
-    let eps_sum: f64 = traffic.streams.iter().map(|s| s.rate.approx_eps()).sum();
+fn derive_total(background: &BackgroundBlock, duration: Duration) -> u64 {
+    let eps_sum: f64 = background.streams.iter().map(|s| s.rate.approx_eps()).sum();
     if eps_sum <= 0.0 {
         return 1;
     }
@@ -158,11 +148,9 @@ fn derive_total(traffic: &TrafficBlock, duration: Duration) -> u64 {
 }
 
 mod attrs;
-mod expect;
+mod background;
 mod inject;
-mod traffic;
 
 pub(super) use attrs::{inline_annos, scenario_attrs};
-pub(super) use expect::parse_expect_block;
+pub(super) use background::parse_background_block;
 pub(super) use inject::parse_injection_block;
-pub(super) use traffic::parse_traffic_block;

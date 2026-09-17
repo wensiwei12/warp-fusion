@@ -20,163 +20,31 @@ pub(crate) fn compute_window_bounds(dur_secs: f64, window_dur: Duration) -> (f64
     (window_secs, max_start_offset)
 }
 
-/// Compute per-step event counts for near-miss clusters.
+/// 每个步骤每实体生成多少条事件。
 ///
-/// With ordered `use(...)` declarations, the last declared use step is the
-/// near-miss boundary. Previous unspecified steps are filled to threshold,
-/// the boundary is clamped to `threshold - 1`, and later steps get 0 events.
-/// Without `use(...)`, legacy `steps_completed`/last-step behavior applies.
-pub(crate) fn compute_near_miss_counts(
-    steps: &[StepInfo],
-    overrides: &InjectOverrides,
-) -> WfgenResult<Vec<u64>> {
-    // 新语法：模式不改数字——不夹取、不补全，`x N` 写多少就是多少。
-    if overrides.entity_count.is_some() {
-        return compute_use_step_counts(steps, &overrides.use_steps);
-    }
-
-    if !overrides.use_steps.is_empty() {
-        let planned = plan_use_steps(steps, &overrides.use_steps, true)?;
-        if !planned.is_empty() {
-            let mut counts = vec![0_u64; steps.len()];
-            for planned in &planned {
-                counts[planned.rule_step_idx] += planned.count;
-            }
-            let nm_step_idx =
-                near_miss_step_idx_from_plan(&planned, steps.len()).unwrap_or(steps.len() - 1);
-            for (idx, count) in counts.iter_mut().enumerate().take(nm_step_idx) {
-                if *count == 0 {
-                    *count = steps[idx].threshold;
-                }
-            }
-            counts[nm_step_idx] =
-                counts[nm_step_idx].min(steps[nm_step_idx].threshold.saturating_sub(1));
-            for count in counts.iter_mut().skip(nm_step_idx + 1) {
-                *count = 0;
-            }
-            return Ok(counts);
-        }
-    }
-
-    let effective_threshold_nm = overrides
-        .count_per_entity
-        .unwrap_or(steps[steps.len() - 1].threshold);
-
-    let steps_completed = overrides.steps_completed.unwrap_or(steps.len() - 1);
-    let nm_step_idx = steps_completed.min(steps.len() - 1);
-
-    Ok(steps
-        .iter()
-        .enumerate()
-        .map(|(i, step)| {
-            if i > nm_step_idx {
-                0
-            } else if i == nm_step_idx {
-                effective_threshold_nm.saturating_sub(1)
-            } else {
-                overrides.count_per_entity.unwrap_or(step.threshold)
-            }
-        })
-        .collect())
-}
-
-/// Compute the number of clusters based on per-stream event budgets.
-/// 簇（实体）个数。
-///
-/// 新语法（`hit<N>`）直接取用户写的实体数——不做任何隐式除法；旧语法按
-/// 「stream 配额 × 比例 ÷ 每实体条数」推导（待迁移，见 docs/design/wfg_injection_design.md）。
-pub(crate) fn resolve_cluster_count(
-    overrides: &InjectOverrides,
-    percent: f64,
-    steps: &[StepInfo],
-    step_event_counts: &[u64],
-    stream_totals: &HashMap<String, u64>,
-) -> u64 {
-    if let Some(explicit) = overrides.entity_count {
-        return explicit;
-    }
-    if overrides.use_steps.is_empty() {
-        compute_cluster_count(percent, steps, stream_totals)
-    } else {
-        compute_cluster_count_for_step_counts(percent, steps, step_event_counts, stream_totals)
-    }
-}
-
-pub(crate) fn compute_cluster_count(
-    percent: f64,
-    steps: &[StepInfo],
-    stream_totals: &HashMap<String, u64>,
-) -> u64 {
-    let mut min_clusters = u64::MAX;
-
-    for step in steps {
-        let stream_total = *stream_totals.get(&step.scenario_alias).unwrap_or(&0);
-        let budget = (stream_total as f64 * percent / 100.0).round() as u64;
-        if step.threshold > 0 {
-            let clusters = budget.checked_div(step.threshold).unwrap_or(0);
-            min_clusters = min_clusters.min(clusters);
-        }
-    }
-
-    if min_clusters == u64::MAX {
-        0
-    } else {
-        min_clusters
-    }
-}
-
-pub(crate) fn compute_cluster_count_for_step_counts(
-    percent: f64,
-    steps: &[StepInfo],
-    step_event_counts: &[u64],
-    stream_totals: &HashMap<String, u64>,
-) -> u64 {
-    let mut per_stream_events: HashMap<&str, u64> = HashMap::new();
-    for (step, count) in steps.iter().zip(step_event_counts.iter().copied()) {
-        *per_stream_events
-            .entry(step.scenario_alias.as_str())
-            .or_insert(0) += count;
-    }
-
-    let mut min_clusters = u64::MAX;
-    for (stream, events_per_cluster) in per_stream_events {
-        if events_per_cluster == 0 {
-            continue;
-        }
-        let stream_total = *stream_totals.get(stream).unwrap_or(&0);
-        let budget = (stream_total as f64 * percent / 100.0).round() as u64;
-        min_clusters = min_clusters.min(budget.checked_div(events_per_cluster).unwrap_or(0));
-    }
-
-    if min_clusters == u64::MAX {
-        0
-    } else {
-        min_clusters
-    }
-}
-
+/// 就是 `use ... x N` 写的数：不做任何隐式推导、补全或夹取——旧语法的
+/// "未写步骤补到阈值"（hit）与 `min(N, 阈值-1)`（near_miss）夹取已随旧形态删除。
 pub(crate) fn compute_hit_counts(
     steps: &[StepInfo],
     overrides: &InjectOverrides,
 ) -> WfgenResult<Vec<u64>> {
-    // 新语法（显式实体数）：条数就是用户写的，未写的步骤就是 0——不做"补到阈值"。
-    // 补全是旧语法的行为（用户只写了部分步骤时，其余步骤靠随机事件凑够阈值）。
-    if overrides.entity_count.is_some() {
-        return compute_use_step_counts(steps, &overrides.use_steps);
-    }
+    compute_use_step_counts(steps, &overrides.use_steps)
+}
 
-    if overrides.use_steps.is_empty() {
-        return Ok(steps.iter().map(|step| step.threshold).collect());
-    }
+/// near_miss 与 hit 共用同一套条数口径：**模式不改数字**。
+pub(crate) fn compute_near_miss_counts(
+    steps: &[StepInfo],
+    overrides: &InjectOverrides,
+) -> WfgenResult<Vec<u64>> {
+    compute_use_step_counts(steps, &overrides.use_steps)
+}
 
-    let mut counts = compute_use_step_counts(steps, &overrides.use_steps)?;
-    for (count, step) in counts.iter_mut().zip(steps) {
-        if *count == 0 {
-            *count = step.threshold;
-        }
-    }
-
-    Ok(counts)
+/// 簇（实体）个数 = 用户写的实体数。
+///
+/// 旧的「stream 配额 × 比例 ÷ 每实体条数」推导已随旧形态删除
+/// （见 docs/design/wfg-design.md §3.1）。
+pub(crate) fn resolve_cluster_count(overrides: &InjectOverrides) -> u64 {
+    overrides.entity_count.unwrap_or(0)
 }
 
 pub(crate) fn compute_use_step_counts(
@@ -276,12 +144,4 @@ fn validate_use_step_predicates(
         }
     }
     Ok(())
-}
-
-fn near_miss_step_idx_from_plan(planned: &[UseStepPlan], steps_len: usize) -> Option<usize> {
-    planned
-        .iter()
-        .map(|planned| planned.rule_step_idx)
-        .max()
-        .map(|idx| idx.min(steps_len.saturating_sub(1)))
 }

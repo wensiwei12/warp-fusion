@@ -208,7 +208,7 @@ fn conflicting_use_step_predicates_error() {
 }
 
 #[test]
-fn near_miss_use_steps_drop_events_after_near_miss_step() {
+fn near_miss_counts_are_written_counts_not_clamped() {
     let steps = vec![
         StepInfo {
             bind_alias: "step0".to_string(),
@@ -236,18 +236,16 @@ fn near_miss_use_steps_drop_events_after_near_miss_step() {
         },
     ];
     let overrides = InjectOverrides {
-        entity_count: None,
+        entity_count: Some(7),
         entity_field: None,
-        count_per_entity: None,
-        steps_completed: Some(1),
         within: None,
         use_steps: vec![
             InjectUseStepOverrides {
-                count: 1,
+                count: 3,
                 predicates: HashMap::from([("stage".to_string(), serde_json::json!("first"))]),
             },
             InjectUseStepOverrides {
-                count: 1,
+                count: 4,
                 predicates: HashMap::from([("stage".to_string(), serde_json::json!("after"))]),
             },
         ],
@@ -257,7 +255,59 @@ fn near_miss_use_steps_drop_events_after_near_miss_step() {
 
     assert_eq!(
         counts,
-        vec![1, 1, 0],
-        "near_miss boundary should come from the planned step, not raw use count"
+        vec![3, 4, 0],
+        "near_miss 的条数就是 `use ... x N` 写的数：不补全、不按 `阈值 - 1` 夹取"
     );
+}
+
+/// 实体个数是写下来的，不做任何隐式除法；没写就是 0 条。
+#[test]
+fn cluster_count_is_the_written_entity_count() {
+    let written = InjectOverrides {
+        entity_count: Some(500),
+        entity_field: Some("sip".to_string()),
+        within: None,
+        use_steps: Vec::new(),
+    };
+    assert_eq!(resolve_cluster_count(&written), 500);
+
+    let absent = InjectOverrides {
+        entity_count: None,
+        entity_field: None,
+        within: None,
+        use_steps: Vec::new(),
+    };
+    assert_eq!(
+        resolve_cluster_count(&absent),
+        0,
+        "没有实体个数就什么都不生成，不再回退到「配额 × 比例」"
+    );
+}
+
+/// hit 与 near_miss 共用同一套条数口径：**模式不改数字**。
+#[test]
+fn hit_and_near_miss_share_the_same_counts() {
+    let steps = vec![StepInfo {
+        bind_alias: "step0".to_string(),
+        scenario_alias: "LoginWindow".to_string(),
+        window_name: "LoginWindow".to_string(),
+        measure: Measure::Count,
+        threshold: 10,
+        filter_overrides: HashMap::new(),
+    }];
+    let overrides = InjectOverrides {
+        entity_count: Some(5),
+        entity_field: None,
+        within: None,
+        use_steps: vec![InjectUseStepOverrides {
+            count: 12,
+            predicates: HashMap::new(),
+        }],
+    };
+
+    let hit = compute_hit_counts(&steps, &overrides).unwrap();
+    let near_miss = compute_near_miss_counts(&steps, &overrides).unwrap();
+
+    assert_eq!(hit, vec![12], "hit 条数不被阈值 10 改写");
+    assert_eq!(near_miss, hit, "两模式条数口径必须一致");
 }

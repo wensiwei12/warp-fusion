@@ -138,21 +138,10 @@ pub async fn run(args: Args) -> WfgenResult<()> {
         );
     }
 
-    // Expected output is requested by either:
-    // - legacy oracle block, or
-    // - new syntax expect block.
-    // If requested, WFL compile failures must be fatal.
-    let expect_requested = wfg
-        .syntax
-        .as_ref()
-        .and_then(|s| s.expect.as_ref())
-        .is_some();
-    // `--no-oracle` disables oracle / expected output but keeps the WFL pipeline
-    // (so injection fixed values still apply). `--no-wfl` skips everything, so
-    // in either case `expected_requested` stays false (and `rule_plans` stays
-    // empty under `--no-wfl`).
-    let expected_requested =
-        (wfg.scenario.oracle.is_some() || expect_requested) && !skip_wfl && !no_oracle;
+    // 期望输出（`.except.jsonl`）不再由 `expect` 块触发——该块已删除：只要 WFL
+    // 管线在跑（没有 `--no-wfl`）且没有被 `--no-oracle` 关掉，就生成期望文件。
+    // 此时 WFL 编译失败必须致命，否则会写出错误的期望。
+    let expected_requested = !skip_wfl && !no_oracle;
 
     // Compile WFL rules. Skipped entirely by `--no-wfl`; `--no-oracle` still
     // compiles so injection-aware generation works, and only oracle/expected

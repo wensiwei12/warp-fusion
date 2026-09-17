@@ -8,7 +8,7 @@ use super::structures::{
     AliasMap, InjectOverrides, InjectUseStepOverrides, RuleStructure, StepInfo,
 };
 use crate::error::{self, WfgenReason, WfgenResult};
-use crate::wfg_ast::{InjectCase, InjectLine, LegacyInjectCase, ParamValue, SeqStep, ValueSource};
+use crate::wfg_ast::{InjectCase, ValueSource};
 
 pub(super) fn extract_rule_structure(
     rule_plan: &RulePlan,
@@ -111,116 +111,23 @@ pub(crate) fn field_ref_field_name(fr: &FieldRef) -> &str {
     }
 }
 
-pub(super) fn extract_inject_overrides(inject_line: &InjectLine) -> InjectOverrides {
-    let mut overrides = InjectOverrides {
-        entity_field: None,
-        entity_count: None,
-        count_per_entity: None,
-        steps_completed: None,
-        within: None,
-        use_steps: Vec::new(),
-    };
-
-    for param in &inject_line.params {
-        match param.name.as_str() {
-            "count_per_entity" => {
-                if let ParamValue::Number(n) = &param.value {
-                    overrides.count_per_entity = Some(*n as u64);
-                }
-            }
-            "steps_completed" => {
-                if let ParamValue::Number(n) = &param.value {
-                    overrides.steps_completed = Some(*n as usize);
-                }
-            }
-            "within" => {
-                if let ParamValue::Duration(d) = &param.value {
-                    overrides.within = Some(*d);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    for use_step in &inject_line.use_steps {
-        let mut predicates = HashMap::new();
-        for pred in &use_step.predicates {
-            if let Some(value) = attr_value_to_json(&pred.value) {
-                predicates.insert(pred.field.clone(), value);
-            }
-        }
-        overrides.use_steps.push(InjectUseStepOverrides {
-            count: use_step.count,
-            predicates,
-        });
-    }
-
-    overrides
-}
-
+/// 用例 → 生成期覆盖。
+///
+/// 数量是写下来的：实体个数取用例头，每实体条数逐步取 `x N`（设计 §4.1）。
 pub(super) fn extract_syntax_case_overrides(case: &InjectCase) -> WfgenResult<InjectOverrides> {
-    match case {
-        InjectCase::Legacy(legacy) => Ok(extract_legacy_overrides(legacy)),
-        InjectCase::Explicit(explicit) => {
-            let mut use_steps = Vec::with_capacity(explicit.groups.len());
-            for group in &explicit.groups {
-                use_steps.push(InjectUseStepOverrides {
-                    count: group.count,
-                    predicates: source_to_predicates(&group.source)?,
-                });
-            }
-            Ok(InjectOverrides {
-                entity_field: explicit.entity_field.clone(),
-                entity_count: Some(explicit.entity_count),
-                count_per_entity: None,
-                steps_completed: None,
-                within: explicit.spread,
-                use_steps,
-            })
-        }
-    }
-}
-
-/// 旧语法用例的提取（数量仍由配额推导）。
-fn extract_legacy_overrides(case: &LegacyInjectCase) -> InjectOverrides {
-    let mut overrides = InjectOverrides {
-        entity_field: Some(case.seq.entity.clone()),
-        entity_count: None,
-        count_per_entity: None,
-        steps_completed: None,
-        within: None,
-        use_steps: Vec::new(),
-    };
-
-    for step in &case.seq.steps {
-        let (predicates, count) = match step {
-            SeqStep::Use { predicates, count } => (predicates.as_slice(), *count),
-            SeqStep::UseJson { json, count } => {
-                overrides.use_steps.push(InjectUseStepOverrides {
-                    count: *count,
-                    predicates: crate::wfg_ast::json_top_level_entries(json)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .collect(),
-                });
-                continue;
-            }
-            SeqStep::Not { .. } => continue,
-        };
-
-        let mut pred_map = HashMap::new();
-        for pred in predicates {
-            if let Some(value) = attr_value_to_json(&pred.value) {
-                pred_map.insert(pred.field.clone(), value);
-            }
-        }
-        overrides.use_steps.push(InjectUseStepOverrides {
-            count,
-            predicates: pred_map,
+    let mut use_steps = Vec::with_capacity(case.groups.len());
+    for group in &case.groups {
+        use_steps.push(InjectUseStepOverrides {
+            count: group.count,
+            predicates: source_to_predicates(&group.source)?,
         });
     }
-
-    overrides
+    Ok(InjectOverrides {
+        entity_field: case.entity_field.clone(),
+        entity_count: Some(case.entity_count),
+        within: case.spread,
+        use_steps,
+    })
 }
 
 /// 事件组的值来源 → 字段覆盖表。
@@ -240,8 +147,7 @@ fn source_to_predicates(source: &ValueSource) -> WfgenResult<HashMap<String, ser
         ValueSource::File(path) => error::fail(
             WfgenReason::Validation,
             format!(
-                "use from `{path}` 尚未解析为内联 JSON；请通过 CLI（wfgen gen / lint）加载场景，\
-                 或先调用 loader::resolve_inject_files 做路径解析"
+                "use from `{path}` 尚未解析为内联 JSON；请通过 CLI（wfgen gen / lint）加载场景，或先调用 loader::resolve_inject_files 做路径解析"
             ),
         ),
     }
@@ -339,17 +245,15 @@ mod tests {
             r#"
 #[duration=1s]
 scenario s<seed=1> {
-  traffic { stream sdm_event gen 100/s }
+  background { stream sdm_event gen 100/s }
   injection {
-    hit<100%> sdm_event {
-      sip seq {
-        use({
-          "tenant_id": "tenant02",
-          "source_finding_obj": { "title": "t", "rule": { "label": "账号攻击" } },
-          "tags": ["a", "b"],
-          "_stream": "ignored"
-        }) with(2)
-      }
+    hit<sip: 5> for sdm_rule sdm_event {
+      use({
+        "tenant_id": "tenant02",
+        "source_finding_obj": { "title": "t", "rule": { "label": "账号攻击" } },
+        "tags": ["a", "b"],
+        "_stream": "ignored"
+      }) x 2
     }
   }
 }
@@ -358,6 +262,7 @@ scenario s<seed=1> {
 
         let ov = extract_syntax_case_overrides(&case).expect("extract");
         assert_eq!(ov.entity_field.as_deref(), Some("sip"));
+        assert_eq!(ov.entity_count, Some(5));
         assert_eq!(ov.use_steps.len(), 1);
         let step = &ov.use_steps[0];
         assert_eq!(step.count, 2);
@@ -388,17 +293,16 @@ scenario s<seed=1> {
             r#"
 #[duration=1s]
 scenario s<seed=1> {
-  traffic { stream sdm_event gen 100/s }
+  background { stream sdm_event gen 100/s }
   injection {
-    hit<100%> sdm_event {
-      sip seq { use(tenant_id="t", n=3) with(1) }
-    }
+    hit<sip: 2> for sdm_rule sdm_event { use(tenant_id="t", n=3) x 1 }
   }
 }
 "#,
         );
         let ov = extract_syntax_case_overrides(&case).expect("extract");
         let step = &ov.use_steps[0];
+        assert_eq!(ov.entity_count, Some(2));
         assert_eq!(step.count, 1);
         assert_eq!(
             step.predicates.get("tenant_id"),

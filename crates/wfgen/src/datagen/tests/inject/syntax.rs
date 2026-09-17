@@ -5,19 +5,14 @@ fn test_syntax_extra_use_step_fails_when_rule_has_no_matching_step() {
     let input = r#"
 #[duration=5s]
 scenario inject_extra_use<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 20/s
     }
     injection {
-        hit<50%> LoginWindow {
-            src_ip seq {
-                use(success=false) with(5)
-                use(success=true) with(1)
-            }
+        hit<src_ip: 10> for auth_fail_rule LoginWindow {
+            use(success=false) x 5
+            then use(success=true) x 1
         }
-    }
-    expect {
-        hit(auth_fail_rule) >= 0%
     }
 }
 "#;
@@ -41,20 +36,15 @@ fn test_syntax_distinct_close_rejects_multiple_use_steps_for_one_rule_step() {
     let input = r#"
 #[duration=10m]
 scenario inject_distinct_close<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 20/s
     }
     injection {
-        hit<25%> LoginWindow {
-            src_ip seq {
-                use(success=false, dport=80) with(1)
-                use(success=false, dport=443) with(1)
-                use(success=false, dport=8080) with(1)
-            }
+        hit<src_ip: 10> for distinct_close LoginWindow {
+            use(success=false, dport=80) x 1
+            then use(success=false, dport=443) x 1
+            then use(success=false, dport=8080) x 1
         }
-    }
-    expect {
-        hit(distinct_close) >= 0%
     }
 }
 "#;
@@ -78,19 +68,15 @@ fn test_syntax_use_steps_match_multi_step_bind_filters() {
     let input = r#"
 #[duration=10m]
 scenario inject_chain_attack<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 20/s
     }
     injection {
-        hit<25%> LoginWindow {
-            src_ip seq {
-                use(success=false, dport=80) with(5)
-                use(success=true, dport=22) with(3)
-            }
+        // 20 个实体 × (5 scan + 3 login) = 160 条注入
+        hit<src_ip: 20> for chain_attack LoginWindow {
+            use(success=false, dport=80) x 5
+            then use(success=true, dport=22) x 3
         }
-    }
-    expect {
-        hit(chain_attack) >= 0%
     }
 }
 "#;
@@ -138,23 +124,18 @@ fn test_syntax_seq_entity_is_preserved_as_cluster_field() {
     let input = r#"
 #[duration=5s]
 scenario inject_entity<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 20/s
     }
     injection {
-        hit<50%> LoginWindow {
-            username seq {
-                use(success=false) with(5)
-            }
+        // 10 个实体 × 每个 5 条 = 50 条注入
+        hit<username: 10> for brute_force LoginWindow {
+            use(success=false) x 5
         }
-    }
-    expect {
-        hit(brute_force) >= 0%
     }
 }
 "#;
     let wfg = parse_wfg(input).unwrap();
-    assert!(wfg.scenario.injects.is_empty());
 
     let schemas = vec![make_login_schema()];
     let plans = vec![make_brute_force_plan()];
@@ -167,9 +148,16 @@ scenario inject_entity<seed=42> {
         .filter(|username| username.starts_with("hit_username_"))
         .collect();
 
-    assert!(
-        entity_values.len() >= 50,
-        "expected syntax seq entity field to be generated on inject events"
+    let distinct: std::collections::HashSet<&str> = entity_values.iter().copied().collect();
+    assert_eq!(
+        entity_values.len(),
+        50,
+        "10 个实体 × 每个 5 条 = 50 条注入事件"
+    );
+    assert_eq!(
+        distinct.len(),
+        10,
+        "实体键 username 必须逐实体唯一（hit<username: 10>）"
     );
 }
 
@@ -178,25 +166,17 @@ fn test_syntax_injection_case_targets_multiple_rules() {
     let input = r#"
 #[duration=5s]
 scenario inject_targets<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 40/s
     }
     injection {
-        hit<25%> for brute_force LoginWindow {
-            src_ip seq {
-                use(success=false) with(5)
-            }
+        hit<src_ip: 5> for brute_force LoginWindow {
+            use(success=false) x 5
         }
-        hit<25%> for bool_chain LoginWindow {
-            username seq {
-                use(success=false) with(1)
-                then use(success=true) with(1)
-            }
+        hit<username: 5> for bool_chain LoginWindow {
+            use(success=false) x 1
+            then use(success=true) x 1
         }
-    }
-    expect {
-        hit(brute_force) >= 0%
-        hit(bool_chain) >= 0%
     }
 }
 "#;
@@ -226,37 +206,36 @@ scenario inject_targets<seed=42> {
 }
 
 #[test]
-fn test_syntax_injection_multi_rule_expect_without_target_fails_generation() {
+fn test_syntax_injection_stream_window_must_match_rule_bind() {
+    // 场景 stream 是 LoginWindow，但规则的 bind 落在 OtherWindow 上——
+    // 必须报错，而不是静默生成 0 条注入（旧 SC6 窗口校验的生成期等价物）。
     let input = r#"
 #[duration=5s]
-scenario inject_targets<seed=42> {
-    traffic {
+scenario inject_window_mismatch<seed=42> {
+    background {
         stream LoginWindow gen 40/s
     }
     injection {
-        hit<25%> LoginWindow {
-            src_ip seq {
-                use(success=false) with(5)
-            }
+        hit<src_ip: 5> for other_window LoginWindow {
+            use(success=false) x 5
         }
-    }
-    expect {
-        hit(brute_force) >= 0%
-        hit(bool_chain) >= 0%
     }
 }
 "#;
     let wfg = parse_wfg(input).unwrap();
     let schemas = vec![make_login_schema()];
-    let plans = vec![make_brute_force_plan()];
+    let plans = vec![make_other_window_plan()];
 
     let err = match generate(&wfg, &schemas, &plans) {
-        Ok(_) => panic!("generation should fail without explicit target rule"),
+        Ok(result) => panic!(
+            "window 不匹配时必须报错，实际生成 {} 条事件",
+            result.events.len()
+        ),
         Err(err) => err,
     };
     let rendered = err.report().render().to_string();
     assert!(
-        rendered.contains("requires 'for RULE'"),
+        rendered.contains("cannot be mapped"),
         "unexpected error: {rendered}"
     );
 }
@@ -266,18 +245,14 @@ fn test_syntax_near_miss_uses_explicit_use_step_count() {
     let input = r#"
 #[duration=10s]
 scenario inject_nm_syntax<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 100/s
     }
     injection {
-        near_miss<20%> LoginWindow {
-            username seq {
-                use(success=false) with(2)
-            }
+        // 100 个实体 × 每个 2 条 = 200 条注入（配额 1000）
+        near_miss<username: 100> for brute_force LoginWindow {
+            use(success=false) x 2
         }
-    }
-    expect {
-        hit(brute_force) >= 0%
     }
 }
 "#;
@@ -310,7 +285,7 @@ scenario inject_nm_syntax<seed=42> {
     );
     assert!(
         by_entity.values().all(|count| *count == 2),
-        "near_miss syntax should honor with(2) instead of rule threshold - 1, got {by_entity:?}"
+        "near_miss 的条数就是 `x 2`（不再夹取到阈值 - 1），got {by_entity:?}"
     );
 
     let start = "2024-01-01T00:00:00Z".parse().unwrap();
@@ -328,18 +303,14 @@ fn test_syntax_miss_uses_explicit_use_step_count_and_predicates() {
     let input = r#"
 #[duration=10s]
 scenario inject_miss_syntax<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 100/s
     }
     injection {
-        miss<20%> LoginWindow {
-            username seq {
-                use(success=true) with(5)
-            }
+        // 40 个实体 × 每个 5 条 = 200 条注入（配额 1000）
+        miss<username: 40> for brute_force LoginWindow {
+            use(success=true) x 5
         }
-    }
-    expect {
-        hit(brute_force) >= 0%
     }
 }
 "#;
@@ -381,7 +352,7 @@ scenario inject_miss_syntax<seed=42> {
     assert_eq!(
         oracle.alerts.len(),
         0,
-        "miss events should use unique entities and must not trigger alerts even when with(5)"
+        "miss 的每条事件都用独立实体键、都不触发告警，即使写了 x 5"
     );
 }
 
@@ -390,18 +361,14 @@ fn test_syntax_miss_allows_predicates_to_override_rule_filter() {
     let input = r#"
 #[duration=10s]
 scenario inject_miss_filter_override<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 100/s
     }
     injection {
-        miss<20%> LoginWindow {
-            username seq {
-                use(success=true) with(5)
-            }
+        // 40 个实体 × 每个 5 条 = 200 条注入（配额 1000）
+        miss<username: 40> for auth_fail_rule LoginWindow {
+            use(success=true) x 5
         }
-    }
-    expect {
-        hit(auth_fail_rule) >= 0%
     }
 }
 "#;
@@ -456,7 +423,7 @@ fn test_explicit_entity_count_is_honored() {
     let input = r#"
 #[duration=1s]
 scenario explicit_count<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 100/s
     }
     injection {
@@ -498,13 +465,10 @@ scenario explicit_count<seed=42> {
 
     let syntax = wfg.syntax.as_ref().unwrap();
     let case = &syntax.injection.as_ref().unwrap().cases[0];
-    let crate::wfg_ast::InjectCase::Explicit(explicit) = case else {
-        panic!("新语法应解析为 InjectCase::Explicit");
-    };
-    assert_eq!(explicit.entity_count, 10);
-    assert_eq!(explicit.entity_field, None, "实体键省略时从规则推断");
-    assert_eq!(explicit.groups.len(), 1);
-    assert_eq!(explicit.groups[0].count, 5);
+    assert_eq!(case.entity_count, 10);
+    assert_eq!(case.entity_field, None, "实体键省略时从规则推断");
+    assert_eq!(case.groups.len(), 1);
+    assert_eq!(case.groups[0].count, 5);
 }
 
 /// 显式实体键（`hit<sip: N>`）被记入 AST（多 key 规则或需要消歧时使用）。
@@ -513,7 +477,7 @@ fn test_explicit_entity_field_parsed() {
     let input = r#"
 #[duration=1s]
 scenario explicit_field<seed=1> {
-    traffic { stream LoginWindow gen 100/s }
+    background { stream LoginWindow gen 100/s }
     injection {
         hit<src_ip: 7> for auth_fail_rule LoginWindow { use(success=false) x 1 }
     }
@@ -528,9 +492,6 @@ scenario explicit_field<seed=1> {
         .as_ref()
         .unwrap()
         .cases[0];
-    let crate::wfg_ast::InjectCase::Explicit(explicit) = case else {
-        panic!("Explicit");
-    };
-    assert_eq!(explicit.entity_field.as_deref(), Some("src_ip"));
-    assert_eq!(explicit.entity_count, 7);
+    assert_eq!(case.entity_field.as_deref(), Some("src_ip"));
+    assert_eq!(case.entity_count, 7);
 }

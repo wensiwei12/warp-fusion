@@ -449,3 +449,11 @@ fn make_chain_attack_plan() -> RulePlan {
         stats_plan: None,
     }
 }
+
+/// 规则 bind 的 window 与场景 stream 的 window 不一致：注入无法映射到任何步骤。
+fn make_other_window_plan() -> RulePlan {
+    let mut plan = make_brute_force_plan();
+    plan.name = "other_window".to_string();
+    plan.binds[0].window = "OtherWindow".to_string();
+    plan
+}

@@ -3,7 +3,7 @@ use "../rules/01-recon/port_scan.wfl"
 
 #[duration=10m]
 scenario port_scan_detect<seed=42> {
-  traffic {
+  background {
     stream conn_events gen 100/s
   }
   injection {
@@ -16,10 +16,5 @@ scenario port_scan_detect<seed=42> {
     miss<24000> for port_scan conn_events {
       use(action="established") x 1
     }
-  }
-  expect {
-    hit(port_scan) >= 80%
-    near_miss(port_scan) <= 5%
-    miss(port_scan) <= 0.5%
   }
 }

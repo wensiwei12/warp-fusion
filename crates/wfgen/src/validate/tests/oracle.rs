@@ -16,7 +16,6 @@ fn wfg_with_oracle(oracle: OracleBlock) -> WfgFile {
             },
             total: 100,
             streams: vec![],
-            injects: vec![],
             faults: None,
             oracle: Some(oracle),
         },

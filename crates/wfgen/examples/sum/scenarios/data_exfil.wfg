@@ -3,7 +3,7 @@ use "../rules/data_exfil.wfl"
 
 #[duration=15m]
 scenario data_exfil_detect<seed=42> {
-  traffic {
+  background {
     stream conn_events gen 100/s
   }
 
@@ -22,11 +22,5 @@ scenario data_exfil_detect<seed=42> {
     miss<49500> for data_exfil conn_events {
       use(action="send", bytes=1000) x 1
     }
-  }
-
-  expect {
-    hit(data_exfil) >= 80%
-    near_miss(data_exfil) <= 10%
-    miss(data_exfil) <= 0.5%
   }
 }

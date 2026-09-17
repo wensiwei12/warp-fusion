@@ -26,21 +26,6 @@ pub(super) fn validate_scenario_basics(scenario: &ScenarioDecl) -> Vec<Validatio
         }
     }
 
-    // SV4: percent in (0, 100] for inject lines
-    for inject in &scenario.injects {
-        for line in &inject.lines {
-            if line.percent <= 0.0 || line.percent > 100.0 {
-                errors.push(ValidationError {
-                    code: "SV4",
-                    message: format!(
-                        "inject for '{}': percent {} must be in (0, 100]",
-                        inject.rule, line.percent
-                    ),
-                });
-            }
-        }
-    }
-
     // SV4: percent in (0, 100] for fault lines
     if let Some(faults) = &scenario.faults {
         for fault in &faults.faults {
@@ -53,20 +38,6 @@ pub(super) fn validate_scenario_basics(scenario: &ScenarioDecl) -> Vec<Validatio
                     ),
                 });
             }
-        }
-    }
-
-    // SV5: inject line percentages sum <= 100%
-    for inject in &scenario.injects {
-        let sum: f64 = inject.lines.iter().map(|l| l.percent).sum();
-        if sum > 100.0 {
-            errors.push(ValidationError {
-                code: "SV5",
-                message: format!(
-                    "inject for '{}': percentages sum to {}, which exceeds 100%",
-                    inject.rule, sum
-                ),
-            });
         }
     }
 

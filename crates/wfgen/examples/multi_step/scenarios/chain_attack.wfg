@@ -3,7 +3,7 @@ use "../rules/chain_attack.wfl"
 
 #[duration=60m]
 scenario chain_attack_detect<seed=42> {
-  traffic {
+  background {
     stream conn_events gen 50/s
   }
 
@@ -23,11 +23,5 @@ scenario chain_attack_detect<seed=42> {
     miss<108000> for chain_attack conn_events {
       use(action="syn") x 1
     }
-  }
-
-  expect {
-    hit(chain_attack) >= 90%
-    near_miss(chain_attack) <= 2%
-    miss(chain_attack) <= 0.1%
   }
 }

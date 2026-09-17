@@ -10,16 +10,14 @@ use super::helpers::{
     compute_hit_counts, compute_window_bounds, generate_cluster_events, generate_key_values,
     resolve_cluster_count,
 };
-use super::structures::{InjectOverrides, RuleStructure, StepInfo};
+use super::structures::{InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::WfgenResult;
 use crate::wfg_ast::StreamBlock;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn generate_hit_clusters(
-    percent: f64,
     rule_struct: &RuleStructure,
-    stream_totals: &HashMap<String, u64>,
     schemas: &[WindowSchema],
     scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
@@ -28,35 +26,14 @@ pub(super) fn generate_hit_clusters(
     inject_counts: &mut HashMap<String, u64>,
     overrides: &InjectOverrides,
 ) -> WfgenResult<Vec<GenEvent>> {
-    // Apply count_per_entity override: use overridden threshold for cluster sizing
-    let effective_steps: Vec<StepInfo> = if let Some(cpe) = overrides.count_per_entity {
-        rule_struct
-            .steps
-            .iter()
-            .map(|s| StepInfo {
-                bind_alias: s.bind_alias.clone(),
-                scenario_alias: s.scenario_alias.clone(),
-                window_name: s.window_name.clone(),
-                measure: s.measure,
-                threshold: cpe, // override
-                filter_overrides: s.filter_overrides.clone(),
-            })
-            .collect()
-    } else {
-        rule_struct.steps.clone()
-    };
+    // 条数完全由 `use ... x N` 决定，模式不改数字、阈值只作断言口径（设计 §4.2）。
+    let effective_steps = &rule_struct.steps;
     if effective_steps.is_empty() {
         return Ok(Vec::new());
     }
 
-    let step_event_counts = compute_hit_counts(&effective_steps, overrides)?;
-    let num_clusters = resolve_cluster_count(
-        overrides,
-        percent,
-        &effective_steps,
-        &step_event_counts,
-        stream_totals,
-    );
+    let step_event_counts = compute_hit_counts(effective_steps, overrides)?;
+    let num_clusters = resolve_cluster_count(overrides);
     if num_clusters == 0 {
         return Ok(Vec::new());
     }
@@ -83,7 +60,7 @@ pub(super) fn generate_hit_clusters(
             entity_counter,
             "hit",
             schemas,
-            &effective_steps,
+            effective_steps,
             overrides.entity_field.as_deref(),
         );
 
@@ -93,7 +70,7 @@ pub(super) fn generate_hit_clusters(
             0.0
         };
         generate_cluster_events(
-            &effective_steps,
+            effective_steps,
             &step_event_counts,
             &key_overrides,
             &overrides.use_steps,

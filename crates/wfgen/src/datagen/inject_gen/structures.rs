@@ -48,10 +48,6 @@ pub(super) struct InjectOverrides {
     pub(super) entity_field: Option<String>,
     /// 显式实体个数（新语法）。`None` = 旧语法，由「配额 × 比例 ÷ 每实体条数」推出。
     pub(super) entity_count: Option<u64>,
-    /// Override the threshold (events per entity) for hit/near_miss clusters.
-    pub(super) count_per_entity: Option<u64>,
-    /// For legacy near_miss overrides: 0-indexed last completed step.
-    pub(super) steps_completed: Option<usize>,
     /// Override the window duration for cluster time distribution.
     pub(super) within: Option<Duration>,
     /// Ordered `use(...)` declarations; each declaration maps to one rule step.

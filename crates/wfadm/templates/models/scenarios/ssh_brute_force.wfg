@@ -3,7 +3,7 @@ use "../rules/02-initial_access/ssh_brute_force.wfl"
 
 #[duration=10m]
 scenario brute_force_detect<seed=42> {
-  traffic {
+  background {
     stream auth_events gen 50/s
   }
   injection {
@@ -16,10 +16,5 @@ scenario brute_force_detect<seed=42> {
     miss<21000> for ssh_brute_force auth_events {
       use(result="success", service="ssh") x 1
     }
-  }
-  expect {
-    hit(ssh_brute_force) >= 90%
-    near_miss(ssh_brute_force) <= 5%
-    miss(ssh_brute_force) <= 0.5%
   }
 }

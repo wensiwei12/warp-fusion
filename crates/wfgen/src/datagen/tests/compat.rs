@@ -6,7 +6,7 @@ fn test_no_inject_backward_compat() {
     let input = r#"
 #[duration=10s]
 scenario compat<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 10/s
     }
 }

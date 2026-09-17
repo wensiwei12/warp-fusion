@@ -5,18 +5,14 @@ fn test_inject_hit_cluster_correctness() {
     let input = r#"
 #[duration=10s]
 scenario inject_hit<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 100/s
     }
     injection {
-        hit<50%> LoginWindow {
-            src_ip seq {
-                use(action="failed") with(5)
-            }
+        // 100 个实体 × 每个 5 条 = 500 条注入（配额 1000，其余为背景）
+        hit<src_ip: 100> for auth_fail_rule LoginWindow {
+            use(action="failed") x 5
         }
-    }
-    expect {
-        hit(auth_fail_rule) >= 0%
     }
 }
 "#;
@@ -27,7 +23,7 @@ scenario inject_hit<seed=42> {
     let result = generate(&wfg, &schemas, &plans).unwrap();
     assert_eq!(result.events.len(), 1000);
 
-    // Hit clusters: 1000 * 50% = 500 events / 5 per cluster = 100 clusters
+    // 100 个实体 × 每个 5 条 = 500 条注入事件
     // Count events that are inject hit events by checking src_ip pattern
     let hit_events: Vec<_> = result
         .events
@@ -47,10 +43,10 @@ scenario inject_hit<seed=42> {
         })
         .collect();
 
-    // At minimum we should have some hit events
+    // At minimum we should have all 500 injected hit events
     assert!(
-        hit_events.len() >= 100,
-        "expected at least 100 hit events, got {}",
+        hit_events.len() >= 500,
+        "expected at least 500 hit events, got {}",
         hit_events.len()
     );
 
@@ -67,18 +63,14 @@ fn test_inject_filter_constraint_applied() {
     let input = r#"
 #[duration=5s]
 scenario inject_filter<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 100/s
     }
     injection {
-        hit<30%> LoginWindow {
-            src_ip seq {
-                use(success=false) with(5)
-            }
+        // 30 个实体 × 每个 5 条 = 150 条注入（配额 500）
+        hit<src_ip: 30> for auth_fail_rule LoginWindow {
+            use(success=false) x 5
         }
-    }
-    expect {
-        hit(auth_fail_rule) >= 0%
     }
 }
 "#;
@@ -144,18 +136,13 @@ fn test_inject_use_predicate_conflicting_with_filter_fails() {
     let input = r#"
 #[duration=5s]
 scenario inject_filter_conflict<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 100/s
     }
     injection {
-        hit<30%> LoginWindow {
-            src_ip seq {
-                use(success=true) with(5)
-            }
+        hit<src_ip: 30> for auth_fail_rule LoginWindow {
+            use(success=true) x 5
         }
-    }
-    expect {
-        hit(auth_fail_rule) >= 0%
     }
 }
 "#;
@@ -179,18 +166,13 @@ fn test_inject_near_miss_use_predicate_conflicting_with_filter_fails() {
     let input = r#"
 #[duration=5s]
 scenario inject_filter_conflict_nm<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 100/s
     }
     injection {
-        near_miss<30%> LoginWindow {
-            src_ip seq {
-                use(success=true) with(5)
-            }
+        near_miss<src_ip: 30> for auth_fail_rule LoginWindow {
+            use(success=true) x 5
         }
-    }
-    expect {
-        hit(auth_fail_rule) >= 0%
     }
 }
 "#;
@@ -214,19 +196,15 @@ fn test_inject_use_predicates_are_step_scoped_and_typed() {
     let input = r#"
 #[duration=5s]
 scenario inject_step_scope<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 40/s
     }
     injection {
-        hit<40%> LoginWindow {
-            src_ip seq {
-                use(success=false) with(1)
-                then use(success=true) with(1)
-            }
+        // 40 个实体 × (1 + 1) = 80 条注入（配额 200）
+        hit<src_ip: 40> for bool_chain LoginWindow {
+            use(success=false) x 1
+            then use(success=true) x 1
         }
-    }
-    expect {
-        hit(bool_chain) >= 0%
     }
 }
 "#;
@@ -288,22 +266,18 @@ scenario inject_step_scope<seed=42> {
 
 #[test]
 fn test_inject_near_miss_no_trigger() {
-    // near-miss events should produce N-1 events per cluster (not enough to trigger)
+    // near_miss 的条数就是写的 `x N`：x 4 < 阈值 5，故不成簇、不触发
     let input = r#"
 #[duration=10s]
 scenario inject_nm<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 100/s
     }
     injection {
-        near_miss<40%> LoginWindow {
-            src_ip seq {
-                use(action="failed") with(5)
-            }
+        // 100 个实体 × 每个 4 条 = 400 条注入（配额 1000）
+        near_miss<src_ip: 100> for brute_force LoginWindow {
+            use(action="failed") x 4
         }
-    }
-    expect {
-        hit(brute_force) >= 0%
     }
 }
 "#;
@@ -330,18 +304,14 @@ fn test_inject_hit_triggers_oracle() {
     let input = r#"
 #[duration=10s]
 scenario inject_oracle<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 100/s
     }
     injection {
-        hit<50%> LoginWindow {
-            src_ip seq {
-                use(action="failed") with(5)
-            }
+        // 100 个实体 × 每个 5 条 = 500 条注入 → 100 个簇
+        hit<src_ip: 100> for brute_force LoginWindow {
+            use(action="failed") x 5
         }
-    }
-    expect {
-        hit(brute_force) >= 0%
     }
 }
 "#;
@@ -356,7 +326,7 @@ scenario inject_oracle<seed=42> {
     let duration = Duration::from_secs(3600);
     let oracle = run_oracle(&result.events, &plans, &start, &duration, None).unwrap();
 
-    // 1000 events * 50% = 500 hit events / 5 per cluster = 100 clusters → 100 alerts
+    // 100 个实体 × 每个 5 条 = 500 条注入 / 每簇 5 条 = 100 个簇 → 100 条告警
     assert_eq!(
         oracle.alerts.len(),
         100,
@@ -373,33 +343,25 @@ scenario inject_oracle<seed=42> {
 }
 
 #[test]
-fn test_inject_budget_allocation() {
-    // hit% + near_miss% + non_hit% should be accounted for; rest is background
+fn test_inject_mode_counts_are_independent_and_additive() {
+    // 三种模式的数量各自写死、互不共享预算：
+    //   60×5 + 25×4 + 200×1 = 600 条注入；配额 1000，其余 400 条为背景
     let input = r#"
 #[duration=10s]
 scenario inject_budget<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 100/s
     }
     injection {
-        hit<30%> LoginWindow {
-            src_ip seq {
-                use(action="failed") with(5)
-            }
+        hit<src_ip: 60> for brute_force LoginWindow {
+            use(action="failed") x 5
         }
-        near_miss<10%> LoginWindow {
-            src_ip seq {
-                use(action="failed") with(5)
-            }
+        near_miss<src_ip: 25> for brute_force LoginWindow {
+            use(action="failed") x 4
         }
-        miss<20%> LoginWindow {
-            src_ip seq {
-                use(action="success") with(1)
-            }
+        miss<src_ip: 200> for brute_force LoginWindow {
+            use(action="success") x 1
         }
-    }
-    expect {
-        hit(brute_force) >= 0%
     }
 }
 "#;
@@ -408,8 +370,23 @@ scenario inject_budget<seed=42> {
     let plans = vec![make_brute_force_plan()];
 
     let result = generate(&wfg, &schemas, &plans).unwrap();
-    // Total should still be 1000
+    // 注入量不超出配额，因此总条数 = max(配额, 注入量) = 1000
     assert_eq!(result.events.len(), 1000);
+
+    let injected = result
+        .events
+        .iter()
+        .filter(|e| {
+            e.fields
+                .get("src_ip")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.starts_with("10.") && s.len() <= 15)
+        })
+        .count();
+    assert!(
+        injected >= 600,
+        "三种模式的注入量必须各自写死并相加（60×5 + 25×4 + 200×1 = 600），实际 {injected}"
+    );
 }
 
 #[test]
@@ -417,18 +394,13 @@ fn test_inject_deterministic() {
     let input = r#"
 #[duration=5s]
 scenario inject_det<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 100/s
     }
     injection {
-        hit<30%> LoginWindow {
-            src_ip seq {
-                use(action="failed") with(5)
-            }
+        hit<src_ip: 30> for brute_force LoginWindow {
+            use(action="failed") x 5
         }
-    }
-    expect {
-        hit(brute_force) >= 0%
     }
 }
 "#;

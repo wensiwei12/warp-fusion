@@ -17,9 +17,7 @@ use crate::wfg_ast::StreamBlock;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn generate_near_miss_clusters(
-    percent: f64,
     rule_struct: &RuleStructure,
-    stream_totals: &HashMap<String, u64>,
     schemas: &[WindowSchema],
     scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
@@ -41,8 +39,7 @@ pub(super) fn generate_near_miss_clusters(
         return Ok(Vec::new());
     }
 
-    let num_clusters =
-        resolve_cluster_count(overrides, percent, steps, &near_miss_counts, stream_totals);
+    let num_clusters = resolve_cluster_count(overrides);
 
     if num_clusters == 0 {
         return Ok(Vec::new());

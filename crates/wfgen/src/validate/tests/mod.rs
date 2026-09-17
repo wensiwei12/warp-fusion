@@ -1,5 +1,4 @@
 mod field;
-mod inject;
 mod oracle;
 mod stream;
 mod syntax;
@@ -10,7 +9,7 @@ use std::time::Duration;
 use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
 
 /// Helper: build a minimal WfgFile.
-fn minimal_wfg(streams: Vec<StreamBlock>, injects: Vec<InjectBlock>) -> WfgFile {
+fn minimal_wfg(streams: Vec<StreamBlock>) -> WfgFile {
     WfgFile {
         uses: vec![],
         scenario: ScenarioDecl {
@@ -22,7 +21,6 @@ fn minimal_wfg(streams: Vec<StreamBlock>, injects: Vec<InjectBlock>) -> WfgFile 
             },
             total: 100,
             streams,
-            injects,
             faults: None,
             oracle: None,
         },
@@ -109,19 +107,6 @@ fn stream_with_override(alias: &str, window: &str, field: &str, expr: GenExpr) -
         overrides: vec![FieldOverride {
             field_name: field.into(),
             gen_expr: expr,
-        }],
-    }
-}
-
-fn inject(rule: &str, streams: Vec<&str>) -> InjectBlock {
-    InjectBlock {
-        rule: rule.into(),
-        streams: streams.into_iter().map(|s| s.into()).collect(),
-        lines: vec![InjectLine {
-            mode: InjectMode::Hit,
-            percent: 20.0,
-            params: vec![],
-            use_steps: vec![],
         }],
     }
 }
