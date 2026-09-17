@@ -3,6 +3,22 @@
 This file records user-facing changes to `wfusion` / `wfl` / `wfgen` / `wfadm`.
 Internal implementation details, dependency alignment, and test counts are not covered here.
 
+## [0.6.3]
+
+### Fixed
+
+- **`first(field)` drifts past the field-history cap (issue #100)**: beyond 1024 events in a window the earliest sample was dropped, so aggregate keys / `alert_id` built from `first(field)` produced multiple unique keys; it is now pinned to the earliest event of the instance (sample bound 1024 -> 1025; `collect_*` / `min` / `max` / `sum` / `avg(alias.field)` include it).
+- **Threshold expressions must be compile-time constants (issue #101)**: field references, non-constant `let` and function calls (`first` / `collect_*` / `now*` / `baseline`, ...) compiled but never fired at runtime with no error; now rejected at compile time.
+
+### Language
+
+- A rule-level constant `let` (e.g. `let THRESHOLD = 3`) can be used as a threshold; non-constant `let` is still rejected, rule-level `let` is unavailable inside a pipeline stage, and duplicate names are rejected.
+- Over-complex input is now a compile-time error instead of a compiler stack-overflow abort: expression nesting groups <= 5, operator chains within one group <= 16, rule-level `let` reference chains <= 5; `let` forward references report a declaration-order error.
+
+### Engine
+
+- Aligned to wp-reactor v2.0.24.
+
 ## [0.6.2]
 
 ### Fixed
