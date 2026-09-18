@@ -87,6 +87,20 @@ impl WithoutGuard {
     pub fn is_violation(&self, event: &GenEvent) -> bool {
         self.covers(event) && self.matches_predicates(event)
     }
+
+    /// 这批事件里第一条违反本约束的（`replay` 的“排不掉”检查用，设计 §8.3）。
+    pub fn first_violation<'a>(&self, events: &'a [GenEvent]) -> Option<&'a GenEvent> {
+        events.iter().find(|event| self.is_violation(event))
+    }
+
+    /// 谓词的可读渲染（`a=1, b="x"`），错误信息用。
+    pub fn describe_predicates(&self) -> String {
+        self.predicates
+            .iter()
+            .map(|(field, value)| format!("{field}={value}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 /// JSON 等值比较：数值按 `f64` 比。

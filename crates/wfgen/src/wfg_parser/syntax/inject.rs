@@ -257,7 +257,7 @@ fn parse_explicit_injection_case(
 }
 
 /// 事件字段值的来源：`(preds)` / `({json})` / `from "path"`
-fn parse_value_source(input: &mut &str) -> ModalResult<ValueSource> {
+pub(super) fn parse_value_source(input: &mut &str) -> ModalResult<ValueSource> {
     ws_skip(input)?;
     if opt(wf_lang::parse_utils::kw("from"))
         .parse_next(input)?

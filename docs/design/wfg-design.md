@@ -75,6 +75,7 @@ timeline_expr    = "timeline" , "{" , { DURATION , ".." , DURATION , "=" , rate_
 shape_kw         = "sine" | "triangle" | "square" ;
 
 inject_block     = "inject" , "{" , { inject_case } , "}" ;
+replay_stmt      = "replay" , IDENT , "{" , "use" , "from" , STRING , "}" ;
 inject_case      = mode_kw , "<" , [ IDENT , ":" ] , INTEGER , ">" ,
                    "for" , IDENT , IDENT , "{" , inject_body , "}" ;
 mode_kw          = "hit" | "near_miss" | "miss" ;
@@ -106,6 +107,8 @@ value            = STRING | NUMBER | DURATION | "true" | "false"
 - `without(preds) [within D]` 是**构造约束**（不是步骤）：声明“该实体的窗口内不得出现
   匹配 `preds` 的事件”。**不写条数**、不注入事件、不占步骤位（不参与 VN24）。
   `within` 省略时取目标规则 `match` 的窗口长度。见 §3.8。
+- `replay <window> { use from "file" }` 是**照单发货**通道（§3.9）：不写条数、不做实体
+  数学、不参与实体断言；可写多条，与 `inject` 并存。
 - 期望块 `expect {…}` 已删除，断言由模式承担（§3.2）。
 
 ### 2.2 完整示例
@@ -160,6 +163,17 @@ hit<event_id: 200> for object_on_each sdm_event {
 hit<sip: 20> for sdm_rule sdm_event {
   use from "raw/big.ndjson" x 3                    // 值来自文件
   spread 5m
+}
+```
+
+把一份现成的数据原样灌进去（不做实体数学、不参与断言）：
+
+```wfg
+#[duration=10m]
+scenario replay_only<seed=1> {
+  background { stream conn_events gen 50/s }
+
+  replay conn_events { use from "raw/monday.ndjson" }   // 文件有多少条就发多少条
 }
 ```
 
@@ -337,6 +351,32 @@ VN25（`within` ≤ `#[duration]`）。
 窗口闭区间 + 命中谓词）。实体标识定位不到（复合 `entity(...)`）时直接报生成期错误——
 `without` 的保证以实体为单位，定位不到实体就无法把保证落到窗口上。
 
+### 3.9 `replay`：照单发货
+
+```wfg
+replay conn_events { use from "raw/monday.ndjson" }
+```
+
+把一份现成数据原样灌进去，取代 `wfgen send --input` 的多数用法。与 `inject` 的三点不同：
+**不写条数**（文件有多少条就发多少条）、**不做实体数学**、**不参与实体断言**
+（`hit` / `near_miss` / `miss` 那套与它无关）。可写多条，与 `inject` / `background` 并存。
+
+| 项 | 口径 |
+|---|---|
+| 值来源 | 只有文件（`use from`）；写成内联值或 `x N` 报 VN20 |
+| 记录形态 | object / object 数组 / NDJSON（与 `use from` 同构，脚本由 loader 解析） |
+| 目标 stream | 必须是已加载 schema 里的窗口（VN3）；**不要求**写在 `background` 里（回放流可以不要背景噪声） |
+| 事件字段 | 记录顶层键照抄（`_stream` 等 `_` 前缀内部键剔除）；时间列写 schema 的 `time_field` |
+| 时间来源 | `_timestamp` 优先，其次 schema 的 `time_field`；按位宽归一化（秒 / 毫秒 / 微秒 / 纳秒） |
+| 时间对齐 | 以文件**最早一条**为锚平移到场景起点（同文件内相对间隔保持），使 `#[duration]` 成为三类事件共同的时间窗 |
+| 无时间字段 | 按序号在 `duration` 内均匀落下（与 `miss` 同策略） |
+| 断言 | 不对任何实体承诺"必须 / 不得报警"，但它的事件**必须**进 oracle 的输入流（否则期望文件与引擎不一致） |
+| `without(...)` | 对 replay 事件同样生效：命中 guard 谓词 → 生成期报错（replay 数据不能自动剔除） |
+| `spread` | 与它无关（`spread` 是 inject 簇的铺开旋钮） |
+
+校验：文件缺失 / 非 JSON / 形态非法在加载期报错；为空或时间字段口径不齐报 **VN26**；平移后
+超出 `#[duration]` 报 **VN25**（不截断，不静默丢数据）。决策过程见 §8。
+
 ## 4. 校验与错误码
 
 ### 4.1 校验期（`wfgen lint` / `gen` 加载阶段）
@@ -368,10 +408,15 @@ VN25（`within` ≤ `#[duration]`）。
 | VN22 | 显式实体字段不在该 stream 的 schema | `… 实体字段 '<f>' 不在 stream '<s>' 的 schema '<w>' 里` |
 | VN23 | 显式实体字段与规则推断不一致（单 key `match` = 该 key；`on each` = `entity(...)` 的单字段） | `… 显式实体字段 '<f>' 与规则 '<r>' 推断的实体字段 '<g>' 不一致（去掉显式字段即用推断值；多 key 规则才需要显式消歧）` |
 | VN24 | `use` 事件组数 > 规则的事件步骤数（每个 `use ... x N` 对应一个步骤） | `… use 事件组数 2 超过规则 '<r>' 的事件步骤数 1（每个 `use ... x N` 对应一个步骤）` |
-| VN25 | `spread` 或 `without ... within` 超过 `#[duration]` | `spread 20m` / `第 1 个 without 的 within 20m` 超过场景 duration `10m` |
+| VN25 | `spread` / `without ... within` / `replay` 文件跨度 超过 `#[duration]` | `spread 20m` / `第 1 个 without 的 within 20m` / `replay 文件 \`x.ndjson\` 的时间跨度 300 超过场景 duration 60s` |
+| VN26 | `replay` 文件为空，或文件里的时间字段口径不齐（部分记录有 / 没有） | `replay 文件 \`raw.ndjson\` 为空` / `… 时间字段 '_timestamp' 只在 1 / 3 条记录上出现（或不是合法时间戳）` |
+| VN27 | 场景的实体 id 总数 ≥ 2^24（用例之间靠分段保证实体值不重叠，而实体值按 24 位地址映射） | `injection 实体 id 总数 16777216 达到上限 16777216（…超出后用例之间的实体会重叠：hit 与 near_miss 会指向同一实体）` |
 
 `without(...)` 的谓词与 `use(...)` 共用同一套字段检查：重名 VN9、不在 schema VN11、
 重复实体键 VN12（VN12 在这条路径上尤其重要——见 §3.8）。
+
+VN27 的计数口径与生成侧一致：`hit` / `near_miss` 每个实体占一个 id；`miss` 是「每个事件
+一个独立键」，故每个用例占 `实体个数 × ΣN`（这是 `miss` 能不成簇的前提，§4.2）。
 
 其他族（不在上表）：`SC2/SC2a/SC3/SC4`（stream 与规则 / schema 的绑定关系）、
 `SV2/SV3/SV4/SV6/SV7/SV8`（场景基础值、字段类型、oracle 参数）。
@@ -516,6 +561,10 @@ wfg + wfs + wfl
   必须不报警；复用 oracle 结果，失败在写期望文件之前报出。
 - 实体键空间按用例分段（`InjectEntities::next_entity_base`）：用例之间实体值不重叠，
   否则 `hit` 与 `near_miss` 会指向同一实体、两个口径互相污染。
+- 分段上限由校验期 VN27 拦下：实体值按 24 位地址映射（Ip 写 `10.a.b.c`），一个场景的
+  实体 id 总数（`hit` / `near_miss` = 实体个数；`miss` = 实体个数 × ΣN）必须 < 2^24；
+  超出后段会重叠、不同用例拿到同一个值。生成侧 `generate_key_values` 的 Ip 映射与该上限
+  共用同一个常量（`ENTITY_ID_SPACE`）+ 一条 debug 断言，两处口径不会漂移。
 - 校验期实体字段检查 VN22 / VN23：显式实体字段必须在该 stream 的 schema 里，且必须与
   规则推断的实体字段一致（单 key `match` = 该 key；`on each` = `entity(...)` 的单字段；
   多 key 规则的显式字段按消歧用法放行）。缺了它，注入会静默指向错实体——生成器对拿不到
@@ -529,6 +578,12 @@ wfg + wfs + wfl
   `WithoutGuard` 清单——注入事件命中谓词即报错，背景噪声命中谓词则剔除。
 - 旧 `not(...) within(...)` / `<field> seq { … }` / `use(...) with(N)` 在解析期各报一条
   带改写方向的 VN20 文案（§5.1）。
+- `replay <window> { use from "file" }` 照单发货（§3.9 / §8）：文件记录照抄成事件（`_` 前缀
+  内部键剔除、`_timestamp` 作为时间来源），时间以文件最早一条为锚**平移**到场景起点，
+  使 `#[duration]` 成为三类事件共同的时间窗；文件没有时间字段时按序号在 `duration` 内均匀
+  落下。文件缺失 / 为空 / 时间字段口径不齐 / 跨度超 `#[duration]` 都在加载与校验期报错；
+  `without(...)` 的 guard 对 replay 事件同样生效（命中即报生成期错误——replay 的数据不能
+  自动剔除）。
 - 背景与注入完全分离：背景保留自己的配额（`rate × duration`），注入在其上叠加
   （旧口径 `背景 = 配额 − 注入` 及其 `inject_counts` 链路已删除）。
 - 注入时间在场景 `duration` 内**等距铺开**：簇起点由 `uniform_cluster_start` 算出
@@ -557,8 +612,6 @@ wfg + wfs + wfl
 
 | 项 | 状态 |
 |---|---|
-| `replay STREAM { use from "f" }` 照单发货 | 未实现 |
-| VN26（replay 文件） | 未实现；**依赖 `replay STREAM { use from }` 先落地**（该语法尚不存在，无物可校验） |
 | 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | **已落地**（§7.1；16/16 `lint` + `gen` 断言通过） |
 | 文档：CHANGELOG | **已落地**（v0.7.0 随 release 提交写入 `CHANGELOG.md` / `CHANGELOG.en.md`，中英双语） |
 
@@ -566,9 +619,6 @@ wfg + wfs + wfl
 
 - 生成期断言在**分片 / 多实例**下的口径（当前 oracle 是单机内存模型）。
 - `replay` 与 `inject` 并存时的**时间对齐**（谁决定 watermark 推进）。
-- 实体分段的**上限**：分段使实体值不重叠依赖 Ip 映射的 24 位地址空间（`10.a.b.c`），
-  因此一个场景的实体 id 总数需 < 2^24（约 1670 万，实际够用）。超出后段会重叠，
-  目前未做校验，建议改成明确报错。
 - 场景注解 `tick` / `rows` / `emit`：语法上可写，但**未被消费**（当前只 `duration` / `seed` 生效，§2.1）。
 
 ### 7.3 扩展规划
@@ -588,3 +638,68 @@ wfg + wfs + wfl
 - 模板化：`template/param` 复用场景片段。
 - 基线对比：与历史结果自动比对回归漂移。
 - 报告输出：自动生成 markdown/html 对比报告。
+
+## 8. `replay` 的时间对齐：方案与决定（**已落地**）
+
+`replay STREAM { use from "f" }` 是 §7.2 里剩下的大块：一条"照单发货"的通道（文件有多少条发
+多少条、不做实体数学、不参与实体断言），取代 `wfgen send --input` 的多数用法。它与
+`inject` / `background` **可并存**——问题就出在这里：三类事件必须落在同一条时间轴上。
+
+### 8.1 事实（代码依据，不是推测）
+
+| 事实 | 依据 |
+|---|---|
+| 输出是**单条时间序**流 | `datagen::merge_sorted_chunks` 按时间戳归并所有 chunk |
+| oracle 的收口水位固定在 `场景起点 + #[duration]` | `oracle/mod.rs`：`eos_time = scenario_start + duration`，随后推进水位并（batch 时）`close_all` |
+| `--send` 只发事件，引擎**纯事件时间**驱动 watermark | `cmd_gen` 的发送路径只送 `_stream` / `_window` / 字段，不传场景起止 |
+| `inject` / `background` 的时间**全部由 `#[duration]` 决定** | 簇起点 `uniform_cluster_start`（§3.5）、背景 `rate × duration` |
+
+推论：**文件里的时间戳一旦落在 `[场景起点, 场景起点 + duration]` 之外，oracle 与引擎的口径
+就对不上**——oracle 会在文件时间戳之后把水位退回 EOS，引擎侧的窗口收口则是跟着数据走的。
+
+### 8.2 方案对比
+
+| 方案 | 做法 | 优点 | 问题 |
+|---|---|---|---|
+| **A 原样照发** | 直接并入文件时间戳，`#[duration]` 只管 background / inject | 最"回放"，不改文件语义 | 单条时间轴被打破：超出窗口的事件会让 oracle 水位与引擎错位，期望文件与实际输出不一致 |
+| **B 重新基准（推荐）** | 取文件内最早时间戳为锚，整体平移使锚点落在场景起点；`#[duration]` 成为三类事件**共同**的时间窗 | 一条时间轴、水位唯一、oracle 的 EOS 口径不变、batch 与 `--send` 行为一致 | 文件里的"真实时刻"被改写（回放语义有损），需在文档里写明 |
+| **C 场景时长让给 replay** | 场景时长取 `max(#[duration], replay 跨度)`，或给 `replay` 自带 `within D` | 保留文件时间戳的相对关系 | 多 replay 块 + inject + background 需要一个统一的"时间轴合并"规则，复杂度高、校验码也要新增 |
+| **D replay 不进 oracle** | 断言只看 background + inject，replay 只写文件 | 断言口径最干净 | 引擎看到的是**合并后的流**，replay 事件照样可能触发规则 → 期望文件与引擎必然不一致。除非能保证 replay 事件不触发任何规则（做不到） |
+
+### 8.3 已定口径
+
+**① 时间基准 = 方案 B（重新基准）；② 锚点在场景起点；③ 无时间字段则按序号均匀落下；
+④ 允许与 `inject` 指同一 stream**（均已拍板）。据此写死五条：
+
+1. **单条时间轴**：`#[duration]` 是 background / inject / replay 三类事件共同的时间窗；
+   `replay` 事件以文件内最早时间戳为锚平移进该窗（同文件内相对间隔保持），锚点即**场景起点**。
+2. **事件时间优先**：文件记录里若有时间字段（`_timestamp` 或 schema 的 `time_field`），
+   **用字段值**算锚点与间隔；同一个文件里“部分记录有时间字段” ⇒ **报错**（口径必须唯一）；
+   全都没有时间字段时，按序号在 `duration` 内均匀落下（与 `miss` 同策略，见 §3.5）。
+3. **断言豁免、但参与流**：`replay` 不对任何实体承诺"必须 / 不得报警"，但它的事件**必须**
+   进 oracle 的输入流——否则期望文件与引擎不一致（这正是 D 的问题）。
+4. **与 `inject` 可指同一 stream**：叠加是预期语义；叠加后若 replay 数据破坏了 hit /
+   near_miss 的口径，INJ1/INJ2 会如实报出——不静默。
+5. **文件跨度不得超过 `#[duration]`**：平移后落在窗内是硬前提（否则违反第 1 条），超出
+   直接报错，不截断（不静默丢数据）；多 replay 块各自独立平移、不额外错开。
+
+另外三条附注：
+
+- `replay` 不受 `spread` 影响（`spread` 是 inject 簇的铺开旋钮）。
+- VN26（文件缺失 / 为空即报错）随 `replay` 一起落地，口径沿用旧设计。
+- **`without(...)` 对 replay 是“排不掉”的来源**：guard 现在只剔背景噪声、对注入冲突报错；
+  replay 事件既不能默默删（那是用户给的数据）、也不能默默无视（否则窗口保证失效）。
+  故 replay 事件命中某个 guard 的谓词 → **生成期报错**，与注入侧冲突同口径。
+
+### 8.4 决定记录
+
+| # | 问题 | 结论 |
+|---|---|---|
+| ① | 时间基准 | **B（重新基准）** |
+| ② | `replay` 锚点 | **场景起点**（除平移外不改写文件；多 replay 块各自锚到起点） |
+| ③ | 无时间字段怎么落时间 | **按序号在 `duration` 内均匀落下**；同文件内部分有时间字段 ⇒ 报错 |
+| ④ | 是否允许与 `inject` 同 stream | **允许**（叠加语义；断言如实反映） |
+
+落地清单（**全部完成**）：语法与 AST（`replay <window> { use from … }`，可写多条）、
+loader 解析（`--no-wfl` 也解析，因为 replay 不依赖规则）、生成路径（平移 / 无时间字段时均匀
+落下 / 写 `time_field` 时间列）、VN26 与跨度检查（VN25）、`without` × replay 冲突检查、文档。

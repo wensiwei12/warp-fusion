@@ -4,6 +4,7 @@ use wf_lang::WindowSchema;
 use wf_lang::ast::{Expr, FieldRef, RuleDecl};
 
 use super::ValidationError;
+use crate::datagen::inject_gen::ENTITY_ID_SPACE;
 use crate::datagen::inject_gen::field_ref_field_name;
 use crate::wfg_ast::{AttrValue, FieldPredicate, ValueSource, WfgFile, json_top_level_entries};
 
@@ -17,6 +18,7 @@ pub(super) fn validate_syntax(
     let Some(syntax) = &wfg.syntax else {
         return errors;
     };
+    let duration = wfg.scenario.time_clause.duration;
 
     if syntax.background.streams.is_empty() {
         errors.push(ValidationError {
@@ -43,6 +45,9 @@ pub(super) fn validate_syntax(
         }
     }
 
+    // `replay`：与 WFL 无关（`--no-wfl` 也要发数据），因此不受 `skip_wfl` 门控（设计 §8）。
+    validate_replays(syntax, schemas, duration, &mut errors);
+
     // VN20（旧的比例形式）在解析期就报错，走不到这里。
     if let Some(inj) = &syntax.injection {
         let background_streams: HashSet<&str> = syntax
@@ -55,9 +60,10 @@ pub(super) fn validate_syntax(
             .iter()
             .map(|schema| (schema.name.as_str(), schema))
             .collect();
-        let duration = wfg.scenario.time_clause.duration;
+        let mut total_entity_ids: u128 = 0;
 
         for case in &inj.cases {
+            total_entity_ids += entity_ids_consumed(case);
             let stream = case.stream.as_str();
             let case_schema = schemas_by_name.get(stream).copied();
             if !background_streams.contains(stream) {
@@ -212,6 +218,20 @@ pub(super) fn validate_syntax(
                 );
             }
         }
+
+        // VN27：实体 id 总数不得超过 24 位地址空间（设计 §7.2）。用例之间靠**分段**保证
+        // 实体值不重叠，而实体值按 24 位地址映射（Ip 写 `10.a.b.c`）；超出后不同用例会
+        // 拿到同一个值，`hit` 与 `near_miss` 指向同一实体、两个口径互相污染，且无任何报错。
+        // 这里用 u128 累加，避免大数字先把 u64 溢出成小数字而绕过检查。
+        if total_entity_ids >= u128::from(ENTITY_ID_SPACE) {
+            errors.push(ValidationError {
+                code: "VN27",
+                message: format!(
+                    "injection 实体 id 总数 {} 达到上限 {}（实体值按 24 位地址映射，超出后用例之间的实体会重叠：hit 与 near_miss 会指向同一实体）；请减少各用例的实体个数或 `x N`",
+                    total_entity_ids, ENTITY_ID_SPACE
+                ),
+            });
+        }
     }
 
     // Rule-presence check (VN14) is skipped when the WFL pipeline is opted out
@@ -231,6 +251,120 @@ pub(super) fn validate_syntax(
     }
 
     errors
+}
+
+/// 一个注入用例消耗的实体 id 数（设计 §7.2 的 VN27 口径）。
+///
+/// 与生成侧逐实体循环同口径：
+///
+/// - `hit` / `near_miss`：每个实体一个 id → `entity_count`；
+/// - `miss`：**每个事件一个独立键**（不然就成簇报警了），一轮用例内每个事件各占一个 id
+///   → `entity_count × Σ(N)`。
+///
+/// 用 `u128` 累加：这两个数都来自用户书写的 `u64`，先做 u64 乘法会把大数字翻成小数字、
+/// 反而绕过了上限检查。
+fn entity_ids_consumed(case: &crate::wfg_ast::InjectCase) -> u128 {
+    let count = u128::from(case.entity_count);
+    match case.mode {
+        crate::wfg_ast::InjectCaseMode::Miss => {
+            let per_entity: u128 = case
+                .groups
+                .iter()
+                .map(|group| u128::from(group.count))
+                .sum();
+            count * per_entity
+        }
+        _ => count,
+    }
+}
+
+/// `replay` 语句的校验（设计 §8.3）。
+///
+/// - **VN3**：目标 stream 不在已加载的 schema 里（与 `background` 的 stream 同一类错，
+///   但 `replay` **不要求**写在 `background` 里——回放流可以完全不要背景噪声）；
+/// - **VN26**：文件记录为空、或记录里的时间字段口径不齐（部分记录有、部分没有）——
+///   后者会静默把一部分数据摆在错误的时间上，所以在校验期就拦；
+/// - **VN25**：文件的时间跨度超过 `#[duration]`（平移后必然溢出，不截断）。
+fn validate_replays(
+    syntax: &crate::wfg_ast::SyntaxScenario,
+    schemas: &[WindowSchema],
+    duration: std::time::Duration,
+    errors: &mut Vec<ValidationError>,
+) {
+    let schemas_by_name: HashMap<&str, &WindowSchema> = schemas
+        .iter()
+        .map(|schema| (schema.name.as_str(), schema))
+        .collect();
+    let duration_nanos = duration.as_nanos().min(i64::MAX as u128) as i64;
+
+    for stmt in &syntax.replays {
+        let schema = schemas_by_name.get(stmt.window.as_str()).copied();
+        if schema.is_none() {
+            errors.push(ValidationError {
+                code: "VN3",
+                message: format!(
+                    "replay 目标 stream '{}' not found in loaded schemas (.wfs windows)",
+                    stmt.window
+                ),
+            });
+        }
+
+        if stmt.records.is_none() {
+            errors.push(ValidationError {
+                code: "VN26",
+                message: format!(
+                    "replay 文件 `{}` 尚未解析（未经 loader）；请通过 CLI（wfgen lint / gen）加载场景",
+                    stmt.file
+                ),
+            });
+            continue;
+        }
+
+        let records = match super::super::datagen::replay_gen::replay_records(stmt) {
+            Ok(records) => records,
+            Err(err) => {
+                errors.push(ValidationError {
+                    code: "VN26",
+                    message: err
+                        .detail()
+                        .clone()
+                        .unwrap_or_else(|| format!("replay 文件 `{}` 的记录形态非法", stmt.file)),
+                });
+                continue;
+            }
+        };
+        if records.is_empty() {
+            errors.push(ValidationError {
+                code: "VN26",
+                message: format!("replay 文件 `{}` 为空", stmt.file),
+            });
+            continue;
+        }
+
+        match super::super::datagen::replay_gen::plan_replay_timeline(&records, schema, duration) {
+            Ok(timeline) => {
+                let span = timeline.offsets_nanos.iter().max().copied().unwrap_or(0);
+                if span > duration_nanos {
+                    errors.push(ValidationError {
+                        code: "VN25",
+                        message: format!(
+                            "replay 文件 `{}` 的时间跨度 {} 超过场景 duration {:?}（平移后必然溢出）",
+                            stmt.file,
+                            std::time::Duration::from_nanos(span as u64).as_secs_f64(),
+                            duration
+                        ),
+                    });
+                }
+            }
+            Err(err) => errors.push(ValidationError {
+                code: "VN26",
+                message: err
+                    .detail()
+                    .clone()
+                    .unwrap_or_else(|| format!("replay 文件 `{}` 的时间字段口径非法", stmt.file)),
+            }),
+        }
+    }
 }
 
 /// 规则可注入的事件步骤数（设计 §4.1 VN24）。

@@ -2,6 +2,7 @@ mod compat;
 mod event;
 mod fault;
 mod inject;
+mod replay;
 
 use std::time::Duration;
 

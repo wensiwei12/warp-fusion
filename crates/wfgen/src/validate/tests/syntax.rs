@@ -901,3 +901,81 @@ fn test_syntax_without_not_counted_toward_rule_steps() {
         errors
     );
 }
+
+// ---------------------------------------------------------------------------
+// VN27：实体 id 总数不得超过 24 位地址空间
+// ---------------------------------------------------------------------------
+
+/// 造一个只带注入、规则与 schema 极简的场景（VN27 与 WFL 无关，传空规则即可）。
+fn entity_id_budget_probe(uses: &str) -> Vec<String> {
+    let src = format!(
+        "#[duration=10m]\nscenario s<seed=1> {{\n    background {{ stream auth_events gen 1/s }}\n    inject {{\n{uses}    }}\n}}\n"
+    );
+    let wfg = parse_wfg(&src).unwrap();
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![("sip", BaseType::Ip), ("login", BaseType::Chars)],
+    )];
+    validate_wfg(&wfg, &schemas, &[], true)
+        .into_iter()
+        .map(|e| format!("{}: {}", e.code, e.message))
+        .collect()
+}
+
+/// `hit` / `near_miss` 每个实体一个 id：总数 = 实体个数。边界取上限两侧（含相等）。
+#[test]
+fn test_syntax_entity_id_budget_hit_boundary() {
+    const LIMIT: u64 = 1 << 24;
+    for (count, expect_vn27) in [(LIMIT - 1, false), (LIMIT, true), (LIMIT + 1, true)] {
+        let errors = entity_id_budget_probe(&format!(
+            "        hit<sip: {count}> for rule_a auth_events {{\n            use(login=\"x\") x 1\n        }}\n"
+        ));
+        assert_eq!(
+            errors.iter().any(|e| e.starts_with("VN27")),
+            expect_vn27,
+            "hit<sip: {count}> 的 VN27 判定不符，errors: {errors:?}"
+        );
+    }
+}
+
+/// `miss` 每个事件一个独立键：总数 = 实体个数 × ΣN。
+///
+/// 这里单个用例的实体个数只占上限的四分之一，乘上 `x 4` 后刚好触顶——口径写错（漏乘）就抓不住。
+#[test]
+fn test_syntax_entity_id_budget_miss_multiplies_by_events() {
+    const LIMIT: u64 = 1 << 24;
+    for (count, per_entity, expect_vn27) in [(LIMIT / 4, 3, false), (LIMIT / 4, 4, true)] {
+        let errors = entity_id_budget_probe(&format!(
+            "        miss<sip: {count}> for rule_a auth_events {{\n            use(login=\"x\") x {per_entity}\n        }}\n"
+        ));
+        assert_eq!(
+            errors.iter().any(|e| e.starts_with("VN27")),
+            expect_vn27,
+            "miss<sip: {count}> x {per_entity} 的 VN27 判定不符，errors: {errors:?}"
+        );
+    }
+}
+
+/// 多用例**累加**（实体 id 分段是场景级的，不是用例级的）：单看任何一个都不超，合起来超。
+#[test]
+fn test_syntax_entity_id_budget_accumulates_across_cases() {
+    const LIMIT: u64 = 1 << 24;
+    let case = |mode: &str| {
+        format!(
+            "        {mode}<sip: {}> for rule_a auth_events {{\n            use(login=\"x\") x 1\n        }}\n",
+            LIMIT / 2
+        )
+    };
+
+    let one = entity_id_budget_probe(&case("hit"));
+    assert!(
+        !one.iter().any(|e| e.starts_with("VN27")),
+        "单个用例只占一半，不该报 VN27: {one:?}"
+    );
+
+    let two = entity_id_budget_probe(&format!("{}{}", case("hit"), case("near_miss")));
+    assert!(
+        two.iter().any(|e| e.starts_with("VN27")),
+        "两个用例各占一半、合计触顶，必须报 VN27: {two:?}"
+    );
+}

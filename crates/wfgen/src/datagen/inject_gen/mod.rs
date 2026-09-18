@@ -23,6 +23,8 @@ use extract::extract_rule_structure;
 /// 校验期（`validate/syntax.rs` 的 VN22/VN23）与生成期共用同一份「字段引用 → 叶子
 /// 字段名」规则，避免两边对「实体字段是什么」的判断漂移。
 pub(crate) use extract::field_ref_field_name;
+/// 实体 id 空间上限（24 位）：校验期 VN27 与生成侧的 Ip 映射共用同一份口径，避免两处漂移。
+pub(crate) use helpers::ENTITY_ID_SPACE;
 use structures::InjectEntities;
 pub use structures::{InjectEntityKey, InjectGenResult, InjectStepCount, WithoutGuard};
 
@@ -151,7 +153,7 @@ fn build_without_guards(
                         case.stream,
                         key.field,
                         key.value,
-                        describe_predicates(&guard.predicates),
+                        guard.describe_predicates(),
                         offender.timestamp,
                     ),
                 );
@@ -160,15 +162,6 @@ fn build_without_guards(
         }
     }
     Ok(guards)
-}
-
-/// 谓词的可读渲染：`a=1, b="x"`（错误信息用）。
-fn describe_predicates(predicates: &[(String, serde_json::Value)]) -> String {
-    predicates
-        .iter()
-        .map(|(field, value)| format!("{field}={value}"))
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 /// 该实体在这一批注入事件里的首条时间。

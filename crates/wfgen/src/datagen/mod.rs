@@ -1,6 +1,7 @@
 pub mod fault_gen;
 pub mod field_gen;
 pub mod inject_gen;
+pub mod replay_gen;
 pub mod stream_gen;
 #[cfg(test)]
 mod tests;
@@ -19,6 +20,7 @@ use crate::wfg_ast::WfgFile;
 use inject_gen::InjectEntityKey;
 use inject_gen::generate_inject_events;
 use inject_gen::{InjectGenResult, WithoutGuard};
+use replay_gen::generate_replay_events;
 use stream_gen::{GenEvent, generate_stream_events};
 
 /// Result of data generation.
@@ -82,6 +84,33 @@ pub fn generate(
         inject_events.sort_by_key(|a| a.timestamp);
         if !inject_events.is_empty() {
             sorted_chunks.push(inject_events);
+        }
+    }
+
+    // --- Replay (与 WFL 无关：`--no-wfl` 也要照单发货) ---
+    {
+        let replay_events = generate_replay_events(wfg, schemas, &start)?;
+        if !replay_events.is_empty() {
+            // `without(...)` 对 replay 是“排不掉”的来源（设计 §8.3）：replay 事件既不能默默删，
+            // 也不能默默无视——命中 guard 谓词就报错，与注入侧冲突同口径。
+            if let Some((guard, event)) = without_guards.iter().find_map(|guard| {
+                guard
+                    .first_violation(&replay_events)
+                    .map(|event| (guard, event))
+            }) {
+                return error::fail(
+                    WfgenReason::Generation,
+                    format!(
+                        "replay 事件（{}={}，时间 {}）命中了 without 谓词（{}）：\
+                         replay 的数据不能自动剔除，请调整文件或 `without(...)`",
+                        guard.field,
+                        guard.value,
+                        event.timestamp,
+                        guard.describe_predicates(),
+                    ),
+                );
+            }
+            sorted_chunks.push(replay_events);
         }
     }
 

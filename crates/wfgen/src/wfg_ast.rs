@@ -60,6 +60,8 @@ pub struct SyntaxScenario {
     pub inline_annos: Vec<ScenarioAttr>,
     pub background: BackgroundBlock,
     pub injection: Option<SyntaxInjectionBlock>,
+    /// `replay …` 语句（可写多条），与 `inject` 可并存（设计 §8）。
+    pub replays: Vec<ReplayStmt>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -149,6 +151,25 @@ pub struct TimelineSegment {
 #[non_exhaustive]
 pub struct SyntaxInjectionBlock {
     pub cases: Vec<InjectCase>,
+}
+
+/// `replay <window> { use from "file" }`：把文件里的记录**照单发货**（设计 §8）。
+///
+/// 与 `inject` 的三点不同：**不写条数**（文件有多少条就发多少条）、不做实体数学、
+/// 不参与实体断言（hit / near_miss / miss 那套）。
+///
+/// 时间上仍与 background / inject 共用一条时间轴：文件里最早的时间戳被平移到场景起点，
+/// 使 `#[duration]` 成为三类事件共同的时间窗（§8.3）。
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct ReplayStmt {
+    /// 目标 stream（窗口名）。
+    pub window: String,
+    /// `use from "<file>"` 的路径（相对 `.wfg` 所在目录解析；诊断消息要点名它）。
+    pub file: String,
+    /// loader 解析后的记录（object 或 object 数组，形态与 `use({...})` 同构）；
+    /// `None` = 尚未解析（未经 loader 的程序化调用）。
+    pub records: Option<serde_json::Value>,
 }
 
 /// 注入用例：数量是**写下来的**（设计 §4.1）。

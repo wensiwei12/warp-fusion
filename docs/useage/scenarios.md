@@ -145,6 +145,29 @@ scenario no_login_then_xfer<seed=7> {
   命中谓词 → 直接剔除。要造“违反”的样本，把那条事件当普通 `use(...) x N` 步骤注入。
 - 谓词与 `use(...)` 同形式，同样过 `VN9` / `VN11` / `VN12`。
 
+## 照单发货：`replay`
+
+有一份现成的数据要原样灌进去（不做实体数学、不参与断言），用 `replay`：
+
+```wfg
+#[duration=10m]
+scenario replay_only<seed=1> {
+  background { stream conn_events gen 50/s }
+
+  replay conn_events { use from "raw/monday.ndjson" }   // 文件有多少条就发多少条
+}
+```
+
+- **不写条数**（写了 `x N` 报 `VN20`）；值来源只能是文件（`use from`）。
+- 记录形态与 `use from` 一致：object / object 数组 / NDJSON。
+- 时间：记录里的 `_timestamp`（或 schema 的时间字段）以**最早一条为锚平移到场景起点**，
+  同文件内的相对间隔保持；文件没有时间字段时按序号在 `#[duration]` 内均匀落下。
+  平移后超出 `#[duration]` 报 `VN25`（不截断）。
+- 目标窗口要在 schema 里（`VN3`），但**不必**写进 `background`。
+- 不对任何实体做"必须 / 不得报警"的断言；但它的事件会进 oracle 的输入流，因此
+  `verify` 的口径仍与实际一致。若 `inject` 的 `without(...)` 窗口里落进了 replay 事件，
+  生成期直接报错（replay 的数据不能自动剔除）。
+
 ## 常见错误码
 
 码前缀按校验域分族：`VN`（`.wfg` 语法与注入语义）、`SC`（stream 与规则 / schema 的
@@ -160,7 +183,9 @@ scenario no_login_then_xfer<seed=7> {
 | `VN22` | 显式实体字段不在该 stream 的 schema 里 |
 | `VN23` | 显式实体字段与规则推断的实体字段不一致（多 key 规则的显式字段属消歧用法，放行） |
 | `VN24` | `use` 事件组数超过规则的事件步骤数（每个 `use ... x N` 对应一个步骤） |
-| `VN25` | `spread` 或 `without ... within` 超过 `#[duration]` |
+| `VN25` | `spread` / `without ... within` / `replay` 文件跨度 超过 `#[duration]` |
+| `VN26` | `replay` 文件为空，或文件里的时间字段口径不齐 |
+| `VN27` | 场景的实体 id 总数达到 2^24 上限（`miss` 按「每个事件一个独立键」计入） |
 | INJ1 / INJ2 | 生成期断言失败：`hit` 实体没报警（INJ1），或 `near_miss` / `miss` 实体报了警（INJ2） |
 
 排查手法：断言失败时输出会点名是哪个用例、哪个实体、实际与期望的告警数；先确认

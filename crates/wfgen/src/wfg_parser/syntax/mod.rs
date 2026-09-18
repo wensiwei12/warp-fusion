@@ -28,6 +28,7 @@ pub(super) fn parse_syntax_body(
 
     let mut background: Option<BackgroundBlock> = None;
     let mut injection: Option<SyntaxInjectionBlock> = None;
+    let mut replays: Vec<ReplayStmt> = Vec::new();
 
     loop {
         ws_skip(input)?;
@@ -47,6 +48,14 @@ pub(super) fn parse_syntax_body(
             .is_some()
         {
             injection = Some(parse_injection_block(input)?);
+            continue;
+        }
+        // `replay <window> { use from "…" }`：照单发货（设计 §8）；可写多条。
+        if opt(wf_lang::parse_utils::kw("replay"))
+            .parse_next(input)?
+            .is_some()
+        {
+            replays.push(parse_replay_stmt(input)?);
             continue;
         }
         // VN20：`traffic` 是旧关键字（设计 §5.1 旧语法清单），已改名为 `background`。
@@ -84,7 +93,7 @@ pub(super) fn parse_syntax_body(
                 input,
                 &input.checkpoint(),
                 StrContext::Expected(StrContextValue::Description(
-                    "background, inject, or closing brace",
+                    "background, inject, replay, or closing brace",
                 )),
             ),
         ));
@@ -123,6 +132,7 @@ pub(super) fn parse_syntax_body(
         inline_annos,
         background,
         injection,
+        replays,
     };
 
     Ok((scenario, syntax))
@@ -185,7 +195,9 @@ fn derive_total(background: &BackgroundBlock, duration: Duration) -> u64 {
 mod attrs;
 mod background;
 mod inject;
+mod replay;
 
 pub(super) use attrs::{inline_annos, scenario_attrs};
 pub(super) use background::parse_background_block;
 pub(super) use inject::parse_injection_block;
+pub(super) use replay::parse_replay_stmt;

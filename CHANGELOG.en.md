@@ -27,6 +27,7 @@ Counts are explicit now: both the entity count and the per-entity count are writ
 
 - **Generation-time hard assertions INJ1 / INJ2**: every `hit` entity must alert and every `near_miss` / `miss` entity must not; failures name the entity (instead of a single percentage line from `verify`).
 - `on each` rules can be injection targets.
+- **New `replay <window> { use from "file" }` pass-through channel**: feed an existing dataset as-is (no count, no entity math, no entity assertions); timestamps are rebased onto the scenario start from the file's earliest record. Empty files, mixed time-field usage and spans beyond `#[duration]` fail at load/validation time.
 - Injected events are now spread **evenly** across the scenario `#[duration]` (previously each cluster got a random start, so entities could overlap).
 - object / array fields from `use({...})` / `use from` are parsed as structured values by the engine (previously strings, so rules reading nested fields never matched).
 - New guide `docs/useage/scenarios.md` (including the `VN` / `SC` / `SV` / `INJ` validation-code families); the `wfadm init` templates and example scenarios are migrated to the new syntax.
@@ -39,6 +40,7 @@ New validation codes (reported at load time by `lint` / `gen`):
 | VN23 | an explicit entity field disagrees with the rule-inferred one |
 | VN24 | the number of `use` groups exceeds the rule's event steps |
 | VN25 | `spread` / `without ... within` exceeds `#[duration]` |
+| VN27 | the scenario's total entity-id count reaches the 2^24 limit (`miss` counts one id per event) |
 
 ### Fixed
 

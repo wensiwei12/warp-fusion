@@ -636,3 +636,79 @@ fn wfg_case(input: &str) -> InjectCase {
         .next()
         .expect("at least one inject case")
 }
+
+// ---------------------------------------------------------------------------
+// `replay <window> { use from "<file>" }`（设计 §8）
+// ---------------------------------------------------------------------------
+
+/// `replay` 进 AST：窗口名 + 文件路径；可写多条。
+#[test]
+fn test_parse_replay_stmts_into_ast() {
+    let input = r#"
+#[duration=10m]
+scenario replay_case<seed=1> {
+  background { stream auth_events gen 100/s }
+  replay auth_events { use from "raw/a.ndjson" }
+  replay auth_events { use from "raw/b.ndjson"; }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let syntax = wfg.syntax.as_ref().unwrap();
+    assert_eq!(syntax.replays.len(), 2);
+    assert_eq!(syntax.replays[0].window, "auth_events");
+    assert_eq!(syntax.replays[0].file, "raw/a.ndjson");
+    assert!(syntax.replays[0].records.is_none(), "解析期不读文件");
+    assert_eq!(syntax.replays[1].file, "raw/b.ndjson");
+    assert!(syntax.injection.is_none(), "replay 与 inject 互相独立");
+}
+
+/// `replay` 可与 `inject` 并存，顺序无关。
+#[test]
+fn test_replay_coexists_with_inject_block() {
+    let input = r#"
+#[duration=10m]
+scenario both<seed=1> {
+  background { stream auth_events gen 100/s }
+  replay auth_events { use from "raw/a.ndjson" }
+  inject {
+    hit<sip: 3> for rule_a auth_events {
+      use(action="failed") x 1
+    }
+  }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let syntax = wfg.syntax.as_ref().unwrap();
+    assert_eq!(syntax.replays.len(), 1);
+    assert_eq!(syntax.injection.as_ref().unwrap().cases.len(), 1);
+}
+
+/// `replay` 不写条数：写成 `x N` 报 VN20 并指向 `inject`。
+#[test]
+fn test_replay_count_is_rejected_with_vn20() {
+    let input = r#"
+#[duration=10m]
+scenario replay_count<seed=1> {
+  background { stream auth_events gen 100/s }
+  replay auth_events { use from "raw/a.ndjson" x 3 }
+}
+"#;
+    let err = parse_wfg(input).unwrap_err().to_string();
+    assert!(err.contains("VN20"), "unexpected parse error: {err}");
+    assert!(err.contains("条数"), "错误信息应说明条数：{err}");
+}
+
+/// `replay` 的值来源只能是文件：内联值报 VN20 并指向 `inject`。
+#[test]
+fn test_replay_inline_value_is_rejected_with_vn20() {
+    let input = r#"
+#[duration=10m]
+scenario replay_inline<seed=1> {
+  background { stream auth_events gen 100/s }
+  replay auth_events { use(action="failed") }
+}
+"#;
+    let err = parse_wfg(input).unwrap_err().to_string();
+    assert!(err.contains("VN20"), "unexpected parse error: {err}");
+    assert!(err.contains("use from"), "错误信息应指明写法：{err}");
+}
