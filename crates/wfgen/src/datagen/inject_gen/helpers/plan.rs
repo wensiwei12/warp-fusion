@@ -21,10 +21,18 @@ pub(crate) fn compute_window_bounds(dur_secs: f64, window_dur: Duration) -> (f64
     (window_secs, max_start_offset)
 }
 
-/// 第 `index` 个簇（共 `count` 个）的起点：在 `[0, max_start_offset]` 内**等距**铺开（设计 §4.7）。
+/// 第 `index` 个簇（共 `count` 个）的起点：在 `[0, max_start_offset)` 上**等距**铺开（设计 §4.7）。
 ///
-/// 首簇贴 `0`、末簇贴 `max_start_offset`（末簇的窗口刚好收在场景末尾），整段 `duration`
-/// 被均匀覆盖、两端不留空档；只有一个簇时取中点（与 `miss` 单条事件居中同风格）。
+/// 左闭右开：`span × i / N`，首簇贴 `0`、末簇贴在 `span − span / N`——**不把末簇顶到
+/// `span`**，即末簇的窗口收在 `duration − span / N`，给场景末尾留一段尾余量。
+///
+/// 留尾余量不是审美问题：窗口若正好收在场景末尾（`start + window == duration`），其后再也
+/// 没有事件推进水位，引擎会走收尾 `close:flush`（`fired_at` = 该实例最后一条事件），而 oracle
+/// 走 `close:timeout`（窗口到期）——两侧告警的**数量与实体都一致，只有时间对不上**，`verify`
+/// 会报一条时间差异。留一段尾余量让水位能越过窗口到期点，两侧口径就一致（实测：4800 实体的
+/// `count/brute_force` e2e 由 FAIL 转 PASS）。
+///
+/// 只有一个簇时取中点（与 `miss` 单条事件居中同风格；中点同样不会顶到末尾）。
 ///
 /// 窗口不短于 `duration` 时（`max_start_offset == 0`，规则窗口比场景还长）无法错开，
 /// 仍退回起点 `0`：此时簇必然重叠，错开没有意义，保持旧行为。
@@ -35,7 +43,7 @@ pub(crate) fn uniform_cluster_start(index: u64, count: u64, max_start_offset: f6
     if count <= 1 {
         return max_start_offset / 2.0;
     }
-    max_start_offset * index as f64 / (count - 1) as f64
+    max_start_offset * index as f64 / count as f64
 }
 
 /// 每个步骤每实体生成多少条事件。

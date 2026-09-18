@@ -249,8 +249,11 @@ scenario no_login_then_xfer<seed=7> {
 ### 3.5 时间铺开（P6）
 
 - `spread D` 显式给出铺开窗口，覆盖默认的规则窗口长度；必须 ≤ `#[duration]`（VN25）。
-- 实体的簇起点在场景 `duration` 内**等距**铺开（`uniform_cluster_start`）：首簇贴 `0`、
-  末簇贴 `duration − 窗口`，整段时长被均匀覆盖、两端不留空档；只有一个簇时取中点。
+- 实体的簇起点在 `[0, 跨度)` 上**等距**铺开（`uniform_cluster_start`，跨度 = `duration − 窗口`）：
+  首簇贴 `0`、末簇贴在 `跨度 − 跨度/N`，**不把末簇顶到场景末尾**；只有一个簇时取中点。
+  留这段尾余量不是审美：窗口若正好收在 `duration`，其后再无事件推进水位，引擎走收尾
+  `close:flush`、oracle 走 `close:timeout`——两者告警数量与实体一致、只有时间不同，`verify`
+  会报时间差异（实测 4800 实体的 `count/brute_force` e2e 由 FAIL 转 PASS）。
   窗口不短于 `duration` 时无法错开，退回起点 `0`（簇必然重叠，保持旧行为）。
 - 簇内事件仍按步骤顺序在窗口内均匀落下（`per_step_window × i / N`）；`miss` 本来就按
   `duration × 事件序号 / 总条数` 均匀落下，不受影响。
@@ -529,8 +532,8 @@ wfg + wfs + wfl
 - 背景与注入完全分离：背景保留自己的配额（`rate × duration`），注入在其上叠加
   （旧口径 `背景 = 配额 − 注入` 及其 `inject_counts` 链路已删除）。
 - 注入时间在场景 `duration` 内**等距铺开**：簇起点由 `uniform_cluster_start` 算出
-  （首簇贴 `0`、末簇贴 `duration − 窗口`），取代旧的“每簇随机起点”；窗口不短于
-  `duration` 时退回起点 `0`。
+  （`[0, duration − 窗口)` 上等距，末簇留 `跨度/N` 的尾余量以免窗口顶到场景末尾），
+  取代旧的“每簇随机起点”；窗口不短于 `duration` 时退回起点 `0`。
 - `use from "file"` 的值文件解析（`loader::resolve_inject_files`）：相对 `.wfg` 目录解析路径，
   支持顶层 object / object 数组 / NDJSON，数组与 NDJSON 按事件序号循环取用；`gen` / `lint` /
   `bench` / `send` / `stream` 都经 `loader::load_from_uses` 走同一条解析。

@@ -27,7 +27,7 @@ Counts are explicit now: both the entity count and the per-entity count are writ
 
 - **Generation-time hard assertions INJ1 / INJ2**: every `hit` entity must alert and every `near_miss` / `miss` entity must not; failures name the entity (instead of a single percentage line from `verify`).
 - `on each` rules can be injection targets.
-- Injected events are now spread **evenly** across the scenario `#[duration]` (previously each cluster got a random start, so entities could overlap or leave gaps).
+- Injected events are now spread **evenly** across the scenario `#[duration]` (previously each cluster got a random start, so entities could overlap).
 - object / array fields from `use({...})` / `use from` are parsed as structured values by the engine (previously strings, so rules reading nested fields never matched).
 - New guide `docs/useage/scenarios.md` (including the `VN` / `SC` / `SV` / `INJ` validation-code families); the `wfadm init` templates and example scenarios are migrated to the new syntax.
 
