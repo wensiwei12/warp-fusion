@@ -12,7 +12,8 @@
 | [configuration.md](./config/configuration.md) | `wfusion.toml`、source / sink / runtime 配置入口 |
 | [schema.md](./config/schema.md) | `.wfs` window 和字段类型 |
 | [rules.md](./rules.md) | `.wfl` 规则编写、yield 时间变量、稳定统计上下文 |
-| [scenarios.md](./scenarios.md) | `.wfg` 场景：背景/注入、三种模式=硬断言、数量口径、值与值来源 |
+| [scenarios.md](./scenarios.md) | `.wfg` 场景：怎么写（四步）、按任务的配方、三种模式=硬断言、常见坑 |
+| [wfg-syntax.md](./wfg-syntax.md) | `.wfg` 语法参考：词法、EBNF、逐个构造的约束、校验码全表 |
 | [wparse-window-routing.md](./config/wparse-window-routing.md) | warp-parse 输出如何分发到 WarpFusion window |
 | [cli/cli.md](./cli/cli.md) | CLI 命令参考 |
 | [cli/admin_api.md](./cli/admin_api.md) | Admin API、状态查询、在线 reload / 发布 |
@@ -34,7 +35,7 @@
 1. 先读 [getting-started.md](./getting-started.md)，跑通一个最小示例。
 2. 读 [schema.md](./config/schema.md) 和 [rules.md](./rules.md)，理解 `.wfs` / `.wfl` 的职责边界。
 3. **把引擎接入自有系统时读 [integration.md](./integration.md)**（事件源接入、告警 sink、规则集交付、Admin API 管理）。
-4. 需要造测试数据、或让"命中/未命中"可断言时读 [scenarios.md](./scenarios.md) 与 [cli/cli.md](./cli/cli.md)。
+4. 需要造测试数据、或让"命中/未命中"可断言时读 [scenarios.md](./scenarios.md)（怎么写）与 [wfg-syntax.md](./wfg-syntax.md)（语法参考），命令参数见 [cli/cli.md](./cli/cli.md)。
 5. 接入真实数据源时读 [configuration.md](./config/configuration.md)、[config/source.md](./config/source.md) 和 [config/sink.md](./config/sink.md)。
 6. 与 warp-parse 联动时读 [wparse-window-routing.md](./config/wparse-window-routing.md)。
 7. 需要在线 reload 或发布时读 [cli/admin_api.md](./cli/admin_api.md)。

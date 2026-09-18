@@ -47,7 +47,7 @@ wfgen gen --scenario crates/wfgen/examples/distinct/scenarios/port_scan.wfg --ou
 wfgen verify --expected out/gen/port_scan.except.jsonl --actual out/alerts.ndjson
 ```
 
-场景语法见 [`scenarios.md`](scenarios.md)；仓库内可直接照抄的场景样本：
+场景怎么写见 [`scenarios.md`](scenarios.md)，语法参考见 [`wfg-syntax.md`](wfg-syntax.md)；仓库内可直接照抄的场景样本：
 
 | 路径 | 侧重 |
 |------|------|
@@ -94,6 +94,7 @@ warp-fusion/
 | [`config/wparse-window-routing.md`](config/wparse-window-routing.md) | `warp-parse` 输出如何分发到 window |
 | [`config/schema.md`](config/schema.md) | `.wfs` Schema 定义 |
 | [`rules.md`](rules.md) | `.wfl` 规则编写、yield 时间变量、稳定统计上下文 |
-| [`scenarios.md`](scenarios.md) | `.wfg` 场景：背景/注入、三种模式=硬断言、数量口径、值与值来源 |
+| [`scenarios.md`](scenarios.md) | `.wfg` 场景：怎么写（四步）、按任务的配方、三种模式=硬断言、常见坑 |
+| [`wfg-syntax.md`](wfg-syntax.md) | `.wfg` 语法参考：词法、EBNF、逐个构造的约束、校验码全表 |
 | [`cli/cli.md`](cli/cli.md) | CLI 命令参考 |
 | [`config/metrics.md`](config/metrics.md) | 监控指标配置 |

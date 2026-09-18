@@ -106,10 +106,11 @@ wfgen gen --scenario s.wfg --format arrow --out out/gen      # 列式 .arrow 输
 wfgen gen --scenario s.wfg --no-oracle --out out/gen         # 只出事件，不写期望文件（仍编译 WFL，注入 use() 生效）
 wfgen gen --scenario s.wfg --no-wfl --out out/gen            # 跳过整个 WFL 管线（纯背景随机事件）
 wfgen gen --scenario s.wfg --send --addr 127.0.0.1:9800      # 直接发给引擎
+wfgen gen --scenario s.wfg --duration 1m --out out/gen       # 覆盖 #[duration]（背景按比例缩，注入不变）
 
 # 对拍：实际告警 vs 期望告警
 wfgen verify --expected out/gen/port_scan.except.jsonl --actual out/alerts.ndjson
-#   [--meta out/gen/port_scan.except.meta.json] [--score-tolerance 0.1] [--format markdown]
+#   [--meta out/gen/port_scan.except.meta.jsonl] [--score-tolerance 0.1] [--format markdown]
 
 # 发送已生成的事件 JSONL（TCP + Arrow IPC）
 wfgen send --scenario s.wfg --input out/gen/port_scan.jsonl [--chunk 5000] [--rate-ms 10]
@@ -123,8 +124,20 @@ wfgen stream --scenario-dir models/scenarios --wfl "rules/*.wfl" [--rate 100000]
 
 | 附加参数 | 说明 |
 |---|---|
+| `--duration <literal>` | 覆盖场景时长（`30s` / `10m` / `2h` / `1d`）。校验按**生效时长**跑，所以 `spread` / `without ... within` / `replay` 跨度仍需 ≤ 该值（VN25） |
 | `--ws <file>` | 额外的 `.wfs`（`use` 声明之外） |
 | `--wfl <file>` | 额外的 `.wfl`（`use` 声明之外） |
+
+### 仓内语料回归
+
+仓内 `.wfg`（`crates/wfgen/examples/*`、`crates/wfadm/templates/*`、`docker/default_setting/*`）
+有两条自动化的对拍测试，随 `cargo test` 一起跑：
+
+```bash
+cargo test -p wfgen --test wfg_corpus      # L0–L2：VN 校验 + INJ1/INJ2 断言 + 期望文件 + 条数守恒
+cargo test -p wfgen --test wfg_corpus_l3   # L3：生成 → oracle → 真实引擎 → verify 对拍
+WFC_CORPUS_ONLY=conv cargo test -p wfgen --test wfg_corpus   # 本地只跑一部分（按路径子串过滤）
+```
 
 其它子命令（性能 / 联调工具，参数见 `wfgen <cmd> --help`）：`gen-nexmark` ·
 `verify-nexmark` · `diff` · `dump-frames` · `send-arrow` · `shard-frames` · `perf-diag`。

@@ -47,6 +47,9 @@ stream 配额 = stream 速率 × duration
 
 ## 2. 语法
 
+> 面向使用者的语法速查（逐条对齐实现、含校验码全表）见
+> [`../useage/wfg-syntax.md`](../useage/wfg-syntax.md)。本节保留设计期的 EBNF 与取舍记录。
+
 ### 2.1 EBNF（当前实现）
 
 ```ebnf
@@ -110,6 +113,8 @@ value            = STRING | NUMBER | DURATION | "true" | "false"
   写错键名（`#[duratoin=10m]`）或值类型（`#[duration=10]`）会悄悄退回默认值（60s / seed 0）。
   注解键若将来要扩展（例如 R1 的矩阵参数），白名单在此处同步放宽。
 - `for RULE` **必填**，不再从期望反推。
+- `background` / `inject` 是**单例块**：重复书写报 VN32（此前是静默覆盖前一个块，里面的
+  stream / 用例直接消失）；`replay` 可写多条。
 - `x N` 是"每个实体在该步骤上的条数"，取代旧的 `with(N)`。
 - 实体键可省：`hit<500>` 从规则推断；`hit<sip: 500>` 用于多 key / 消歧（见 §3.7）。
 - `spread D` 可选，必须 ≤ `#[duration]`（VN25）。
@@ -427,6 +432,7 @@ stream / 规则绑定 → `VN3` / `VN10` / `VN14`；字段与 schema → `VN11` 
 | VN29 | 场景注解键不在白名单（`#[...]` 只认 `duration`，`<...>` 只认 `seed`），或值类型不合法 | `注解键 'tick' 不支持：\`#[...]\` 只认 'duration'（tick / rows / emit 从未实现）` / `注解 'duration' 的值必须是时长字面量（如 \`10m\`），实际是数字` |
 | VN30 | `join <window> as <key>` 匹配不到规则的 join 子句（目标窗 / 右侧连接键 / 形态）或 `within` 区间不含左事件时间 | `… 的 \`join auction_events as wrong_key\` 匹配不到规则 'r' 的 join 子句（…）` / `… 的 \`join x\` 指向的规则 join 是 snapshot/asof/anti 形态，暂不支持（v1 只支持缺省 inner）` |
 | VN31 | `entity <window>.<field> zipf(...)`：目标窗 / 字段不存在或类型不可承载、参数越界、重复声明、与注入实体的**值域预算**超出 24 位空间 | `entity 分布的字段 'ok' 类型不支持（只支持 ip / digit / float / chars / hex）` / `entity 'src_ip' 的值域超出 24 位地址空间：注入实体 100 + 池 8388609 + 新值带 8388609 > 16777216（…）` |
+| VN32 | 重复书写 `background` / `inject` 块（两者是单例，**不合并**；旧行为是静默丢掉前一个块） | `VN32 \`background\` 块重复：一个场景只允许一个 \`background\`（两个块不会合并，此前是静默丢掉前一个块）。请把两个块的内容合并到同一个 \`background { … }\` 里。`（**解析期**报错） |
 | VN28 | 背景速率用了未实现的随时间形态 `wave(...)` / `burst(...)` / `timeline { ... }`（会按 `base=` 常量生成，与写法不符） | `stream 'auth_events': \`gen burst(...)\` 的随时间变化尚未实现（当前会按 \`base=\` 的常量速率生成，与写法不符）；请先改用常量速率 \`gen 100/s\`` |
 
 `without(...)` 的谓词与 `use(...)` 共用同一套字段检查：重名 VN9、不在 schema VN11、
@@ -780,6 +786,12 @@ hit<id: 200> for q8_monitor_new_user person_events {
   INJ1 报「hit 实体不会触发」，属于**可见的失败**（不是静默产出）。
 - `spread` 只管左簇；右事件跟随所属左事件的时间，不单独铺开。
 - 目标窗必须已在 schema 里、`use` 的字段必须属于目标窗（VN11）、在 `use` 里重复连接键报 VN12。
+
+- **引擎侧边界（驱动形态）**：deferred（`emit at`）join 目前**只支持 `on each <alias>` 驱动**；
+  `match` + deferred 会在 wp-reactor 规则编译期直接报「deferred join（`emit at`）v1 仅支持
+  on-each 驱动形态」。（`match` + **snapshot** 形态可用。）注意形态判据取自**规则文本**
+  （上表），与驱动形态无关，所以 `match` 规则写 deferred 形态不会在 wfgen 侧报错，而是到引擎
+  编译期才失败——属已知边界。
 
 ### 9.5 join-then-key（nexmark q6 形态）
 
