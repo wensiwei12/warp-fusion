@@ -34,9 +34,7 @@ pub struct ScenarioDecl {
     pub time_clause: TimeClause,
     pub total: u64,
     pub streams: Vec<StreamBlock>,
-    pub injects: Vec<InjectBlock>,
     pub faults: Option<FaultsBlock>,
-    pub oracle: Option<OracleBlock>,
 }
 
 /// `time "ISO8601" duration DURATION`
@@ -59,9 +57,10 @@ pub struct SyntaxScenario {
     pub attrs: Vec<ScenarioAttr>,
     /// `scenario name<k=v, ...>` inline annotations.
     pub inline_annos: Vec<ScenarioAttr>,
-    pub traffic: TrafficBlock,
+    pub background: BackgroundBlock,
     pub injection: Option<SyntaxInjectionBlock>,
-    pub expect: Option<ExpectBlock>,
+    /// `replay …` 语句（可写多条），与 `inject` 可并存（设计 §8）。
+    pub replays: Vec<ReplayStmt>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,11 +77,15 @@ pub enum AttrValue {
     Duration(Duration),
     String(String),
     Bool(bool),
+    /// 结构化值（object / array / null）——`use(field={"a": {"b": 1}})`、
+    /// `use(tags=["x"])`、`use(v=null)`。直接持 `serde_json::Value`，避免再
+    /// 造一套嵌套枚举，也天然复用 serde_json 的整数/转义语义。
+    Json(serde_json::Value),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub struct TrafficBlock {
+pub struct BackgroundBlock {
     pub streams: Vec<SyntaxStreamDecl>,
 }
 
@@ -146,17 +149,87 @@ pub struct TimelineSegment {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct SyntaxInjectionBlock {
-    pub cases: Vec<SyntaxInjectCase>,
+    pub cases: Vec<InjectCase>,
 }
 
+/// `replay <window> { use from "file" }`：把文件里的记录**照单发货**（设计 §8）。
+///
+/// 与 `inject` 的三点不同：**不写条数**（文件有多少条就发多少条）、不做实体数学、
+/// 不参与实体断言（hit / near_miss / miss 那套）。
+///
+/// 时间上仍与 background / inject 共用一条时间轴：文件里最早的时间戳被平移到场景起点，
+/// 使 `#[duration]` 成为三类事件共同的时间窗（§8.3）。
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub struct SyntaxInjectCase {
+pub struct ReplayStmt {
+    /// 目标 stream（窗口名）。
+    pub window: String,
+    /// `use from "<file>"` 的路径（相对 `.wfg` 所在目录解析；诊断消息要点名它）。
+    pub file: String,
+    /// loader 解析后的记录（object 或 object 数组，形态与 `use({...})` 同构）；
+    /// `None` = 尚未解析（未经 loader 的程序化调用）。
+    pub records: Option<serde_json::Value>,
+}
+
+/// 注入用例：数量是**写下来的**（设计 §4.1）。
+///
+/// 旧的按比例形态（`hit<20%> ... with(N)`）已删除：它的数量由「stream 配额 ×
+/// 比例 ÷ 每实体条数」推出，与「数量可见」直接冲突。解析期遇到 `mode<N%>`
+/// 会报 VN20。
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct InjectCase {
     pub mode: InjectCaseMode,
-    pub percent: f64,
-    pub target_rule: Option<String>,
+    /// 实体个数。
+    pub entity_count: u64,
+    /// 实体标识字段；`None` = 从规则推断（match key / entity 表达式字段）。
+    pub entity_field: Option<String>,
+    /// 目标规则（必填：`for RULE`）。
+    pub target_rule: String,
     pub stream: String,
-    pub seq: SeqBlock,
+    /// 按步骤顺序的事件组；每组给出「每实体几条」与「值从哪来」。
+    pub groups: Vec<UseGroup>,
+    /// `without(...)` 构造约束（设计 §3.8）：该实体在其事件跨度内不得出现匹配的事件。
+    ///
+    /// 与 `groups` **解耦**（位置无语义）：它不是"一个步骤"、不参与 VN24 的组数口径、
+    /// 也不注入事件，故单独存放而不混进有序步骤列表。
+    pub withouts: Vec<WithoutStep>,
+    /// 时间铺开窗口；`None` = 均匀铺满场景 duration。
+    pub spread: Option<Duration>,
+}
+
+/// `without(preds) [within D]`：该实体的窗口内**不得出现**匹配 `preds` 的事件。
+///
+/// 用途：给带否定步骤（`on event seq { … not has x … }`）的规则造"该触发"的数据——
+/// 只注入正向事件不够，窗口里一旦落进一条匹配的背景噪声，规则就不会触发。
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct WithoutStep {
+    /// 禁止出现的字段等值约束（与 `use(...)` 同形式）。
+    pub predicates: Vec<FieldPredicate>,
+    /// 判定窗口（自该实体首条注入事件起算）；`None` = 目标规则的 `match` 窗口长度。
+    pub within: Option<Duration>,
+}
+
+/// 一个事件组（对应规则的一个步骤）。
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct UseGroup {
+    /// 每个实体在该步骤上的条数。
+    pub count: u64,
+    pub source: ValueSource,
+}
+
+/// 事件字段值的来源。
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum ValueSource {
+    /// `use(field=value, ...)`
+    Predicates(Vec<FieldPredicate>),
+    /// `use({...})` 整份 JSON 内联
+    Json(serde_json::Value),
+    /// `use from "path"` 整份 JSON 来自文件（相对 `.wfg` 所在目录）
+    File(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,24 +240,20 @@ pub enum InjectCaseMode {
     Miss,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct SeqBlock {
-    pub entity: String,
-    pub steps: Vec<SeqStep>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum SeqStep {
-    Use {
-        predicates: Vec<FieldPredicate>,
-        count: u64,
-    },
-    Not {
-        predicates: Vec<FieldPredicate>,
-        within: Duration,
-    },
+/// 把整份 JSON 对象的顶层键展开为 `(字段, 值)` 列表。
+///
+/// - 顶层必须是 object，否则返回 `None`（由调用方报错）；
+/// - `_` 前缀的键视为 WFGen 内部字段（`_stream` / `_window` / `_timestamp` 等），
+///   直接忽略——用户可以把 WParse 原始输出整份粘进来。
+pub fn json_top_level_entries(
+    json: &serde_json::Value,
+) -> Option<Vec<(String, serde_json::Value)>> {
+    json.as_object().map(|map| {
+        map.iter()
+            .filter(|(k, _)| !k.starts_with('_'))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -192,51 +261,6 @@ pub enum SeqStep {
 pub struct FieldPredicate {
     pub field: String,
     pub value: AttrValue,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct ExpectBlock {
-    pub checks: Vec<ExpectCheck>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct ExpectCheck {
-    pub metric: ExpectMetric,
-    pub rule: String,
-    pub op: CompareOp,
-    pub value: ExpectValue,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ExpectMetric {
-    Hit,
-    NearMiss,
-    Miss,
-    Precision,
-    Recall,
-    Fpr,
-    LatencyP95,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CompareOp {
-    Gte,
-    Lte,
-    Gt,
-    Lt,
-    Eq,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum ExpectValue {
-    Percent(f64),
-    Number(f64),
-    Duration(Duration),
 }
 
 // ---------------------------------------------------------------------------
@@ -330,50 +354,6 @@ impl GenArg {
 }
 
 // ---------------------------------------------------------------------------
-// Inject
-// ---------------------------------------------------------------------------
-
-/// `inject for RULE on [STREAM, ...] { inject_line* }`
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct InjectBlock {
-    pub rule: String,
-    pub streams: Vec<String>,
-    pub lines: Vec<InjectLine>,
-}
-
-/// Inject line.
-///
-/// Supported forms:
-/// - inline params: `MODE PERCENT% key=value key2=value2;`
-/// - block params: `MODE PERCENT% { key=value; key2=value2; };`
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct InjectLine {
-    pub mode: InjectMode,
-    pub percent: f64,
-    pub params: Vec<ParamAssign>,
-    /// Ordered `use(...)` declarations; each declaration describes one rule step.
-    pub use_steps: Vec<InjectUseStep>,
-}
-
-/// One `use(...) with(count)` declaration captured for inject generation.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct InjectUseStep {
-    pub count: u64,
-    pub predicates: Vec<FieldPredicate>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum InjectMode {
-    Hit,
-    NearMiss,
-    NonHit,
-}
-
-// ---------------------------------------------------------------------------
 // Faults
 // ---------------------------------------------------------------------------
 
@@ -415,36 +395,4 @@ impl std::fmt::Display for FaultType {
 pub struct FaultLine {
     pub fault_type: FaultType,
     pub percent: f64,
-}
-
-// ---------------------------------------------------------------------------
-// Oracle
-// ---------------------------------------------------------------------------
-
-/// `oracle { param_assigns }`
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct OracleBlock {
-    pub params: Vec<ParamAssign>,
-}
-
-// ---------------------------------------------------------------------------
-// Shared
-// ---------------------------------------------------------------------------
-
-/// `NAME = VALUE`
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct ParamAssign {
-    pub name: String,
-    pub value: ParamValue,
-}
-
-/// Value in a parameter assignment.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum ParamValue {
-    Number(f64),
-    Duration(Duration),
-    String(String),
 }

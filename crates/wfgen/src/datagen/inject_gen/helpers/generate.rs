@@ -12,6 +12,12 @@ use crate::wfg_ast::StreamBlock;
 
 use super::plan::*;
 
+/// 实体 id 空间：实体值按 **24 位**地址映射（Ip 字段写 `10.a.b.c`，`a`/`b`/`c` 各 8 位），
+/// 因此一个场景的实体 id 总数必须 < 该值（校验期 VN27 拦下，见 `validate/syntax.rs`）；
+/// 超出后映射会回绕，不同用例的实体会拿到同一个值——`hit` 与 `near_miss` 指向同一实体，
+/// 两个口径互相污染。
+pub(crate) const ENTITY_ID_SPACE: u64 = 1 << 24;
+
 /// Generate cluster events across all steps.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn generate_cluster_events(
@@ -160,9 +166,15 @@ pub(crate) fn map_use_predicates_to_rule_steps(
                 .get(planned.rule_step_idx)
                 .copied()
                 .unwrap_or(0) as usize;
-            let remaining_slots = expected.saturating_sub(step_predicates.len());
-            for _ in 0..remaining_slots.min(planned.count as usize) {
-                step_predicates.push(planned.predicates.clone());
+            // 事件序号 `step_predicates.len()` 就是循环取用的下标：单记录形态
+            // （长度 1）恒取第 0 条，`use from` 的数组形态按记录顺序轮转。
+            let records = &planned.records;
+            let slots = expected
+                .saturating_sub(step_predicates.len())
+                .min(planned.count as usize);
+            for _ in 0..slots {
+                let record_idx = step_predicates.len() % records.len();
+                step_predicates.push(records[record_idx].clone());
             }
         }
     }
@@ -290,6 +302,10 @@ pub(crate) fn generate_key_values(
         let value = match field_type {
             Some(FieldType::Base(BaseType::Ip)) => {
                 let id = entity_counter + i as u64;
+                debug_assert!(
+                    id < ENTITY_ID_SPACE,
+                    "实体 id {id} 超出 24 位地址空间（{ENTITY_ID_SPACE}），Ip 映射会回绕、不同实体会拿到同一个值"
+                );
                 let a = ((id >> 16) & 0xFF) as u8;
                 let b = ((id >> 8) & 0xFF) as u8;
                 let c = (id & 0xFF) as u8;

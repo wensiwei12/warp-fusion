@@ -46,7 +46,7 @@ stream_tag_field = "wp_oml_name"  # 每行此字段的值 → 路由到哪个输
   `{"wp_oml_name":"netflow","sip":"10.0.0.1","dip":"10.0.0.2",...,"event_time":"..."}`；
 - **与 warp-parse 联动**用 `arrow_framed`（帧级 tag 路由）；
 - 还有 **Kafka** 源、**文件回放**（ndjson/csv/arrow 回放历史数据，`mode="batch"`）。
-  完整参考：[config/source.md](./config/source.md)、[wparse-window-routing.md](./wparse-window-routing.md)。
+  完整参考：[config/source.md](./config/source.md)、[wparse-window-routing.md](./config/wparse-window-routing.md)。
 
 关键决策：**stream_tag 策略**——单业务源可固定 `stream_tag = "netflow"`；
 多业务源（一个端口多类事件）用 `stream_tag_field` 逐行分发。tag 值直接决定
@@ -75,10 +75,10 @@ window conn_events {
 ```
 
 - 类型：`ip / digit / chars / bool / time / hex / float` + 结构化 `object / array`
-  （完整类型见 [schema.md](./schema.md)）；
+  （完整类型见 [schema.md](./config/schema.md)）；
 - 来源-窗口对应关系：`stream_tag`（固定或 `stream_tag_field` 字段值）==
   window 的 `stream_tag`。未知 tag 进内置 miss 诊断（不崩引擎）；
-- `over` 决定窗口保留多久（数据量/内存规划，见 [config/window.md](../config/window.md)）。
+- `over` 决定窗口保留多久（数据量/内存规划，见 [config/window.md](./config/window.md)）。
 
 ## 第 3 步：定义告警的输出窗口
 
@@ -126,7 +126,7 @@ file = "alerts.ndjson"
   `[sink_group] wf_meta_disable = [...]` 裁掉；
 - 目录约定三层：`business.d/`（业务告警）· `infra.d/default.toml`（兜底）·
   `infra.d/error.toml`（错误通道）· `infra.d/monitor.toml`（指标）。
-  完整参考：[config/sink.md](../config/sink.md)。
+  完整参考：[config/sink.md](./config/sink.md)。
 
 ## 第 5 步：编写计算规则
 
@@ -382,19 +382,19 @@ cat data/out_dat/alerts.ndjson                                 # 恰好 1 条
 
 - **Admin API**（HTTP，回环 + bearer）：状态查询、在线 reload 规则/配置、
   配置了 `[project_remote]` 时在线发布 → [admin_api.md](./cli/admin_api.md)；
-- **metrics**：monitor sink / `--metrics`（[config/metrics.md](../config/metrics.md)）；
-- **结构化日志**：级别/输出可配（[config/logging.md](../config/logging.md)）；
+- **metrics**：monitor sink / `--metrics`（[config/metrics.md](./config/metrics.md)）；
+- **结构化日志**：级别/输出可配（[config/logging.md](./config/logging.md)）；
 - **规则生命周期 CLI**：`wfadm`（init / 校验 / 发布），见 [cli.md](./cli/cli.md)。
 
 ## 集成注意事项
 
 - **单机内存维度**：引擎为单机、纯内存、无分布式 exactly-once；高吞吐按
   窗口/规则容量规划节点，窗口内存上限在 `[window_defaults]`
-  （[config/window.md](../config/window.md)）；
+  （[config/window.md](./config/window.md)）；
 - **时间与迟到**：窗口按事件时间推进，配 `watermark` / `allowed_lateness` /
   `late_policy` 决定迟到事件行为；
 - **超时与并行**：`[runtime] rule_exec_timeout` / `executor_parallelism`
-  （[config/runtime.md](../config/runtime.md)）；
+  （[config/runtime.md](./config/runtime.md)）；
 - **许可**：ELv2 允许企业内部自用与嵌入自有产品（含商业售卖你的产品、客户
   自行部署）；以**托管/SaaS 形态向第三方提供引擎能力**需另行商业授权
   （见仓库 README License 段）。

@@ -1,13 +1,13 @@
 pub mod fault_gen;
 pub mod field_gen;
 pub mod inject_gen;
+pub mod replay_gen;
 pub mod stream_gen;
 #[cfg(test)]
 mod tests;
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
-use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use rand::SeedableRng;
@@ -17,12 +17,19 @@ use wf_lang::plan::RulePlan;
 
 use crate::error::{self, WfgenReason, WfgenResult};
 use crate::wfg_ast::WfgFile;
+use inject_gen::InjectEntityKey;
 use inject_gen::generate_inject_events;
+use inject_gen::{InjectGenResult, WithoutGuard};
+use replay_gen::generate_replay_events;
 use stream_gen::{GenEvent, generate_stream_events};
 
 /// Result of data generation.
 pub struct GenResult {
     pub events: Vec<GenEvent>,
+    /// 注入实体清单（生成期断言 INJ1/INJ2 的输入，设计 §4.2）；无注入用例时为空。
+    pub inject_entities: Vec<InjectEntityKey>,
+    /// 实体标识无法与 oracle `entity_id` 对齐、未纳入断言的实体个数。
+    pub unasserted_inject_entities: u64,
 }
 
 /// Generate events from a parsed and validated `.wfg` scenario.
@@ -53,23 +60,57 @@ pub fn generate(
     let mut rng = StdRng::seed_from_u64(scenario.seed);
 
     // --- Inject generation (if applicable) ---
-    let mut inject_counts: HashMap<String, u64> = HashMap::new();
     let mut sorted_chunks: Vec<Vec<GenEvent>> = Vec::new();
+    let mut inject_entities: Vec<InjectEntityKey> = Vec::new();
+    let mut unasserted_inject_entities = 0_u64;
+    let mut without_guards: Vec<WithoutGuard> = Vec::new();
 
     let has_syntax_inject = wfg
         .syntax
         .as_ref()
         .and_then(|syntax| syntax.injection.as_ref())
         .is_some_and(|injection| !injection.cases.is_empty());
-    let has_inject = (has_syntax_inject || !scenario.injects.is_empty()) && !rule_plans.is_empty();
+    let has_inject = has_syntax_inject && !rule_plans.is_empty();
     if has_inject {
-        let inject_result =
-            generate_inject_events(wfg, rule_plans, schemas, &start, &duration, &mut rng)?;
-        inject_counts = inject_result.inject_counts;
-        let mut inject_events = inject_result.events;
+        let InjectGenResult {
+            events: mut inject_events,
+            entity_keys,
+            unasserted_entities,
+            without_guards: guards,
+        } = generate_inject_events(wfg, rule_plans, schemas, &start, &duration, &mut rng)?;
+        inject_entities = entity_keys;
+        unasserted_inject_entities = unasserted_entities;
+        without_guards = guards;
         inject_events.sort_by_key(|a| a.timestamp);
         if !inject_events.is_empty() {
             sorted_chunks.push(inject_events);
+        }
+    }
+
+    // --- Replay (与 WFL 无关：`--no-wfl` 也要照单发货) ---
+    {
+        let replay_events = generate_replay_events(wfg, schemas, &start)?;
+        if !replay_events.is_empty() {
+            // `without(...)` 对 replay 是“排不掉”的来源（设计 §8.3）：replay 事件既不能默默删，
+            // 也不能默默无视——命中 guard 谓词就报错，与注入侧冲突同口径。
+            if let Some((guard, event)) = without_guards.iter().find_map(|guard| {
+                guard
+                    .first_violation(&replay_events)
+                    .map(|event| (guard, event))
+            }) {
+                return error::fail(
+                    WfgenReason::Generation,
+                    format!(
+                        "replay 事件（{}={}，时间 {}）命中了 without 谓词（{}）：\
+                         replay 的数据不能自动剔除，请调整文件或 `without(...)`",
+                        guard.field,
+                        guard.value,
+                        event.timestamp,
+                        guard.describe_predicates(),
+                    ),
+                );
+            }
+            sorted_chunks.push(replay_events);
         }
     }
 
@@ -100,9 +141,10 @@ pub fn generate(
             count
         };
 
-        // Subtract inject events from this stream's budget
-        let inject_used = inject_counts.get(&stream.alias).copied().unwrap_or(0);
-        let bg_count = stream_total.saturating_sub(inject_used);
+        // 背景与注入**完全分离**（设计 §3.1/§3.4）：背景就是它自己的配额
+        // （`rate × duration`），注入事件是额外的——总条数 = 背景 + 注入，
+        // 改背景速率不会改变注入条数，注入也不会挤压背景。
+        let bg_count = stream_total;
 
         if bg_count == 0 {
             continue;
@@ -119,6 +161,7 @@ pub fn generate(
             })?;
 
         let events = generate_stream_events(stream, schema, bg_count, &start, &duration, &mut rng);
+        let events = suppress_without_guards(events, &without_guards);
         if !events.is_empty() {
             sorted_chunks.push(events);
         }
@@ -126,7 +169,11 @@ pub fn generate(
 
     let all_events = merge_sorted_chunks(sorted_chunks);
 
-    Ok(GenResult { events: all_events })
+    Ok(GenResult {
+        events: all_events,
+        inject_entities,
+        unasserted_inject_entities,
+    })
 }
 
 #[derive(Debug)]
@@ -167,6 +214,26 @@ impl Ord for HeapItem {
             .cmp(&other.ts_nanos)
             .then_with(|| self.chunk_idx.cmp(&other.chunk_idx))
     }
+}
+
+/// 剔除「属于受约束实体、落在约束窗内、且命中 `without(...)` 谓词」的背景事件
+/// （设计 §3.8）。
+///
+/// 背景是随机流量，不认领任何实体；但随机 IP / 随机数字很容易恰好撞上注入实体的键值
+/// ——一旦撞上，这条噪声就会被规则当成**该实体**的事件看到（`wf-cep` 的否定扫描按
+/// 窗口实例进行）。带否定步骤的规则对“窗口内不得出现匹配事件”敏感，撞上就静默不触发。
+///
+/// 只剔命中谓词的那些：不命中谓词的背景噪声不会违反否定步骤，剔除它只会无故偏离
+/// 背景配额。判定口径全部收在 [`WithoutGuard::is_violation`]，与注入侧冲突检查同源。
+fn suppress_without_guards(events: Vec<GenEvent>, guards: &[WithoutGuard]) -> Vec<GenEvent> {
+    if guards.is_empty() {
+        return events;
+    }
+
+    events
+        .into_iter()
+        .filter(|event| !guards.iter().any(|guard| guard.is_violation(event)))
+        .collect()
 }
 
 fn merge_sorted_chunks(chunks: Vec<Vec<GenEvent>>) -> Vec<GenEvent> {

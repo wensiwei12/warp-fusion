@@ -1,77 +1,41 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use rand::Rng;
 use rand::rngs::StdRng;
 use wf_lang::WindowSchema;
 
 use super::helpers::{
-    compute_cluster_count, compute_cluster_count_for_step_counts, compute_hit_counts,
-    compute_window_bounds, generate_cluster_events, generate_key_values,
+    compute_hit_counts, compute_window_bounds, generate_cluster_events, generate_key_values,
+    resolve_cluster_count, uniform_cluster_start,
 };
-use super::structures::{InjectOverrides, RuleStructure, StepInfo};
+use super::structures::{InjectEntities, InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::WfgenResult;
-use crate::wfg_ast::StreamBlock;
+use crate::wfg_ast::{InjectCase, StreamBlock};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn generate_hit_clusters(
-    percent: f64,
+    case: &InjectCase,
     rule_struct: &RuleStructure,
-    stream_totals: &HashMap<String, u64>,
+    entity_base: u64,
     schemas: &[WindowSchema],
     scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     duration: &Duration,
     rng: &mut StdRng,
-    inject_counts: &mut HashMap<String, u64>,
+    entities: &mut InjectEntities,
     overrides: &InjectOverrides,
 ) -> WfgenResult<Vec<GenEvent>> {
-    // Apply count_per_entity override: use overridden threshold for cluster sizing
-    let effective_steps: Vec<StepInfo> = if let Some(cpe) = overrides.count_per_entity {
-        rule_struct
-            .steps
-            .iter()
-            .map(|s| StepInfo {
-                bind_alias: s.bind_alias.clone(),
-                scenario_alias: s.scenario_alias.clone(),
-                window_name: s.window_name.clone(),
-                measure: s.measure,
-                threshold: cpe, // override
-                filter_overrides: s.filter_overrides.clone(),
-            })
-            .collect()
-    } else {
-        rule_struct.steps.clone()
-    };
+    // 条数完全由 `use ... x N` 决定，模式不改数字、阈值只作断言口径（设计 §4.2）。
+    let effective_steps = &rule_struct.steps;
     if effective_steps.is_empty() {
         return Ok(Vec::new());
     }
 
-    let step_event_counts = compute_hit_counts(&effective_steps, overrides)?;
-    let num_clusters = if overrides.use_steps.is_empty() {
-        compute_cluster_count(percent, &effective_steps, stream_totals)
-    } else {
-        compute_cluster_count_for_step_counts(
-            percent,
-            &effective_steps,
-            &step_event_counts,
-            stream_totals,
-        )
-    };
+    let step_event_counts = compute_hit_counts(effective_steps, overrides)?;
+    let num_clusters = resolve_cluster_count(overrides);
     if num_clusters == 0 {
         return Ok(Vec::new());
-    }
-
-    // Update inject counts
-    for (step, event_count) in effective_steps
-        .iter()
-        .zip(step_event_counts.iter().copied())
-    {
-        *inject_counts
-            .entry(step.scenario_alias.clone())
-            .or_insert(0) += event_count * num_clusters;
     }
 
     let dur_secs = duration.as_secs_f64();
@@ -81,22 +45,28 @@ pub(super) fn generate_hit_clusters(
     let mut events = Vec::new();
 
     for (entity_counter, _cluster_idx) in (0_u64..).zip(0..num_clusters) {
+        let entity_id = entity_base + entity_counter;
         let key_overrides = generate_key_values(
             &rule_struct.keys,
-            entity_counter,
+            entity_id,
             "hit",
             schemas,
-            &effective_steps,
-            overrides.entity_field.as_deref(),
+            effective_steps,
+            rule_struct.effective_entity_field(overrides.entity_field.as_deref()),
+        );
+        entities.record_entity(
+            case,
+            rule_struct,
+            entity_id,
+            entity_counter + 1,
+            &key_overrides,
+            &step_event_counts,
         );
 
-        let cluster_start_secs = if max_start_offset > 0.0 {
-            rng.random_range(0.0..max_start_offset)
-        } else {
-            0.0
-        };
+        let cluster_start_secs =
+            uniform_cluster_start(entity_counter, num_clusters, max_start_offset);
         generate_cluster_events(
-            &effective_steps,
+            effective_steps,
             &step_event_counts,
             &key_overrides,
             &overrides.use_steps,

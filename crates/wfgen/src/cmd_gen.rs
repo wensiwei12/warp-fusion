@@ -8,9 +8,10 @@ use rand::rngs::StdRng;
 use crate::datagen::fault_gen::apply_faults;
 use crate::datagen::generate;
 use crate::error::{self, WfgenReason, WfgenResult};
+use crate::inject_assert::assert_inject_modes;
 use crate::injection_targets::injected_rule_names;
 use crate::loader::load_from_uses;
-use crate::oracle::{extract_oracle_tolerances, run_oracle};
+use crate::oracle::{OracleTolerances, run_oracle};
 use crate::output::arrow_ipc::write_arrow_ipc;
 use crate::output::jsonl::{write_jsonl, write_oracle_jsonl};
 use crate::validate::validate_wfg;
@@ -106,7 +107,7 @@ pub async fn run(args: Args) -> WfgenResult<()> {
         WfgenReason::Io,
         format!("reading .wfg file: {}", scenario.display()),
     )?;
-    let wfg = parse_wfg(&wfg_content)?;
+    let mut wfg = parse_wfg(&wfg_content)?;
     let output_case = scenario
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -120,7 +121,8 @@ pub async fn run(args: Args) -> WfgenResult<()> {
     // only skips oracle / expected output.
     let skip_wfl = no_wfl;
 
-    let (mut schemas, mut wfl_files) = load_from_uses(&wfg, &scenario, &HashMap::new(), skip_wfl)?;
+    let (mut schemas, mut wfl_files) =
+        load_from_uses(&mut wfg, &scenario, &HashMap::new(), skip_wfl)?;
     schemas.extend(load_ws_files(&ws)?);
     if !skip_wfl {
         wfl_files.extend(load_wfl_files(&wfl)?);
@@ -138,21 +140,10 @@ pub async fn run(args: Args) -> WfgenResult<()> {
         );
     }
 
-    // Expected output is requested by either:
-    // - legacy oracle block, or
-    // - new syntax expect block.
-    // If requested, WFL compile failures must be fatal.
-    let expect_requested = wfg
-        .syntax
-        .as_ref()
-        .and_then(|s| s.expect.as_ref())
-        .is_some();
-    // `--no-oracle` disables oracle / expected output but keeps the WFL pipeline
-    // (so injection fixed values still apply). `--no-wfl` skips everything, so
-    // in either case `expected_requested` stays false (and `rule_plans` stays
-    // empty under `--no-wfl`).
-    let expected_requested =
-        (wfg.scenario.oracle.is_some() || expect_requested) && !skip_wfl && !no_oracle;
+    // 期望输出（`.except.jsonl`）不再由 `expect` 块触发——该块已删除：只要 WFL
+    // 管线在跑（没有 `--no-wfl`）且没有被 `--no-oracle` 关掉，就生成期望文件。
+    // 此时 WFL 编译失败必须致命，否则会写出错误的期望。
+    let expected_requested = !skip_wfl && !no_oracle;
 
     // Compile WFL rules. Skipped entirely by `--no-wfl`; `--no-oracle` still
     // compiles so injection-aware generation works, and only oracle/expected
@@ -223,6 +214,20 @@ pub async fn run(args: Args) -> WfgenResult<()> {
             Some(&injected_rules),
         )?;
 
+        // 生成期硬断言（INJ1/INJ2，设计 §4.2）：复用上面刚算出的 oracle 结果，
+        // 失败在写 `.except.jsonl` 之前报——期望文件与场景语义必须一致。
+        let asserted = assert_inject_modes(&result.inject_entities, &expected_result.alerts)?;
+        if asserted > 0 {
+            println!("Inject assert: {asserted} entities match their hit/near_miss/miss mode");
+        }
+        if result.unasserted_inject_entities > 0 {
+            eprintln!(
+                "Warning: {} inject entities skipped by the mode assertion \
+                 (entity(...) is not a single field, so it cannot be matched against entity_id)",
+                result.unasserted_inject_entities
+            );
+        }
+
         let expected_file = out.join(format!("{}.except.jsonl", output_case));
         write_oracle_jsonl(&expected_result.alerts, &expected_file)?;
         println!(
@@ -231,13 +236,10 @@ pub async fn run(args: Args) -> WfgenResult<()> {
             expected_file.display()
         );
 
-        // Write tolerances sidecar so `verify` can read them as defaults
-        let tolerances = wfg
-            .scenario
-            .oracle
-            .as_ref()
-            .map(extract_oracle_tolerances)
-            .unwrap_or_default();
+        // Write tolerances sidecar so `verify` can read them as defaults. The knob is
+        // fixed now (1s time / 0.01 score): the `oracle { … }` block was removed with the
+        // old syntax and its parsing remnants are gone too.
+        let tolerances = OracleTolerances::default();
         let meta_file = out.join(format!("{}.except.meta.jsonl", output_case));
         let meta_json = serde_json::to_string(&tolerances).source_err(
             WfgenReason::Serialization,

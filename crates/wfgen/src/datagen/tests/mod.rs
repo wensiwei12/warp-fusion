@@ -2,6 +2,7 @@ mod compat;
 mod event;
 mod fault;
 mod inject;
+mod replay;
 
 use std::time::Duration;
 
@@ -9,7 +10,7 @@ use wf_lang::ast::{
     BinOp, CloseMode, CmpOp, Expr, FieldRef, FieldSelector, MatchMode, Measure, Transform,
 };
 use wf_lang::plan::{
-    AggPlan, BindPlan, BranchPlan, EntityPlan, MatchPlan, RulePlan, ScorePlan, StepPlan,
+    AggPlan, BindPlan, BranchPlan, EachPlan, EntityPlan, MatchPlan, RulePlan, ScorePlan, StepPlan,
     WindowSpec, YieldPlan,
 };
 use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
@@ -441,6 +442,77 @@ fn make_chain_attack_plan() -> RulePlan {
         },
         score_plan: ScorePlan {
             expr: Expr::Number(90.0),
+        },
+        pattern_origin: None,
+        conv_plan: None,
+        limits_plan: None,
+        conv_window: None,
+        stats_plan: None,
+    }
+}
+
+/// 规则 bind 的 window 与场景 stream 的 window 不一致：注入无法映射到任何步骤。
+fn make_other_window_plan() -> RulePlan {
+    let mut plan = make_brute_force_plan();
+    plan.name = "other_window".to_string();
+    plan.binds[0].window = "OtherWindow".to_string();
+    plan
+}
+
+/// `on each` 规则（无状态、逐事件告警）：没有 match 块，编译器给 `match_plan`
+/// 填 `MatchClause::placeholder()`（`Sliding(1s)`、无 keys、无 steps）；过滤条件在
+/// `each_plan.filter`，实体取自 `entity(...)` 的单一字段。
+///
+/// 过滤器是**数值比较**（不是等值）——等值约束会被注入自动满足，
+/// 数值比较才能验证 hit 是否真的命中。
+fn make_each_plan() -> RulePlan {
+    RulePlan {
+        name: "each_alert".to_string(),
+        binds: vec![BindPlan {
+            alias: "evt".to_string(),
+            window: "LoginWindow".to_string(),
+            filter: None,
+        }],
+        lets: Vec::new(),
+        match_plan: MatchPlan {
+            key_exprs: Vec::new(),
+            keys: Vec::new(),
+            key_map: None,
+            key_join: None,
+            window_spec: WindowSpec::Sliding(Duration::from_secs(1)),
+            event_steps: vec![],
+            close_steps: vec![],
+            close_mode: CloseMode::Or,
+            match_mode: MatchMode::Seq,
+            accu: false,
+            seq: None,
+            tracked_bind_aliases: std::collections::HashSet::new(),
+            tracked_bind_fields: std::collections::HashMap::new(),
+            tracked_plain_fields: std::collections::HashSet::new(),
+            needs_field_history: false,
+            trigger_event_needed: false,
+        },
+        each_plan: Some(EachPlan {
+            alias: "evt".to_string(),
+            filter: Some(Expr::BinOp {
+                op: BinOp::Ge,
+                left: Box::new(Expr::Field(FieldRef::Simple("attempts".to_string()))),
+                right: Box::new(Expr::Number(100.0)),
+            }),
+        }),
+        joins: vec![],
+        r#where: None,
+        entity_plan: EntityPlan {
+            entity_type: "user".to_string(),
+            entity_id_expr: Expr::Field(FieldRef::Simple("username".to_string())),
+        },
+        yield_plan: YieldPlan {
+            target: "alerts".to_string(),
+            version: None,
+            fields: vec![],
+        },
+        score_plan: ScorePlan {
+            expr: Expr::Number(60.0),
         },
         pattern_origin: None,
         conv_plan: None,

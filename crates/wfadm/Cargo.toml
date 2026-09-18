@@ -1,6 +1,6 @@
 [package]
 name = "wfadm"
-version = "0.5.10" #@gxl:set(version)
+version = "0.7.0" #@gxl:set(version)
 edition.workspace = true
 license.workspace = true
 
@@ -19,6 +19,9 @@ wp-connector-api = { workspace = true }
 wp-connectors = { workspace = true }
 wf-config = { workspace = true }
 wf-lang = { workspace = true }
+# `.wfg` 场景由 wfgen 自己的解析器校验（单一事实源）：wf-lang（wp-reactor）里那份
+# 是给引擎侧用的旧副本，不跟随 wfgen 的语法演进。
+wfgen = { path = "../wfgen" }
 ureq = { workspace = true }
 comfy-table = { version = "8", default-features = false }
 wf-project-remote = { workspace = true }

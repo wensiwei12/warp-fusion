@@ -5,7 +5,7 @@ fn test_same_seed_same_output() {
     let input = r#"
 #[duration=10s]
 scenario deterministic<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 10/s
     }
 }
@@ -28,7 +28,7 @@ fn test_different_seed_different_output() {
     let input1 = r#"
 #[duration=5s]
 scenario seed_a<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 10/s
     }
 }
@@ -36,7 +36,7 @@ scenario seed_a<seed=42> {
     let input2 = r#"
 #[duration=5s]
 scenario seed_b<seed=99> {
-    traffic {
+    background {
         stream LoginWindow gen 10/s
     }
 }
@@ -68,7 +68,7 @@ fn test_correct_event_count() {
     let input = r#"
 #[duration=20s]
 scenario count_test<seed=1> {
-    traffic {
+    background {
         stream LoginWindow gen 10/s
     }
 }
@@ -85,7 +85,7 @@ fn test_field_types_correct() {
     let input = r#"
 #[duration=1s]
 scenario types_test<seed=7> {
-    traffic {
+    background {
         stream LoginWindow gen 10/s
     }
 }
@@ -118,7 +118,7 @@ fn test_events_sorted_by_time() {
     let input = r#"
 #[duration=10s]
 scenario sorted_test<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 10/s
     }
 }
@@ -154,7 +154,7 @@ fn test_multiple_streams_distribution() {
     let input = r#"
 #[duration=10s]
 scenario multi_stream<seed=42> {
-    traffic {
+    background {
         stream LoginWindow gen 20/s
         stream DnsWindow gen 10/s
     }
@@ -190,7 +190,7 @@ fn test_enum_named_values_arg() {
     let input = r#"
 #[duration=5s]
 scenario enum_values<seed=7> {
-    traffic {
+    background {
         stream LoginWindow gen 10/s
     }
 }

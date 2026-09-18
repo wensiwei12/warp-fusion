@@ -162,9 +162,9 @@ pub async fn dump_frames(args: DumpFramesArgs) -> WfgenResult<()> {
         WfgenReason::Io,
         format!("reading .wfg file: {}", scenario.display()),
     )?;
-    let wfg = parse_wfg(&wfg_content)?;
+    let mut wfg = parse_wfg(&wfg_content)?;
 
-    let (mut schemas, _) = load_from_uses(&wfg, &scenario, &HashMap::new(), false)?;
+    let (mut schemas, _) = load_from_uses(&mut wfg, &scenario, &HashMap::new(), false)?;
     schemas.extend(load_ws_files(&ws)?);
 
     let sink = connect_sender(&addr).await?;

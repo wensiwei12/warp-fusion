@@ -3,36 +3,27 @@ use "../rules/top_scanners.wfl"
 
 #[duration=2h]
 scenario top_scanners_detect<seed=42> {
-  traffic {
+  background {
     stream conn_events gen 40/s
   }
 
-  injection {
-    // 高扫描者：生成5个 SYN 事件；端口分布由字段生成器负责
-    hit<25%> conn_events {
-      sip seq {
-        use(action="syn") with(5)
-      }
+  inject {
+    // 高扫描者：5 个 SYN 事件 → distinct 端口 5 >= 3，满足 on close 阈值。
+    // 规则带 conv `sort(-scan) | top(2)`：**只有进入 top-2 的实体才会产出告警**，
+    // 因此 hit 实体数取 2（写多了必然 INJ1——这就是硬断言要抓的东西）。
+    // `spread 1m` 让 5 条事件落在同一个 1h fixed 窗口内。
+    hit<2> for top_port_scanners conn_events {
+      use(action="syn") x 5 spread 1m
     }
 
-    // 中等扫描者：生成3个 SYN 事件
-    near_miss<15%> conn_events {
-      sip seq {
-        use(action="syn") with(3)
-      }
+    // 中等扫描者：2 个端口 < 3，达不到 on close 阈值 → 不产出告警，也进不了 top-2
+    near_miss<2> for top_port_scanners conn_events {
+      use(action="syn") x 2 spread 1m
     }
 
     // 正常流量：1个端口（低于阈值）
-    miss<60%> conn_events {
-      sip seq {
-        use(action="syn") with(1)
-      }
+    miss<172800> for top_port_scanners conn_events {
+      use(action="syn") x 1
     }
-  }
-
-  expect {
-    hit(top_port_scanners) >= 80%
-    near_miss(top_port_scanners) <= 10%
-    miss(top_port_scanners) <= 1%
   }
 }

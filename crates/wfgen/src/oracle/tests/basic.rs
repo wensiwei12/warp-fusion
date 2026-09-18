@@ -1,10 +1,15 @@
 use super::*;
+use crate::oracle::json_to_core_value;
+use wf_engine::match_engine::Value;
 
 #[test]
 fn hop_oracle_closes_every_covered_window() {
     // hop(10s, 2s) + `and close` count：每覆盖窗口收口输出一条。
-    // 事件 t=0/4/8s → 覆盖窗口并集 k=-4..4（9 个）；6 个在 eos 前 slide 边界
-    // 收口（末 2..12s）+ 3 个由 eos close_all 收口（末 14..18s）。
+    // 事件 t=0/4/8s → 覆盖窗口并集 k=-4..4（9 个，窗口末 2/4/6/8/10/12/14/16/18s）。
+    // 收尾水位 = **数据末尾**（8s，对齐引擎 `final_wm`，见 oracle/mod.rs 的
+    // `sweep_nanos`）：只有窗口末 ≤ 8s 的 4 个在收尾扫描时到收口；末 10..18s 的
+    // 到期点在数据末尾之后，引擎没有事件把水位推过去 → 由 close_all 收口，
+    // 而 close_all 只发射完整窗口（w_end ≤ 最终事件时间 8s），即上面那 4 个。
     let mut plan = make_simple_rule_plan();
     // 默认 on-event 阈值为 3，改为 1（单事件即达标）。
     plan.match_plan.event_steps[0].branches[0].agg.threshold = Expr::Number(1.0);
@@ -35,10 +40,14 @@ fn hop_oracle_closes_every_covered_window() {
         make_event("s1", "LoginWindow", "10.0.0.1", "2024-01-01T00:00:08Z"),
     ];
     let result = run_oracle(&events, &[plan], &start, &duration, None).unwrap();
-    // 2026-08-23 close_all 对齐 oracle/Flink 后：eos close_all 只收口**完整**
-    // 窗口（w_end ≤ 最终事件时间 8s）——尾部 3 个未完整窗口（末 14/16/18s）
-    // 释放实例但不发射（q5 修复同源）；仅 6 个在 slide 边界收口的完整窗口输出。
-    assert_eq!(result.alerts.len(), 6, "6 个完整覆盖窗口各输出一条");
+    // 2026-08-23 close_all 对齐 oracle/Flink 后：close_all 只收口**完整**窗口
+    // （w_end ≤ 最终事件时间 8s）——尾部未完整窗口释放实例但不发射（q5 修复
+    // 同源）。故最终只有收尾扫描已收口的 4 个完整窗口输出。
+    assert_eq!(
+        result.alerts.len(),
+        4,
+        "只有收尾水位（数据末尾 8s）之内的完整窗口各输出一条"
+    );
 }
 
 #[test]
@@ -156,8 +165,15 @@ fn close_all_eos_fires_and_close_rule_at_scenario_end() {
     assert_eq!(result.alerts[0].origin, "close:eos");
 }
 
+/// batch 收尾水位 = **数据末尾**（P0）：5m 窗口的到期点（~303s）落在数据末尾
+/// （3s）之后时，收尾**不得**走 `close:timeout`。
+///
+/// 旧口径按场景边界扫（`eos_nanos` = 600s > 303s）会误判为窗口已到期并输出
+/// `close:timeout`；引擎的水位是 `final_wm = max(窗口 max_event_time, 机器水位)`
+/// = 数据末尾 3s，此时没有事件把水位推到到期点 → 走收尾 `close:flush`，
+/// `close_reason == "timeout"` 的守卫不命中。
 #[test]
-fn scenario_end_timeout_sweep_fires_timeout_guarded_close_rule() {
+fn timeout_guard_does_not_fire_at_data_end_without_expiry() {
     let plan = make_timeout_guard_close_rule_plan();
     let start: chrono::DateTime<Utc> = "2024-01-01T00:00:00Z".parse().unwrap();
     let duration = Duration::from_secs(600);
@@ -170,10 +186,60 @@ fn scenario_end_timeout_sweep_fires_timeout_guarded_close_rule() {
 
     let result = run_oracle(&events, &[plan], &start, &duration, None).unwrap();
 
+    assert_eq!(
+        result.alerts.len(),
+        0,
+        "到期点在数据末尾之后 → 收尾是 close:flush，timeout 守卫不应命中"
+    );
+}
+
+/// 同一实例若**真的**在数据末尾之前到期（后续事件把水位推过到期点），
+/// `close:timeout` 守卫仍按事件驱动的收尾扫描命中。
+#[test]
+fn timeout_guard_fires_when_instance_expires_before_data_end() {
+    let plan = make_timeout_guard_close_rule_plan();
+    let start: chrono::DateTime<Utc> = "2024-01-01T00:00:00Z".parse().unwrap();
+    let duration = Duration::from_secs(600);
+
+    let events = vec![
+        make_event("s1", "LoginWindow", "10.0.0.1", "2024-01-01T00:00:01Z"),
+        make_event("s1", "LoginWindow", "10.0.0.1", "2024-01-01T00:00:02Z"),
+        make_event("s1", "LoginWindow", "10.0.0.1", "2024-01-01T00:00:03Z"),
+        // 同一 sip 的后续事件：推进水位越过 5m 窗口到期点（~303s），实例按
+        // `close:timeout` 收口；它自身开启的新实例只有 1 条事件，不满足
+        // on-event 阈值（3），且到期点 700s > 数据末尾 400s → 不输出。
+        make_event("s1", "LoginWindow", "10.0.0.1", "2024-01-01T00:06:40Z"),
+    ];
+
+    let result = run_oracle(&events, &[plan], &start, &duration, None).unwrap();
+
     assert_eq!(result.alerts.len(), 1);
     assert_eq!(result.alerts[0].rule_name, "timeout_close_rule");
     assert_eq!(result.alerts[0].entity_id, "10.0.0.1");
     assert_eq!(result.alerts[0].origin, "close:timeout");
+}
+
+/// batch 收尾水位 = **数据末尾**（P0）的正面锁定：到期点在数据末尾之后的实例，
+/// 由收尾 `close_all` 以 `close:eos` 收口，且 `emit_time` = **该实例最后一条
+/// 事件**（4s），不是场景边界（600s）。
+#[test]
+fn batch_sweep_uses_data_end_not_scenario_end() {
+    let plan = make_and_close_rule_plan();
+    let start: chrono::DateTime<Utc> = "2024-01-01T00:00:00Z".parse().unwrap();
+    let duration = Duration::from_secs(600);
+
+    let events = vec![
+        make_event("s1", "LoginWindow", "10.0.0.1", "2024-01-01T00:00:01Z"),
+        make_event("s1", "LoginWindow", "10.0.0.1", "2024-01-01T00:00:02Z"),
+        make_event("s1", "LoginWindow", "10.0.0.1", "2024-01-01T00:00:03Z"),
+        make_event("s1", "LoginWindow", "10.0.0.1", "2024-01-01T00:00:04Z"),
+    ];
+
+    let result = run_oracle(&events, &[plan], &start, &duration, None).unwrap();
+
+    assert_eq!(result.alerts.len(), 1);
+    assert_eq!(result.alerts[0].origin, "close:eos");
+    assert_eq!(result.alerts[0].emit_time, "2024-01-01T00:00:04.000Z");
 }
 
 #[test]
@@ -330,4 +396,49 @@ fn sc7_uninjected_rule_skipped() {
         ["some_other_rule".to_string()].into_iter().collect();
     let result = run_oracle(&events, &[plan], &start, &duration, Some(&other)).unwrap();
     assert_eq!(result.alerts.len(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// 结构化字段（object / array）在 GenEvent → 引擎 Value 的转换
+// ---------------------------------------------------------------------------
+
+/// object / array 必须**递归**保留：旧实现把它们整段丢掉，读嵌套字段的规则在
+/// oracle 侧恒不命中（与引擎侧不一致）。
+#[test]
+fn json_to_core_value_keeps_structured_values() {
+    let value = serde_json::json!({
+        "action": "syn",
+        "nested": {"sev": 10, "flag": true, "none": null},
+        "tags": ["a", 22, {"deep": 1}],
+        "empty_array": [],
+        "empty_object": {}
+    });
+
+    let Some(Value::Object(map)) = json_to_core_value(&value) else {
+        panic!("顶层 object 必须保留");
+    };
+    assert_eq!(map.get("action"), Some(&Value::Str("syn".into())));
+
+    let Some(Value::Object(nested)) = map.get("nested") else {
+        panic!("嵌套 object 必须保留");
+    };
+    assert_eq!(nested.get("sev"), Some(&Value::Number(10.0)));
+    assert_eq!(nested.get("flag"), Some(&Value::Bool(true)));
+    assert!(!nested.contains_key("none"), "null 成员与引擎一致地丢弃");
+
+    let Some(Value::Array(tags)) = map.get("tags") else {
+        panic!("array 必须保留");
+    };
+    assert_eq!(tags[0], Value::Str("a".into()));
+    assert_eq!(tags[1], Value::Number(22.0));
+    let Value::Object(deep) = &tags[2] else {
+        panic!("数组里的 object 必须保留");
+    };
+    assert_eq!(deep.get("deep"), Some(&Value::Number(1.0)));
+
+    assert_eq!(map.get("empty_array"), Some(&Value::Array(Vec::new())));
+    assert_eq!(
+        map.get("empty_object"),
+        Some(&Value::Object(Default::default()))
+    );
 }

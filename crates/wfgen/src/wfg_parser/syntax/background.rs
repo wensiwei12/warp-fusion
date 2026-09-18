@@ -7,11 +7,11 @@ use wf_lang::parse_utils::ident;
 
 use crate::wfg_ast::*;
 use crate::wfg_parser::primitives::{rate, ws_skip};
-pub(crate) fn parse_traffic_block(input: &mut &str) -> ModalResult<TrafficBlock> {
+pub(crate) fn parse_background_block(input: &mut &str) -> ModalResult<BackgroundBlock> {
     ws_skip(input)?;
     cut_err(literal("{"))
         .context(StrContext::Expected(StrContextValue::Description(
-            "opening brace for traffic block",
+            "opening brace for background block",
         )))
         .parse_next(input)?;
 
@@ -23,7 +23,7 @@ pub(crate) fn parse_traffic_block(input: &mut &str) -> ModalResult<TrafficBlock>
         }
         cut_err(wf_lang::parse_utils::kw("stream"))
             .context(StrContext::Expected(StrContextValue::Description(
-                "'stream' in traffic block",
+                "'stream' in background block",
             )))
             .parse_next(input)?;
         ws_skip(input)?;
@@ -54,7 +54,7 @@ pub(crate) fn parse_traffic_block(input: &mut &str) -> ModalResult<TrafficBlock>
         });
     }
 
-    Ok(TrafficBlock { streams })
+    Ok(BackgroundBlock { streams })
 }
 
 fn parse_rate_expr(input: &mut &str) -> ModalResult<RateExpr> {

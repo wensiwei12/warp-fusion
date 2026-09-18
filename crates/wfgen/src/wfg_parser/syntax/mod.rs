@@ -7,6 +7,12 @@ use winnow::token::literal;
 
 use crate::wfg_ast::*;
 use crate::wfg_parser::primitives::ws_skip;
+/// VN20：旧的块关键字 `traffic` 已改名为 `background`（设计 §5.1）。
+const VN20_LEGACY_TRAFFIC_KEYWORD: &str = "VN20 旧注入语法已移除：块关键字 `traffic` 已改名为 `background`（只描述背景流量）。请把 `traffic { … }` 改写为 `background { … }`。";
+
+/// VN20：旧的关键字 `injection` 已改名为 `inject`（设计 §1.1 P7 / §5.1）。
+const VN20_LEGACY_INJECTION_KEYWORD: &str = "VN20 旧注入语法已移除：块关键字 `injection` 已改名为 `inject`（`background` / `inject` 两个块名成对）。请把 `injection { … }` 改写为 `inject { … }`。";
+
 pub(super) fn parse_syntax_body(
     input: &mut &str,
     name: String,
@@ -20,9 +26,9 @@ pub(super) fn parse_syntax_body(
         )))
         .parse_next(input)?;
 
-    let mut traffic: Option<TrafficBlock> = None;
+    let mut background: Option<BackgroundBlock> = None;
     let mut injection: Option<SyntaxInjectionBlock> = None;
-    let mut expect: Option<ExpectBlock> = None;
+    let mut replays: Vec<ReplayStmt> = Vec::new();
 
     loop {
         ws_skip(input)?;
@@ -30,26 +36,56 @@ pub(super) fn parse_syntax_body(
             break;
         }
 
-        if opt(wf_lang::parse_utils::kw("traffic"))
+        if opt(wf_lang::parse_utils::kw("background"))
             .parse_next(input)?
             .is_some()
         {
-            traffic = Some(parse_traffic_block(input)?);
+            background = Some(parse_background_block(input)?);
             continue;
         }
-        if opt(wf_lang::parse_utils::kw("injection"))
+        if opt(wf_lang::parse_utils::kw("inject"))
             .parse_next(input)?
             .is_some()
         {
             injection = Some(parse_injection_block(input)?);
             continue;
         }
-        if opt(wf_lang::parse_utils::kw("expect"))
+        // `replay <window> { use from "…" }`：照单发货（设计 §8）；可写多条。
+        if opt(wf_lang::parse_utils::kw("replay"))
             .parse_next(input)?
             .is_some()
         {
-            expect = Some(parse_expect_block(input)?);
+            replays.push(parse_replay_stmt(input)?);
             continue;
+        }
+        // VN20：`traffic` 是旧关键字（设计 §5.1 旧语法清单），已改名为 `background`。
+        if opt(wf_lang::parse_utils::kw("traffic"))
+            .parse_next(input)?
+            .is_some()
+        {
+            return Err(winnow::error::ErrMode::Cut(
+                winnow::error::ContextError::new().add_context(
+                    input,
+                    &input.checkpoint(),
+                    StrContext::Expected(StrContextValue::Description(VN20_LEGACY_TRAFFIC_KEYWORD)),
+                ),
+            ));
+        }
+        // VN20：`injection` 是旧关键字（设计 §5.1 旧语法清单），已改名为 `inject`。
+        // 这里单独接住并给出改写方向——否则用户只会看到"期望 background/inject"。
+        if opt(wf_lang::parse_utils::kw("injection"))
+            .parse_next(input)?
+            .is_some()
+        {
+            return Err(winnow::error::ErrMode::Cut(
+                winnow::error::ContextError::new().add_context(
+                    input,
+                    &input.checkpoint(),
+                    StrContext::Expected(StrContextValue::Description(
+                        VN20_LEGACY_INJECTION_KEYWORD,
+                    )),
+                ),
+            ));
         }
 
         return Err(winnow::error::ErrMode::Cut(
@@ -57,26 +93,26 @@ pub(super) fn parse_syntax_body(
                 input,
                 &input.checkpoint(),
                 StrContext::Expected(StrContextValue::Description(
-                    "traffic, injection, expect, or closing brace",
+                    "background, inject, replay, or closing brace",
                 )),
             ),
         ));
     }
 
-    let Some(traffic) = traffic else {
+    let Some(background) = background else {
         return Err(winnow::error::ErrMode::Cut(
             winnow::error::ContextError::new().add_context(
                 input,
                 &input.checkpoint(),
-                StrContext::Expected(StrContextValue::Description("traffic block")),
+                StrContext::Expected(StrContextValue::Description("background block")),
             ),
         ));
     };
 
     let seed = extract_seed(&inline_annos).unwrap_or(0);
     let duration = extract_duration(&attrs).unwrap_or_else(|| Duration::from_secs(60));
-    let total = derive_total(&traffic, duration);
-    let streams = derive_legacy_streams(&traffic);
+    let total = derive_total(&background, duration);
+    let streams = derive_legacy_streams(&background);
 
     let scenario = ScenarioDecl {
         name,
@@ -87,17 +123,15 @@ pub(super) fn parse_syntax_body(
         },
         total,
         streams,
-        injects: Vec::new(),
         faults: None,
-        oracle: None,
     };
 
     let syntax = SyntaxScenario {
         attrs,
         inline_annos,
-        traffic,
+        background,
         injection,
-        expect,
+        replays,
     };
 
     Ok((scenario, syntax))
@@ -123,8 +157,8 @@ fn extract_duration(attrs: &[ScenarioAttr]) -> Option<Duration> {
         })
 }
 
-fn derive_legacy_streams(traffic: &TrafficBlock) -> Vec<StreamBlock> {
-    traffic
+fn derive_legacy_streams(background: &BackgroundBlock) -> Vec<StreamBlock> {
+    background
         .streams
         .iter()
         .map(|s| StreamBlock {
@@ -148,8 +182,8 @@ fn rate_from_expr(rate_expr: &RateExpr) -> Rate {
     }
 }
 
-fn derive_total(traffic: &TrafficBlock, duration: Duration) -> u64 {
-    let eps_sum: f64 = traffic.streams.iter().map(|s| s.rate.approx_eps()).sum();
+fn derive_total(background: &BackgroundBlock, duration: Duration) -> u64 {
+    let eps_sum: f64 = background.streams.iter().map(|s| s.rate.approx_eps()).sum();
     if eps_sum <= 0.0 {
         return 1;
     }
@@ -158,11 +192,11 @@ fn derive_total(traffic: &TrafficBlock, duration: Duration) -> u64 {
 }
 
 mod attrs;
-mod expect;
+mod background;
 mod inject;
-mod traffic;
+mod replay;
 
 pub(super) use attrs::{inline_annos, scenario_attrs};
-pub(super) use expect::parse_expect_block;
+pub(super) use background::parse_background_block;
 pub(super) use inject::parse_injection_block;
-pub(super) use traffic::parse_traffic_block;
+pub(super) use replay::parse_replay_stmt;

@@ -44,10 +44,10 @@ fn manifest() -> PathBuf {
 fn skip_wfl_loads_schemas_but_no_rules() {
     let wfg_path = manifest().join(WFG_REL);
     let content = std::fs::read_to_string(&wfg_path).expect("read wfg");
-    let wfg = parse_wfg(&content).expect("parse wfg");
+    let mut wfg = parse_wfg(&content).expect("parse wfg");
 
     let (schemas, wfl_files) =
-        load_from_uses(&wfg, &wfg_path, &HashMap::new(), true).expect("load with skip_wfl");
+        load_from_uses(&mut wfg, &wfg_path, &HashMap::new(), true).expect("load with skip_wfl");
     assert!(
         !schemas.is_empty(),
         "schemas must still load under skip_wfl"
@@ -62,10 +62,10 @@ fn skip_wfl_loads_schemas_but_no_rules() {
 fn skip_wfl_validation_passes_without_rules() {
     let wfg_path = manifest().join(WFG_REL);
     let content = std::fs::read_to_string(&wfg_path).expect("read wfg");
-    let wfg = parse_wfg(&content).expect("parse wfg");
+    let mut wfg = parse_wfg(&content).expect("parse wfg");
 
     let (schemas, wfl_files) =
-        load_from_uses(&wfg, &wfg_path, &HashMap::new(), true).expect("load with skip_wfl");
+        load_from_uses(&mut wfg, &wfg_path, &HashMap::new(), true).expect("load with skip_wfl");
     let errors = validate_wfg(&wfg, &schemas, &wfl_files, true);
     assert!(
         errors.is_empty(),
@@ -78,10 +78,10 @@ fn skip_wfl_validation_passes_without_rules() {
 fn skip_wfl_generates_baseline_events() {
     let wfg_path = manifest().join(WFG_REL);
     let content = std::fs::read_to_string(&wfg_path).expect("read wfg");
-    let wfg = parse_wfg(&content).expect("parse wfg");
+    let mut wfg = parse_wfg(&content).expect("parse wfg");
 
     let (schemas, _wfl_files) =
-        load_from_uses(&wfg, &wfg_path, &HashMap::new(), true).expect("load with skip_wfl");
+        load_from_uses(&mut wfg, &wfg_path, &HashMap::new(), true).expect("load with skip_wfl");
     let result = generate(&wfg, &schemas, &[]).expect("generate with empty rule_plans");
     assert!(
         !result.events.is_empty(),
@@ -155,10 +155,10 @@ fn skip_wfl_generation_drops_injected_fixed_values() {
     // `action`.
     let wfg_path = manifest().join(WFG_REL);
     let content = std::fs::read_to_string(&wfg_path).expect("read wfg");
-    let wfg = parse_wfg(&content).expect("parse wfg");
+    let mut wfg = parse_wfg(&content).expect("parse wfg");
 
     let (schemas, _wfl_files) =
-        load_from_uses(&wfg, &wfg_path, &HashMap::new(), true).expect("load with skip_wfl");
+        load_from_uses(&mut wfg, &wfg_path, &HashMap::new(), true).expect("load with skip_wfl");
     let result = generate(&wfg, &schemas, &[]).expect("generate with empty rule_plans");
 
     let total = result.events.len();
@@ -245,10 +245,10 @@ fn normal_mode_loads_rules() {
     // from `use` declarations and compile — the inverse of the `--no-wfl` skip.
     let wfg_path = manifest().join(WFG_REL);
     let content = std::fs::read_to_string(&wfg_path).expect("read wfg");
-    let wfg = parse_wfg(&content).expect("parse wfg");
+    let mut wfg = parse_wfg(&content).expect("parse wfg");
 
     let (schemas, wfl_files) =
-        load_from_uses(&wfg, &wfg_path, &HashMap::new(), false).expect("load skip_wfl=false");
+        load_from_uses(&mut wfg, &wfg_path, &HashMap::new(), false).expect("load skip_wfl=false");
     assert!(!schemas.is_empty());
     assert!(
         !wfl_files.is_empty(),
@@ -269,10 +269,10 @@ fn normal_mode_generation_applies_injected_fixed_values() {
     // fixed values appear in a large fraction of generated events.
     let wfg_path = manifest().join(WFG_REL);
     let content = std::fs::read_to_string(&wfg_path).expect("read wfg");
-    let wfg = parse_wfg(&content).expect("parse wfg");
+    let mut wfg = parse_wfg(&content).expect("parse wfg");
 
     let (schemas, wfl_files) =
-        load_from_uses(&wfg, &wfg_path, &HashMap::new(), false).expect("load");
+        load_from_uses(&mut wfg, &wfg_path, &HashMap::new(), false).expect("load");
     let plans: Vec<_> = wfl_files
         .iter()
         .flat_map(|f| wf_lang::compile_wfl(f, &schemas).expect("compile"))

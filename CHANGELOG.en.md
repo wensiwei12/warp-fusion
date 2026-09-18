@@ -3,6 +3,102 @@
 This file records user-facing changes to `wfusion` / `wfl` / `wfgen` / `wfadm`.
 Internal implementation details, dependency alignment, and test counts are not covered here.
 
+## [0.7.0]
+
+The `.wfg` scenario DSL injection syntax is rewritten (**breaking** — existing scenarios must be rewritten), generation-time hard assertions are added, and the engine is aligned to wp-reactor 2.1.0.
+
+### Injection syntax (breaking)
+
+Counts are explicit now: both the entity count and the per-entity count are written in the case (total events = background quota + injected). Old spellings fail at load time with the target spelling in the message.
+
+| Old | New |
+|---|---|
+| `hit<20%>` | `hit<sip: 500>` + `use(...) x 12` |
+| `traffic { ... }` | `background { ... }` |
+| `injection { ... }` | `inject { ... }` |
+| `use(...) with(N)` | `use(...) x N` |
+| `<field> seq { ... }` | removed -- the entity field goes in the case header (inferred from the rule when omitted) |
+| `not(...) within(...)` | `without(preds) [within D]` -- no count, no step slot |
+| `expect { ... }` | removed -- expectations are carried by the mode `hit` / `near_miss` / `miss` |
+
+`without(...)` declares "this entity's window must contain no matching event"; `use from "file"` now works (resolved relative to the `.wfg`, supporting a top-level object / array / NDJSON).
+
+### Added
+
+- **Generation-time hard assertions INJ1 / INJ2**: every `hit` entity must alert and every `near_miss` / `miss` entity must not; failures name the entity (instead of a single percentage line from `verify`).
+- `on each` rules can be injection targets.
+- **New `replay <window> { use from "file" }` pass-through channel**: feed an existing dataset as-is (no count, no entity math, no entity assertions); timestamps are rebased onto the scenario start from the file's earliest record. Empty files, mixed time-field usage and spans beyond `#[duration]` fail at load/validation time.
+- Injected events are now spread **evenly** across the scenario `#[duration]` (previously each cluster got a random start, so entities could overlap).
+- object / array fields from `use({...})` / `use from` are parsed as structured values by the engine (previously strings, so rules reading nested fields never matched).
+- New guide `docs/useage/scenarios.md` (including the `VN` / `SC` / `SV` / `INJ` validation-code families); the `wfadm init` templates and example scenarios are migrated to the new syntax.
+
+New validation codes (reported at load time by `lint` / `gen`):
+
+| Code | Trigger |
+|---|---|
+| VN22 | an explicit entity field is not in the stream schema |
+| VN23 | an explicit entity field disagrees with the rule-inferred one |
+| VN24 | the number of `use` groups exceeds the rule's event steps |
+| VN25 | `spread` / `without ... within` exceeds `#[duration]` |
+| VN27 | the scenario's total entity-id count reaches the 2^24 limit (`miss` counts one id per event) |
+| VN28 | a background rate uses `wave` / `burst` / `timeline`
+| VN29 | a scenario annotation key is not in the allow-list (`#[...]` takes only `duration`, `<...>` only `seed`), or its value type is invalid | (syntax is defined but the time-varying semantics are not implemented — it used to be generated silently at the constant `base=` rate) |
+
+### Fixed
+
+- Scenario annotations accept only `duration` and `seed`: other keys (including the `tick` / `rows` / `emit` mentioned in early docs) used to be silently ignored, and a wrong key name or value type quietly fell back to the defaults; now reported by the new code **VN29**.
+- Background rates written as `wave(...)` / `burst(...)` / `timeline { ... }` used to be accepted by `lint` but were generated at the constant `base=` rate (so `burst(peak=300/s, ...)` silently produced flat traffic); now rejected at load time by the new code **VN28**, with the target spelling in the message.
+- `array/<base>` fields (e.g. `array/digit`) no longer degrade and lose their array structure and values.
+- Structured fields are no longer dropped on the assertion side, where expected files disagreed with the actual output.
+- Close timing: tail instances of `close` rules could previously disagree with the engine's `close:flush` timestamp (same count and entities, time only); now aligned with the engine.
+
+### Engine (aligned with wp-reactor 2.1.0)
+
+- **Online behavioral baseline detection**: real-time `judge` (against the last K closed windows, `|z| > 3`) and periodic `detect` (against a same-phase historical profile, for magnitude drift); new rule-side built-ins `baseline_dev` / `sumsq` / `phase_bucket`.
+- External feed refresh is more consistent (configuration and usage unchanged); a malformed feed SQL variable config now fails **at startup** instead of at the first refresh; fixed an occasional join degradation when refresh races with dynamic join configuration.
+
+## [0.6.3]
+
+### Fixed
+
+- **`first(field)` drifts past the field-history cap (issue #100)**: beyond 1024 events in a window the earliest sample was dropped, so aggregate keys / `alert_id` built from `first(field)` produced multiple unique keys; it is now pinned to the earliest event of the instance (sample bound 1024 -> 1025; `collect_*` / `min` / `max` / `sum` / `avg(alias.field)` include it).
+- **Threshold expressions must be compile-time constants (issue #101)**: field references, non-constant `let` and function calls (`first` / `collect_*` / `now*` / `baseline`, ...) compiled but never fired at runtime with no error; now rejected at compile time.
+
+### Language
+
+- A rule-level constant `let` (e.g. `let THRESHOLD = 3`) can be used as a threshold; non-constant `let` is still rejected, rule-level `let` is unavailable inside a pipeline stage, and duplicate names are rejected.
+- Over-complex input is now a compile-time error instead of a compiler stack-overflow abort: expression nesting groups <= 5, operator chains within one group <= 16, rule-level `let` reference chains <= 5; `let` forward references report a declaration-order error.
+
+### Engine
+
+- Aligned to wp-reactor v2.0.24.
+
+## [0.6.2]
+
+### Fixed
+
+- **L3 series functions produce empty output when only written inside a rule-level `let` (issue #99)**: `first` / `last` / `collect_*` used solely in a `let` (referenced indirectly by `yield`) yielded empty values (`alert_id` empty in entity output); fixed — now identical to writing them directly in `yield`.
+
+### Engine
+
+- Aligned to wp-reactor v2.0.23: includes the async-persist flush race fix and `@first_match_time` semantics docs/coverage (public API and rule semantics unchanged).
+
+## [0.6.1]
+
+### Fixed
+
+- **Kafka NDJSON numeric timestamps no longer become null (issue #95)**: NDJSON→Arrow decoding now accepts JSON numeric epoch timestamps (s / ms / us / ns normalized by digit width), numeric strings, and `%Y-%m-%d %H:%M:%S` — Kafka and file inputs now agree on time fields; boolean text (`1/0`, case, whitespace) aligned too (wp-connector-utils 0.2.1).
+
+### Changed
+
+- **Housekeeping**: removed leftover moju modeling annotations and their dependency from the `wfusion` CLI (public behavior unchanged); routine dependency-tree refresh (arrow 59.3 etc.).
+
+## [0.6.0]
+
+### Changed
+
+- **alpha → beta channel promotion**: content matches alpha v0.5.10 — `events` conditions can reuse rule-level string-literal `let` regexes (issue #90), aligned with wp-reactor v2.0.21 and wp-connectors v0.20.0; the version line moves to 0.6.x.
+
 ## [0.5.10]
 
 ### Language (aligned with wp-reactor 2.0.21)

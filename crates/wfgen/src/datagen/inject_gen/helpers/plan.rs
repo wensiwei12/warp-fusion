@@ -7,7 +7,8 @@ use crate::error::{self, WfgenReason, WfgenResult};
 pub(crate) struct UseStepPlan {
     pub(crate) rule_step_idx: usize,
     pub(crate) count: u64,
-    pub(crate) predicates: HashMap<String, serde_json::Value>,
+    /// 记录列表：单记录形态长度 1；`use from` 的数组多条 → 按事件序号循环取用。
+    pub(crate) records: Vec<HashMap<String, serde_json::Value>>,
 }
 
 /// Compute the time window bounds for cluster generation.
@@ -20,140 +21,52 @@ pub(crate) fn compute_window_bounds(dur_secs: f64, window_dur: Duration) -> (f64
     (window_secs, max_start_offset)
 }
 
-/// Compute per-step event counts for near-miss clusters.
+/// 第 `index` 个簇（共 `count` 个）的起点：在 `[0, max_start_offset]` 内**等距**铺开（设计 §4.7）。
 ///
-/// With ordered `use(...)` declarations, the last declared use step is the
-/// near-miss boundary. Previous unspecified steps are filled to threshold,
-/// the boundary is clamped to `threshold - 1`, and later steps get 0 events.
-/// Without `use(...)`, legacy `steps_completed`/last-step behavior applies.
-pub(crate) fn compute_near_miss_counts(
-    steps: &[StepInfo],
-    overrides: &InjectOverrides,
-) -> WfgenResult<Vec<u64>> {
-    if !overrides.use_steps.is_empty() {
-        let planned = plan_use_steps(steps, &overrides.use_steps, true)?;
-        if !planned.is_empty() {
-            let mut counts = vec![0_u64; steps.len()];
-            for planned in &planned {
-                counts[planned.rule_step_idx] += planned.count;
-            }
-            let nm_step_idx =
-                near_miss_step_idx_from_plan(&planned, steps.len()).unwrap_or(steps.len() - 1);
-            for (idx, count) in counts.iter_mut().enumerate().take(nm_step_idx) {
-                if *count == 0 {
-                    *count = steps[idx].threshold;
-                }
-            }
-            counts[nm_step_idx] =
-                counts[nm_step_idx].min(steps[nm_step_idx].threshold.saturating_sub(1));
-            for count in counts.iter_mut().skip(nm_step_idx + 1) {
-                *count = 0;
-            }
-            return Ok(counts);
-        }
+/// 首簇贴 `0`、末簇贴 `max_start_offset`（末簇的窗口刚好收在场景末尾），整段 `duration` 被均匀
+/// 覆盖、两端不留空档；只有一个簇时取中点（与 `miss` 单条事件居中同风格）。
+///
+/// “末簇顶到场景末尾”本身不再有风险：那条历史差异（引擎收尾 `close:flush` vs oracle
+/// `close:timeout`，见 `oracle/mod.rs` 的 `sweep_nanos`）已改由 oracle 用**数据末尾**做收尾
+/// 水位对齐，`crates/wfgen/tests/e2e_datagen.rs` 就是这个类的回归测试。
+///
+/// 窗口不短于 `duration` 时（`max_start_offset == 0`，规则窗口比场景还长）无法错开，
+/// 仍退回起点 `0`：此时簇必然重叠，错开没有意义，保持旧行为。
+pub(crate) fn uniform_cluster_start(index: u64, count: u64, max_start_offset: f64) -> f64 {
+    if max_start_offset <= 0.0 {
+        return 0.0;
     }
-
-    let effective_threshold_nm = overrides
-        .count_per_entity
-        .unwrap_or(steps[steps.len() - 1].threshold);
-
-    let steps_completed = overrides.steps_completed.unwrap_or(steps.len() - 1);
-    let nm_step_idx = steps_completed.min(steps.len() - 1);
-
-    Ok(steps
-        .iter()
-        .enumerate()
-        .map(|(i, step)| {
-            if i > nm_step_idx {
-                0
-            } else if i == nm_step_idx {
-                effective_threshold_nm.saturating_sub(1)
-            } else {
-                overrides.count_per_entity.unwrap_or(step.threshold)
-            }
-        })
-        .collect())
+    if count <= 1 {
+        return max_start_offset / 2.0;
+    }
+    max_start_offset * index as f64 / (count - 1) as f64
 }
 
-/// Compute the number of clusters based on per-stream event budgets.
-pub(crate) fn compute_cluster_count(
-    percent: f64,
-    steps: &[StepInfo],
-    stream_totals: &HashMap<String, u64>,
-) -> u64 {
-    let mut min_clusters = u64::MAX;
-
-    for step in steps {
-        let stream_total = *stream_totals.get(&step.scenario_alias).unwrap_or(&0);
-        let budget = (stream_total as f64 * percent / 100.0).round() as u64;
-        if step.threshold > 0 {
-            let clusters = budget.checked_div(step.threshold).unwrap_or(0);
-            min_clusters = min_clusters.min(clusters);
-        }
-    }
-
-    if min_clusters == u64::MAX {
-        0
-    } else {
-        min_clusters
-    }
-}
-
-pub(crate) fn compute_cluster_count_for_step_counts(
-    percent: f64,
-    steps: &[StepInfo],
-    step_event_counts: &[u64],
-    stream_totals: &HashMap<String, u64>,
-) -> u64 {
-    let mut per_stream_events: HashMap<&str, u64> = HashMap::new();
-    for (step, count) in steps.iter().zip(step_event_counts.iter().copied()) {
-        *per_stream_events
-            .entry(step.scenario_alias.as_str())
-            .or_insert(0) += count;
-    }
-
-    let mut min_clusters = u64::MAX;
-    for (stream, events_per_cluster) in per_stream_events {
-        if events_per_cluster == 0 {
-            continue;
-        }
-        let stream_total = *stream_totals.get(stream).unwrap_or(&0);
-        let budget = (stream_total as f64 * percent / 100.0).round() as u64;
-        min_clusters = min_clusters.min(budget.checked_div(events_per_cluster).unwrap_or(0));
-    }
-
-    if min_clusters == u64::MAX {
-        0
-    } else {
-        min_clusters
-    }
-}
-
-pub(crate) fn compute_repeat_count_for_step_counts(
-    percent: f64,
-    steps: &[StepInfo],
-    step_event_counts: &[u64],
-    stream_totals: &HashMap<String, u64>,
-) -> u64 {
-    compute_cluster_count_for_step_counts(percent, steps, step_event_counts, stream_totals)
-}
-
+/// 每个步骤每实体生成多少条事件。
+///
+/// 就是 `use ... x N` 写的数：不做任何隐式推导、补全或夹取——旧语法的
+/// "未写步骤补到阈值"（hit）与 `min(N, 阈值-1)`（near_miss）夹取已随旧形态删除。
 pub(crate) fn compute_hit_counts(
     steps: &[StepInfo],
     overrides: &InjectOverrides,
 ) -> WfgenResult<Vec<u64>> {
-    if overrides.use_steps.is_empty() {
-        return Ok(steps.iter().map(|step| step.threshold).collect());
-    }
+    compute_use_step_counts(steps, &overrides.use_steps)
+}
 
-    let mut counts = compute_use_step_counts(steps, &overrides.use_steps)?;
-    for (count, step) in counts.iter_mut().zip(steps) {
-        if *count == 0 {
-            *count = step.threshold;
-        }
-    }
+/// near_miss 与 hit 共用同一套条数口径：**模式不改数字**。
+pub(crate) fn compute_near_miss_counts(
+    steps: &[StepInfo],
+    overrides: &InjectOverrides,
+) -> WfgenResult<Vec<u64>> {
+    compute_use_step_counts(steps, &overrides.use_steps)
+}
 
-    Ok(counts)
+/// 簇（实体）个数 = 用户写的实体数。
+///
+/// 旧的「stream 配额 × 比例 ÷ 每实体条数」推导已随旧形态删除
+/// （见 docs/design/wfg-design.md §3.1）。
+pub(crate) fn resolve_cluster_count(overrides: &InjectOverrides) -> u64 {
+    overrides.entity_count.unwrap_or(0)
 }
 
 pub(crate) fn compute_use_step_counts(
@@ -223,7 +136,7 @@ pub(crate) fn plan_use_steps(
         planned.push(UseStepPlan {
             rule_step_idx: step_idx,
             count: use_step.count,
-            predicates: use_step.predicates.clone(),
+            records: use_step.records.clone(),
         });
     }
 
@@ -235,30 +148,33 @@ fn validate_use_step_predicates(
     use_step: &InjectUseStepOverrides,
     step: &StepInfo,
 ) -> WfgenResult<()> {
-    for (field, expected) in &step.filter_overrides {
-        let Some(actual) = use_step.predicates.get(field) else {
-            continue;
-        };
-        if actual != expected {
-            return error::fail(
-                WfgenReason::Validation,
-                format!(
-                    "injection use step {} field '{}' conflicts with rule step filter: use has {}, rule requires {}",
-                    step_idx + 1,
-                    field,
-                    actual,
-                    expected
-                ),
-            );
+    // 多记录形态（`use from` 数组）逐条检查：任何一条与规则 filter 冲突都要报，
+    // 否则那条记录生成的事件根本不会进入规则窗口（静默少报警）。
+    let multi = use_step.records.len() > 1;
+    for (record_idx, record) in use_step.records.iter().enumerate() {
+        for (field, expected) in &step.filter_overrides {
+            let Some(actual) = record.get(field) else {
+                continue;
+            };
+            if actual != expected {
+                let record_note = if multi {
+                    format!(" (记录 #{}/{})", record_idx + 1, use_step.records.len())
+                } else {
+                    String::new()
+                };
+                return error::fail(
+                    WfgenReason::Validation,
+                    format!(
+                        "injection use step {} field '{}' conflicts with rule step filter: use has {}, rule requires {}{}",
+                        step_idx + 1,
+                        field,
+                        actual,
+                        expected,
+                        record_note
+                    ),
+                );
+            }
         }
     }
     Ok(())
-}
-
-fn near_miss_step_idx_from_plan(planned: &[UseStepPlan], steps_len: usize) -> Option<usize> {
-    planned
-        .iter()
-        .map(|planned| planned.rule_step_idx)
-        .max()
-        .map(|idx| idx.min(steps_len.saturating_sub(1)))
 }

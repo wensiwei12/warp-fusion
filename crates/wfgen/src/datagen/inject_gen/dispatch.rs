@@ -6,110 +6,17 @@ use rand::rngs::StdRng;
 use wf_lang::WindowSchema;
 use wf_lang::plan::RulePlan;
 
-use super::extract::{extract_inject_overrides, extract_syntax_case_overrides};
+use super::extract::extract_syntax_case_overrides;
 use super::hit::generate_hit_clusters;
 use super::near_miss::generate_near_miss_clusters;
 use super::non_hit::generate_non_hit_events;
-use super::structures::{AliasMap, InjectOverrides, RuleStructure};
+use super::structures::{AliasMap, InjectEntities, InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::{self, WfgenReason, WfgenResult};
-use crate::wfg_ast::{InjectCaseMode, InjectLine, InjectMode, StreamBlock, SyntaxInjectCase};
-
-pub(super) fn compute_stream_totals(
-    scenario: &crate::wfg_ast::ScenarioDecl,
-) -> HashMap<String, u64> {
-    let total = scenario.total;
-    let total_rate: f64 = scenario
-        .streams
-        .iter()
-        .map(|s| s.rate.events_per_second())
-        .sum();
-
-    if total_rate == 0.0 {
-        return HashMap::new();
-    }
-
-    let mut result = HashMap::new();
-    let mut remaining = total;
-
-    for (i, stream) in scenario.streams.iter().enumerate() {
-        let proportion = stream.rate.events_per_second() / total_rate;
-        let count = if i == scenario.streams.len() - 1 {
-            remaining
-        } else {
-            let c = (total as f64 * proportion).round() as u64;
-            let c = c.min(remaining);
-            remaining -= c;
-            c
-        };
-        result.insert(stream.alias.clone(), count);
-    }
-
-    result
-}
-
-pub(super) fn build_alias_map(
-    inject_streams: &[String],
-    scenario_streams: &[StreamBlock],
-    rule_plan: &RulePlan,
-) -> WfgenResult<AliasMap> {
-    let mut bind_to_scenario = HashMap::new();
-
-    // New syntax uses stream names without exposing bind aliases.
-    // We first resolve scenario stream by name, then map to a rule bind by:
-    // 1) exact alias match, 2) unique bind on the same window.
-    for stream_name in inject_streams {
-        let stream_block = scenario_streams
-            .iter()
-            .find(|s| &s.alias == stream_name)
-            .ok_or_else(|| {
-                error::error(
-                    WfgenReason::Validation,
-                    format!("inject stream '{}' not found in scenario", stream_name),
-                )
-            })?;
-
-        let bind_alias = if rule_plan.binds.iter().any(|b| b.alias == *stream_name) {
-            stream_name.clone()
-        } else {
-            let mut bind_iter = rule_plan
-                .binds
-                .iter()
-                .filter(|b| b.window == stream_block.window)
-                .map(|b| b.alias.clone());
-            let first = bind_iter.next().ok_or_else(|| {
-                error::error(
-                    WfgenReason::Validation,
-                    format!(
-                        "inject stream '{}' cannot be mapped to any bind in rule '{}'",
-                        stream_name, rule_plan.name
-                    ),
-                )
-            })?;
-            if bind_iter.next().is_some() {
-                return error::fail(
-                    WfgenReason::Validation,
-                    format!(
-                        "inject stream '{}' maps to multiple binds in rule '{}'; \
-                         use explicit bind aliases in .wfg",
-                        stream_name, rule_plan.name
-                    ),
-                );
-            }
-            first
-        };
-
-        bind_to_scenario.insert(
-            bind_alias,
-            (stream_block.alias.clone(), stream_block.window.clone()),
-        );
-    }
-
-    Ok(AliasMap { bind_to_scenario })
-}
+use crate::wfg_ast::{InjectCase, InjectCaseMode, StreamBlock};
 
 pub(super) fn build_alias_map_for_syntax_case(
-    case: &SyntaxInjectCase,
+    case: &InjectCase,
     scenario_streams: &[StreamBlock],
     rule_plan: &RulePlan,
 ) -> WfgenResult<AliasMap> {
@@ -124,24 +31,28 @@ pub(super) fn build_alias_map_for_syntax_case(
         })?;
 
     let mut bind_to_scenario = HashMap::new();
+    let map_bind = |bind_alias: &str, bind_to_scenario: &mut HashMap<String, (String, String)>| {
+        let Some(bind) = rule_plan.binds.iter().find(|bind| bind.alias == bind_alias) else {
+            return;
+        };
+        if bind.window != stream_block.window {
+            return;
+        }
+        bind_to_scenario
+            .entry(bind_alias.to_string())
+            .or_insert_with(|| (stream_block.alias.clone(), stream_block.window.clone()));
+    };
 
     for step_plan in &rule_plan.match_plan.event_steps {
         for branch in &step_plan.branches {
-            let bind_alias = &branch.source;
-            let Some(bind) = rule_plan
-                .binds
-                .iter()
-                .find(|bind| bind.alias == *bind_alias)
-            else {
-                continue;
-            };
-            if bind.window != stream_block.window {
-                continue;
-            }
-            bind_to_scenario
-                .entry(bind_alias.clone())
-                .or_insert_with(|| (stream_block.alias.clone(), stream_block.window.clone()));
+            map_bind(&branch.source, &mut bind_to_scenario);
         }
+    }
+
+    // `on each` 规则没有 match 步骤（`match_plan` 是空的 `Fixed(0)`）：别名来自
+    // `each_plan.alias`（设计 §3.7：`on each s` + `entity(…, s.event_id)` 可被注入）。
+    if let Some(each) = &rule_plan.each_plan {
+        map_bind(&each.alias, &mut bind_to_scenario);
     }
 
     if bind_to_scenario.is_empty() {
@@ -158,119 +69,81 @@ pub(super) fn build_alias_map_for_syntax_case(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn generate_for_line(
-    inject_line: &InjectLine,
-    rule_struct: &RuleStructure,
-    stream_totals: &HashMap<String, u64>,
-    schemas: &[WindowSchema],
-    scenario_streams: &[StreamBlock],
-    start: &DateTime<Utc>,
-    duration: &Duration,
-    rng: &mut StdRng,
-    inject_counts: &mut HashMap<String, u64>,
-) -> WfgenResult<Vec<GenEvent>> {
-    let overrides = extract_inject_overrides(inject_line);
-    generate_for_mode(
-        inject_line.mode,
-        inject_line.percent,
-        &overrides,
-        rule_struct,
-        stream_totals,
-        schemas,
-        scenario_streams,
-        start,
-        duration,
-        rng,
-        inject_counts,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(super) fn generate_for_syntax_case(
-    case: &SyntaxInjectCase,
+    case: &InjectCase,
     rule_struct: &RuleStructure,
-    stream_totals: &HashMap<String, u64>,
+    entity_base: u64,
     schemas: &[WindowSchema],
     scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     duration: &Duration,
     rng: &mut StdRng,
-    inject_counts: &mut HashMap<String, u64>,
+    entities: &mut InjectEntities,
 ) -> WfgenResult<Vec<GenEvent>> {
-    let overrides = extract_syntax_case_overrides(case);
+    let overrides = extract_syntax_case_overrides(case)?;
     generate_for_mode(
-        inject_mode_from_case(case.mode),
-        case.percent,
+        case,
         &overrides,
         rule_struct,
-        stream_totals,
+        entity_base,
         schemas,
         scenario_streams,
         start,
         duration,
         rng,
-        inject_counts,
+        entities,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn generate_for_mode(
-    mode: InjectMode,
-    percent: f64,
+    case: &InjectCase,
     overrides: &InjectOverrides,
     rule_struct: &RuleStructure,
-    stream_totals: &HashMap<String, u64>,
+    entity_base: u64,
     schemas: &[WindowSchema],
     scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     duration: &Duration,
     rng: &mut StdRng,
-    inject_counts: &mut HashMap<String, u64>,
+    entities: &mut InjectEntities,
 ) -> WfgenResult<Vec<GenEvent>> {
-    match mode {
-        InjectMode::Hit => generate_hit_clusters(
-            percent,
+    match case.mode {
+        InjectCaseMode::Hit => generate_hit_clusters(
+            case,
             rule_struct,
-            stream_totals,
+            entity_base,
             schemas,
             scenario_streams,
             start,
             duration,
             rng,
-            inject_counts,
+            entities,
             overrides,
         ),
-        InjectMode::NearMiss => generate_near_miss_clusters(
-            percent,
+        InjectCaseMode::NearMiss => generate_near_miss_clusters(
+            case,
             rule_struct,
-            stream_totals,
+            entity_base,
             schemas,
             scenario_streams,
             start,
             duration,
             rng,
-            inject_counts,
+            entities,
             overrides,
         ),
-        InjectMode::NonHit => generate_non_hit_events(
-            percent,
+        InjectCaseMode::Miss => generate_non_hit_events(
+            case,
             rule_struct,
-            stream_totals,
+            entity_base,
             schemas,
             scenario_streams,
             start,
             duration,
             rng,
-            inject_counts,
+            entities,
             overrides,
         ),
-    }
-}
-
-fn inject_mode_from_case(mode: InjectCaseMode) -> InjectMode {
-    match mode {
-        InjectCaseMode::Hit => InjectMode::Hit,
-        InjectCaseMode::NearMiss => InjectMode::NearMiss,
-        InjectCaseMode::Miss => InjectMode::NonHit,
     }
 }

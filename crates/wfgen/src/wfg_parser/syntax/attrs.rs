@@ -73,6 +73,13 @@ fn parse_attr(input: &mut &str) -> ModalResult<ScenarioAttr> {
 }
 
 pub(crate) fn parse_attr_value(input: &mut &str) -> ModalResult<AttrValue> {
+    // 结构化值：`{...}` / `[...]`（内部是纯 JSON，不是 WFG 语法）。放在最前面，
+    // 因为 `{` / `[` 不可能是其他分支的首字符。
+    if matches!(input.chars().next(), Some('{') | Some('[')) {
+        let json = crate::wfg_parser::primitives::json_container(input)?;
+        return Ok(AttrValue::Json(json));
+    }
+
     if let Some(s) = opt(wf_lang::parse_utils::quoted_string).parse_next(input)? {
         return Ok(AttrValue::String(s));
     }
@@ -94,6 +101,8 @@ pub(crate) fn parse_attr_value(input: &mut &str) -> ModalResult<AttrValue> {
     match word.as_str() {
         "true" => Ok(AttrValue::Bool(true)),
         "false" => Ok(AttrValue::Bool(false)),
+        // JSON null（字段写入 null，而不是"字段缺席"）。
+        "null" => Ok(AttrValue::Json(serde_json::Value::Null)),
         _ => Ok(AttrValue::String(word)),
     }
 }

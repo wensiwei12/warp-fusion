@@ -12,6 +12,7 @@ pub mod cmd_verify;
 pub mod cmd_verify_nexmark;
 pub mod datagen;
 pub mod error;
+pub mod inject_assert;
 pub mod injection_targets;
 pub mod loader;
 pub mod nexmark;

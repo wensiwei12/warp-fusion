@@ -6,7 +6,7 @@ use super::*;
 
 #[test]
 fn test_sc2_stream_alias_not_in_any_rule() {
-    let wfg = minimal_wfg(vec![stream("s_missing", "LoginWindow")], vec![]);
+    let wfg = minimal_wfg(vec![stream("s_missing", "LoginWindow")]);
     let schemas = vec![make_schema("LoginWindow", vec![])];
     let wfl = make_wfl("my_rule", vec![("e", "LoginWindow")]);
     let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
@@ -19,7 +19,7 @@ fn test_sc2_stream_alias_not_in_any_rule() {
 
 #[test]
 fn test_sc2a_stream_alias_window_mismatch() {
-    let wfg = minimal_wfg(vec![stream("e", "DnsWindow")], vec![]);
+    let wfg = minimal_wfg(vec![stream("e", "DnsWindow")]);
     let schemas = vec![
         make_schema("DnsWindow", vec![]),
         make_schema("LoginWindow", vec![]),

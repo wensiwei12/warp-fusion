@@ -171,9 +171,15 @@ where
             // 跨桶边界事件才 scan（避免每事件全扫实例：q4 10m 162s → 秒级）。
             // Hop 窗口在 slide 对齐时刻收口（expire = w_start + size 亦为 slide
             // 边界），跨 slide 边界才 scan 同样安全。
+            // `Fixed(0)`（空 match_plan / stats 占位）没有桶可言：视作 None，
+            // 否则下面的 `div_euclid(dur)` 会 panic。
             fixed_bucket_nanos: match plan.match_plan.window_spec {
-                wf_lang::plan::WindowSpec::Fixed(dur) => Some(dur.as_nanos() as i64),
-                wf_lang::plan::WindowSpec::Hop { slide, .. } => Some(slide.as_nanos() as i64),
+                wf_lang::plan::WindowSpec::Fixed(dur) if !dur.is_zero() => {
+                    Some(dur.as_nanos() as i64)
+                }
+                wf_lang::plan::WindowSpec::Hop { slide, .. } if !slide.is_zero() => {
+                    Some(slide.as_nanos() as i64)
+                }
                 _ => None,
             },
             // Hop 扫描用无界预算（每 slide 边界恰一个窗口到期，收口原子）。
@@ -252,9 +258,14 @@ where
         .map(String::from)
         .collect();
 
+    // 数据末尾（最后一条事件的时间）：引擎收尾时用的水位是
+    // `final_wm = max(窗口 max_event_time, 机器水位)`，即**数据末尾**而不是场景边界。
+    let mut last_event_nanos = i64::MIN;
+
     // Process events in order (caller should have sorted by timestamp)
     for event in events {
         let event_nanos = event.timestamp.timestamp_nanos_opt().unwrap_or(0);
+        last_event_nanos = last_event_nanos.max(event_nanos);
 
         let core_event = gen_event_to_core(&event);
 
@@ -497,6 +508,16 @@ where
         *scenario_start + chrono::Duration::from_std(*scenario_duration).unwrap_or_default();
     let eos_nanos = eos_time.timestamp_nanos_opt().unwrap_or(i64::MAX);
 
+    // 收尾水位：batch（close_at_eos=true）对齐引擎的 `final_wm` = **数据末尾**。
+    // 用场景边界（eos_nanos）会把「窗口到期点在数据末尾之后」的实例误判为
+    // `close:timeout`（窗口到期），而引擎此时根本没有事件把水位推到到期点 → 走
+    // 收尾 `close:flush`。两侧告警数量/实体一致、只有时间不同，超容差即报差异。
+    let sweep_nanos = if close_at_eos && last_event_nanos != i64::MIN {
+        last_event_nanos
+    } else {
+        eos_nanos
+    };
+
     // 引擎 replay 语义（close_at_eos = false）：不 close_all 剩余实例；但引擎
     // replay 的 slice 水位会推进到数据末尾的 slice 边界（fixed 桶在数据末尾
     // 恰好到期时会收口——q5 实证：30m 数据 + 10m 桶引擎收 3 桶、oracle 只收
@@ -510,13 +531,13 @@ where
             engine
                 .sm
                 .scan_expired_at_with_conv_skip_non_alerting_unbounded(
-                    eos_nanos,
+                    sweep_nanos,
                     engine.conv_plan.as_ref(),
                 )
         } else {
             engine
                 .sm
-                .scan_expired_at_with_conv(eos_nanos, engine.conv_plan.as_ref())
+                .scan_expired_at_with_conv(sweep_nanos, engine.conv_plan.as_ref())
         };
         collect_close_alerts(
             &engine.executor,
@@ -733,8 +754,8 @@ impl StatsOracleEngine {
     }
 }
 
-/// GenEvent → stats 行（HashMap<String, Value>）; 字段经 json_to_core_value
-/// 转引擎 Value（数字 f64 / 字符串 / 布尔; 复合类型丢弃——stats 度量不读）。
+/// GenEvent → stats 行（HashMap<String, Value>）; 字段经 [`json_to_core_value`]
+/// 转引擎 Value（数字 f64 / 字符串 / 布尔 / 递归保留 object / array）。
 fn gen_event_to_row(event: &GenEvent) -> HashMap<String, Value> {
     let mut row = HashMap::new();
     for (k, v) in &event.fields {
@@ -1006,12 +1027,26 @@ fn gen_event_to_core(event: &GenEvent) -> Event {
     Event { fields }
 }
 
+/// `GenEvent` 的 JSON 字段 → 引擎 [`Value`]。
+///
+/// object / array **递归**转换（对齐引擎 `wf_cep::value_extract::json_to_value` 的口径）：
+/// 旧实现 `_ => None` 会把结构化字段整个丢掉，于是 oracle 看不到嵌套字段——读 object /
+/// array 的规则在 oracle 侧恒不命中，与引擎（arrow 列带 `wf.wfl.field_type` 时能还原
+/// 结构值）不一致。`null` 与引擎一致地丢字段。
 fn json_to_core_value(v: &serde_json::Value) -> Option<Value> {
     match v {
         serde_json::Value::String(s) => Some(Value::Str(s.clone().into())),
         serde_json::Value::Number(n) => n.as_f64().map(Value::Number),
         serde_json::Value::Bool(b) => Some(Value::Bool(*b)),
-        _ => None,
+        serde_json::Value::Array(items) => Some(Value::Array(
+            items.iter().filter_map(json_to_core_value).collect(),
+        )),
+        serde_json::Value::Object(map) => Some(Value::Object(
+            map.iter()
+                .filter_map(|(k, v)| json_to_core_value(v).map(|v| (k.clone().into(), v)))
+                .collect(),
+        )),
+        serde_json::Value::Null => None,
     }
 }
 
@@ -1031,25 +1066,4 @@ impl Default for OracleTolerances {
             score_tolerance: 0.01,
         }
     }
-}
-
-/// Extract tolerance parameters from the parsed oracle block.
-pub fn extract_oracle_tolerances(oracle: &crate::wfg_ast::OracleBlock) -> OracleTolerances {
-    let mut tolerances = OracleTolerances::default();
-    for param in &oracle.params {
-        match param.name.as_str() {
-            "time_tolerance" => {
-                if let crate::wfg_ast::ParamValue::Duration(d) = &param.value {
-                    tolerances.time_tolerance_secs = d.as_secs_f64();
-                }
-            }
-            "score_tolerance" => {
-                if let crate::wfg_ast::ParamValue::Number(n) = &param.value {
-                    tolerances.score_tolerance = *n;
-                }
-            }
-            _ => {}
-        }
-    }
-    tolerances
 }

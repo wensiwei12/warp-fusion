@@ -49,6 +49,20 @@ wfadm init \
 
 `--repo` 与 `--mode` 互斥。远端 bootstrap 会复用 project remote 同步与校验回滚流程。
 
+模板内容：
+
+- `conf/` —— `wfusion.toml` 等配置；`topology/` —— source / sink 配置
+- `models/rules/` —— 示例 `.wfl` 规则；`models/schemas/` —— `.wfs` 窗口与字段类型；
+  `models/windows.toml` —— 窗口默认值与逐窗覆盖
+- `models/scenarios/` —— 4 个可直接跑的 `.wfg` 场景（`port_scan` / `port_scan_quick` /
+  `ssh_brute_force` / `ssh_brute_quick`），均为新注入语法（`background` / `inject` /
+  `hit<实体数>`），`wfgen lint`、`wfgen gen` 可直接生成"带标签"的测试数据——语法见
+  [`../useage/scenarios.md`](../useage/scenarios.md)
+- `smoke.sh` / `test/` / `test_run.sh` —— 冒烟与回归脚本
+
+`wfadm check` 用 `wfgen` 的解析器校验场景文件（`.wfg` 只有一份解析实现，见
+[`wfg-design.md`](wfg-design.md)）。
+
 ## conf diff
 
 比较两组 wfusion 配置:

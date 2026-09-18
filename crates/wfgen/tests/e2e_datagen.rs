@@ -146,13 +146,7 @@ async fn e2e_datagen_brute_force() {
         "oracle produced zero alerts; injected_rules={:?}",
         injected_rules
     );
-    let tolerances = loaded
-        .wfg
-        .scenario
-        .oracle
-        .as_ref()
-        .map(wfgen::oracle::extract_oracle_tolerances)
-        .unwrap_or_default();
+    let tolerances = wfgen::oracle::OracleTolerances::default();
 
     // ---- Build FusionConfig (file source, connector-based sinks) ----
     let windows_path = artifact_dir.join("models/windows.toml");

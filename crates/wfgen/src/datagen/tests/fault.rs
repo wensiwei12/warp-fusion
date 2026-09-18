@@ -10,7 +10,7 @@ fn make_clean_events(count: usize) -> Vec<super::super::stream_gen::GenEvent> {
         r#"
 #[duration={}s]
 scenario fault_helper<seed=42> {{
-    traffic {{
+    background {{
         stream LoginWindow gen 10/s
     }}
 }}
