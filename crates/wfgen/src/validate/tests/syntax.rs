@@ -64,6 +64,78 @@ scenario s<seed=1> {
     assert!(err.contains("VN20"), "unexpected error: {err}");
 }
 
+/// VN31：`entity <window>.<field> zipf(...)`（设计 §10）的静态一致性——窗口/字段存在、
+/// 类型可承载实体、参数取值、重复声明、以及与注入实体的**值域预算**。
+#[test]
+fn test_vn31_entity_dist_checks() {
+    let schemas = vec![make_schema(
+        "LoginWindow",
+        vec![("src_ip", BaseType::Ip), ("ok", BaseType::Bool)],
+    )];
+    // `background` 块内容 → 校验结果
+    let check = |background_body: &str| {
+        let src = format!(
+            r#"
+#[duration=10s]
+scenario s<seed=1> {{
+    background {{ {background_body} }}
+}}
+"#
+        );
+        let wfg = parse_wfg(&src).unwrap();
+        validate_wfg(&wfg, &schemas, &[], false)
+    };
+
+    // 合法：不报 VN31
+    let errs = check("stream LoginWindow gen 10/s  entity LoginWindow.src_ip zipf(pool=8)");
+    assert!(
+        !errs.iter().any(|e| e.code == "VN31"),
+        "合法声明不应报 VN31: {errs:?}"
+    );
+
+    // 各类非法
+    for (decl, why) in [
+        (
+            "stream LoginWindow gen 10/s  entity Nope.src_ip zipf(pool=8)",
+            "目标窗不在 schema",
+        ),
+        (
+            "stream LoginWindow gen 10/s  entity LoginWindow.nope zipf(pool=8)",
+            "字段不在 schema",
+        ),
+        (
+            "stream LoginWindow gen 10/s  entity LoginWindow.ok zipf(pool=8)",
+            "字段类型不支持（bool）",
+        ),
+        (
+            "stream LoginWindow gen 10/s  entity LoginWindow.src_ip zipf(pool=0)",
+            "pool = 0",
+        ),
+        (
+            "stream LoginWindow gen 10/s  entity LoginWindow.src_ip zipf(pool=8, fresh=1.5)",
+            "fresh 越界",
+        ),
+        (
+            "stream LoginWindow gen 10/s  entity LoginWindow.src_ip zipf(pool=8)  entity LoginWindow.src_ip zipf(pool=4)",
+            "重复声明",
+        ),
+        (
+            "stream LoginWindow gen 10/s  entity LoginWindow.src_ip zipf(pool=8388609)",
+            "值域预算超出 24 位空间",
+        ),
+        (
+            "stream OtherWindow gen 10/s  entity LoginWindow.src_ip zipf(pool=8)",
+            "该窗口没有 background stream",
+        ),
+    ] {
+        let errs = check(decl);
+        assert!(
+            errs.iter().any(|e| e.code == "VN31"),
+            "{why}: 应报 VN31，实际 {errs:?}"
+        );
+    }
+}
+
 /// VN30：`join <window> as <key>` 必须能匹配到规则的 join 子句（目标窗 + 右侧连接键），
 /// 且形态是缺省 inner。
 #[test]

@@ -87,6 +87,32 @@ pub enum AttrValue {
 #[non_exhaustive]
 pub struct BackgroundBlock {
     pub streams: Vec<SyntaxStreamDecl>,
+    /// `entity <window>.<field> zipf(...)` 实体分布声明（设计 §10），可写多条。
+    pub entities: Vec<EntityDistStmt>,
+}
+
+/// `entity <window>.<field> zipf(pool=N, exponent=S, fresh=R)`（设计 §10）。
+///
+/// 背景事件默认每个字段**每条事件现随机**——同一 stream 里没有任何值会重复，于是
+/// 「热点实体」根本表达不出来。这条声明给指定字段一个**实体值池 + Zipf 权重 + 新老比例**：
+/// 热点实体重复出现、长尾实体偶发、`fresh` 比例的事件取池外新值。
+///
+/// 值域**与注入实体分区**：注入侧从 24 位地址空间底部按 `[0, total_entity_ids)` 连续分段
+/// （VN27），池取顶部 `[2^24 − pool, 2^24)`、新值带取再往下的 `pool` 个位置——背景噪声因此
+/// 不会撞上注入实体（否则 INJ1/INJ2 的口径会被污染）。
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct EntityDistStmt {
+    /// 目标窗口（stream 的 window 名）。
+    pub window: String,
+    /// 参与分布的字段名（须是该窗口 schema 里的标量字段）。
+    pub field: String,
+    /// 实体值池大小（≥ 1）。
+    pub pool: u64,
+    /// Zipf 指数：`0` = 均匀，越大越集中。
+    pub exponent: f64,
+    /// 池外新值的比例（`0.0..=1.0`）。
+    pub fresh: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]

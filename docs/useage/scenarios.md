@@ -61,6 +61,7 @@ wfgen gen --scenario crates/wfadm/templates/models/scenarios/ssh_brute_force.wfg
 | `#[duration=10m]` | 场景虚拟时长（`30s` / `2m` / `2h` …）。注解键只有 `duration` 与 `seed` 两个，其他键报 `VN29` |
 | `scenario NAME<seed=N>` | 场景名 + 随机种子 |
 | `background { stream S gen R/s }` | 背景流量：只决定"除定向构造外还有多少随机事件"。速率**只支持常量**（`/s` `/m` `/h`） |
+| `entity W.f zipf(pool=N, exponent=S, fresh=R)` | 背景实体分布：该字段从 N 个实体的池里按 Zipf 权重抽（热点重复出现），`fresh` 比例取池外新值 |
 | `inject { … }` | 定向构造：每个用例声明**模式 + 实体个数 + 事件组** |
 | `join <window> as <key> { … }` | 跨流注入：为规则的 join 目标窗造配对事件（键与时间自动推导） |
 
@@ -141,6 +142,29 @@ hit<id: 200> for q8_monitor_new_user person_events {   // 左（驱动）侧
   若规则的 `within` 下界晚于左事件时间，右事件会落在区间外——生成期 INJ1 会报
   「hit 实体不会触发」（可见的失败，不会静默出数据）。
 
+## 背景实体分布：`entity(...)`
+
+背景事件默认**每个字段每条现随机**——同一条流里 `sip` 每次都是新 IP，没有任何值会重复，
+所以「热点 IP 被反复打」这种现实流量表达不出来。给字段声明实体分布即可：
+
+```wfg
+background {
+  stream conn_events gen 100/s
+  entity conn_events.sip zipf(pool=1000, exponent=1.1, fresh=0.2)
+}
+```
+
+| 参数 | 含义 | 默认 |
+|---|---|---|
+| `pool=N` | 实体值池：**N 个不同实体** | 必填 |
+| `exponent=s` | Zipf 指数：`0` = 均匀，越大越集中（热点越热） | `1.0` |
+| `fresh=r` | 比例 `r` 的事件取**池外新值**（新实体不断出现） | `0.0` |
+
+- 只作用于**背景**事件；`inject` / `replay` 的实体值不受影响。
+- 值域**与注入实体分区**（池占 24 位空间顶部、注入占底部），校验期会检查预算——所以背景
+  噪声不会撞上注入实体、把 INJ1/INJ2 的口径搅乱。
+- 只支持 `ip` / `digit` / `float` / `chars` / `hex` 字段；其它类型报 `VN31`。
+
 ## 带否定步骤的规则：`without(...)`
 
 规则里有 `not has …` 步骤时，光注入正向事件不够——该实体的窗口里只要出现一条
@@ -213,6 +237,7 @@ scenario replay_only<seed=1> {
 | `VN28` | 背景速率用了 `wave(...)` / `burst(...)` / `timeline { ... }`——这三个形态**语法已定但语义未实现**（会按 `base=` 的常量速率生成），先改用常量速率 |
 | `VN29` | 场景注解键不在白名单（`#[...]` 只认 `duration`、`<...>` 只认 `seed`），或值类型不合法（如 `#[duration=10]`、`<seed="abc">`） |
 | `VN30` | `join <window> as <key>` 匹配不到规则的 join 子句（目标窗 / 右侧连接键），形态不是缺省 inner，或规则的 `within` 区间不含左事件时间 |
+| `VN31` | `entity <window>.<field> zipf(...)` 的窗口 / 字段 / 类型 / 参数不合法，或与注入实体的值域预算超限 |
 | INJ1 / INJ2 | 生成期断言失败：`hit` 实体没报警（INJ1），或 `near_miss` / `miss` 实体报了警（INJ2） |
 
 排查手法：断言失败时输出会点名是哪个用例、哪个实体、实际与期望的告警数；先确认

@@ -16,12 +16,12 @@ use wf_lang::WindowSchema;
 use wf_lang::plan::RulePlan;
 
 use crate::error::{self, WfgenReason, WfgenResult};
-use crate::wfg_ast::WfgFile;
+use crate::wfg_ast::{EntityDistStmt, WfgFile};
 use inject_gen::InjectEntityKey;
 use inject_gen::generate_inject_events;
 use inject_gen::{InjectGenResult, WithoutGuard};
 use replay_gen::generate_replay_events;
-use stream_gen::{GenEvent, generate_stream_events};
+use stream_gen::{EntityPool, GenEvent, generate_stream_events};
 
 /// Result of data generation.
 pub struct GenResult {
@@ -64,6 +64,13 @@ pub fn generate(
     let mut inject_entities: Vec<InjectEntityKey> = Vec::new();
     let mut unasserted_inject_entities = 0_u64;
     let mut without_guards: Vec<WithoutGuard> = Vec::new();
+
+    // `entity <window>.<field> zipf(...)` 声明（设计 §10）。
+    let entity_dists: &[EntityDistStmt] = wfg
+        .syntax
+        .as_ref()
+        .map(|syntax| syntax.background.entities.as_slice())
+        .unwrap_or(&[]);
 
     let has_syntax_inject = wfg
         .syntax
@@ -160,7 +167,28 @@ pub fn generate(
                 )
             })?;
 
-        let events = generate_stream_events(stream, schema, bg_count, &start, &duration, &mut rng);
+        // 实体分布（设计 §10）：按窗口取该 stream 的字段池。
+        let pools: Vec<EntityPool> = entity_dists
+            .iter()
+            .filter(|dist| dist.window == stream.window)
+            .map(|dist| {
+                let field_type = schema
+                    .fields
+                    .iter()
+                    .find(|f| f.name == dist.field)
+                    .map(|f| &f.field_type);
+                EntityPool::new(
+                    &dist.field,
+                    field_type,
+                    dist.pool,
+                    dist.exponent,
+                    dist.fresh,
+                )
+            })
+            .collect();
+        let events = generate_stream_events(
+            stream, schema, &pools, bg_count, &start, &duration, &mut rng,
+        );
         let events = suppress_without_guards(events, &without_guards);
         if !events.is_empty() {
             sorted_chunks.push(events);

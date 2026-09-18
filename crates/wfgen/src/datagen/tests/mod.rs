@@ -1,4 +1,5 @@
 mod compat;
+mod entity_dist;
 mod event;
 mod fault;
 mod inject;

@@ -63,8 +63,11 @@ scenario_decl    = "scenario" , IDENT , [ "<" , anno_list , ">" ] , "{" ,
                      [ inject_block ] ,
                    "}" ;
 
-background_block = "background" , "{" , { stream_stmt } , "}" ;
+background_block = "background" , "{" , { ( stream_stmt | entity_stmt ) } , "}" ;
 stream_stmt      = "stream" , IDENT , "gen" , rate_expr ;
+entity_stmt      = "entity" , IDENT , "." , IDENT , "zipf" , "(" , zipf_args , ")" ;
+zipf_args        = "pool" , "=" , INTEGER , { "," , zipf_arg } ;
+zipf_arg         = ( "exponent" | "fresh" ) , "=" , NUMBER ;
 rate_expr        = rate_const | wave_expr | burst_expr | timeline_expr ;
 rate_const       = NUMBER , "/" , ( "s" | "m" | "h" ) ;
 wave_expr        = "wave(" , "base=" , rate_const , "," , "amp=" , rate_const , "," ,
@@ -422,6 +425,7 @@ stream / 规则绑定 → `VN3` / `VN10` / `VN14`；字段与 schema → `VN11` 
 | VN27 | 场景的实体 id 总数 ≥ 2^24（用例之间靠分段保证实体值不重叠，而实体值按 24 位地址映射） | `injection 实体 id 总数 16777216 达到上限 16777216（…超出后用例之间的实体会重叠：hit 与 near_miss 会指向同一实体）` |
 | VN29 | 场景注解键不在白名单（`#[...]` 只认 `duration`，`<...>` 只认 `seed`），或值类型不合法 | `注解键 'tick' 不支持：\`#[...]\` 只认 'duration'（tick / rows / emit 从未实现）` / `注解 'duration' 的值必须是时长字面量（如 \`10m\`），实际是数字` |
 | VN30 | `join <window> as <key>` 匹配不到规则的 join 子句（目标窗 / 右侧连接键 / 形态）或 `within` 区间不含左事件时间 | `… 的 \`join auction_events as wrong_key\` 匹配不到规则 'r' 的 join 子句（…）` / `… 的 \`join x\` 指向的规则 join 是 snapshot/asof/anti 形态，暂不支持（v1 只支持缺省 inner）` |
+| VN31 | `entity <window>.<field> zipf(...)`：目标窗 / 字段不存在或类型不可承载、参数越界、重复声明、与注入实体的**值域预算**超出 24 位空间 | `entity 分布的字段 'ok' 类型不支持（只支持 ip / digit / float / chars / hex）` / `entity 'src_ip' 的值域超出 24 位地址空间：注入实体 100 + 池 8388609 + 新值带 8388609 > 16777216（…）` |
 | VN28 | 背景速率用了未实现的随时间形态 `wave(...)` / `burst(...)` / `timeline { ... }`（会按 `base=` 常量生成，与写法不符） | `stream 'auth_events': \`gen burst(...)\` 的随时间变化尚未实现（当前会按 \`base=\` 的常量速率生成，与写法不符）；请先改用常量速率 \`gen 100/s\`` |
 
 `without(...)` 的谓词与 `use(...)` 共用同一套字段检查：重名 VN9、不在 schema VN11、
@@ -635,7 +639,7 @@ wfg + wfs + wfl
 
 **P1（优先）**
 
-- 实体分布扩展：热点（Zipf）与新老实体比例。
+- 实体分布扩展：热点（Zipf）与新老实体比例 —— **已落地**（§10）。
 
 **P2（增强真实性）**
 
@@ -788,3 +792,58 @@ schemas，否则 join 规则永远出不了期望）**。
 测试：解析 1、VN30 3、生成 + oracle 复核 2（`datagen/tests/inject/join.rs`——配对后**真能触发
 规则**，配对错就掉到 0 条）；另有 CLI 端到端实测（q8 形态：`lint` OK、`gen` 断言 4/4 通过、
 8 条右事件的 `seller` = 左实体键值且 `_timestamp` = 左事件时间、期望告警 4 条 `origin=deferred`）。
+
+## 10. 实体分布：`entity <window>.<field> zipf(...)`（**已落地**）
+
+§7.3 P1。背景事件默认**每个字段每条现随机**（`stream_gen.rs` 的字段循环直接
+`generate_field_value`）——同一 stream 里没有任何值会重复，于是「热点实体」根本表达不出来：
+想造"某 IP 被反复打"的现实流量，此前只能靠 `inject` 定向构造。
+
+### 10.1 语法
+
+```wfg
+background {
+  stream conn_events gen 100/s
+  entity conn_events.sip zipf(pool=1000, exponent=1.1, fresh=0.2)
+}
+```
+
+可写多条（每 `(窗口, 字段)` 至多一条）；`exponent` / `fresh` 可省（默认 `1.0` / `0.0`）。
+
+### 10.2 语义
+
+| 参数 | 含义 |
+|---|---|
+| `pool=N` | 实体值池大小：**N 个不同实体**（由索引直接导出，不消耗 RNG，跨运行确定） |
+| `exponent=s` | Zipf 指数：rank `k` 权重 `1/(k+1)^s`；`s=0` 退化为均匀，越大越集中 |
+| `fresh=r` | 比例 `r` 的事件取**池外新值**（真实流量里总有新实体） |
+
+**值域与注入实体分区**（关键正确性点）：
+
+| 占用方 | 值域（24 位地址空间，与注入共用 `entity_value_for_index` 映射） |
+|---|---|
+| 注入实体 | 底部 `[0, total_entity_ids)`（VN27 已守总长 < 2^24） |
+| 池 | 顶部 `[2^24 − pool, 2^24)` |
+| `fresh` 新值带 | 再往下的 `pool` 个：`[2^24 − 2·pool, 2^24 − pool)` |
+
+VN31 校验 `total_entity_ids + 2·pool ≤ 2^24`。少了这一步，背景噪声会撞上注入实体，
+直接污染 INJ1/INJ2 的口径（`hit` 实体窗口里混进不该有的匹配事件）。
+
+### 10.3 边界
+
+- 只支持 `ip` / `digit` / `float` / `chars` / `hex` 五类标量字段（布尔 / 时间 / 结构化字段
+  做实体没有意义）——其它类型报 VN31，不静默忽略。
+- 只作用于**背景**事件：`inject` / `replay` 的实体值仍由它们各自的机制决定。
+- 同一 `(窗口, 字段)` 重复声明报 VN31（避免"哪条生效"的歧义）。
+
+### 10.4 落地清单
+
+`wfg_ast.rs`（`EntityDistStmt` + `BackgroundBlock.entities`）、`wfg_parser/syntax/background.rs`
+（`entity … zipf(…)` 语句）、`validate/syntax.rs`（VN31 + 值域预算）、`stream_gen.rs`
+（`EntityPool`：池 + 累计权重二分采样 + 新值带）、`datagen/mod.rs`（按窗口建池并传入）、
+`inject_gen/helpers/generate.rs`（把 24 位索引 → 值 的映射抽成 `entity_value_for_index`，
+注入与背景池共用）。
+
+测试：解析 1（含缺 `pool` 报错）、VN31 8 例（窗口 / 字段 / 类型 / `pool=0` / `fresh` 越界 /
+重复 / 值域预算 / 无 background stream）、生成 5 例（池限定值域且 8 个都出现、`exponent` 造出
+热点、`exponent=0` 均匀、`fresh=1.0` 取不重叠新值带、未声明字段保持随机）。

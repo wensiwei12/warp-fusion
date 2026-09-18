@@ -306,6 +306,31 @@ pub(crate) fn build_event_fields_with_predicates(
     fields
 }
 
+/// 24 位实体索引 → 字段值。**注入与背景实体池共用**这套映射，值域才能分区
+/// （注入占底部 `[0, total_entity_ids)`、背景池占顶部两段，设计 §10）。
+pub(crate) fn entity_value_for_index(
+    field_type: Option<&FieldType>,
+    index: u64,
+    prefix: &str,
+    key_name: &str,
+) -> serde_json::Value {
+    match field_type {
+        Some(FieldType::Base(BaseType::Ip)) => {
+            let a = ((index >> 16) & 0xFF) as u8;
+            let b = ((index >> 8) & 0xFF) as u8;
+            let c = (index & 0xFF) as u8;
+            serde_json::Value::String(format!("10.{a}.{b}.{c}"))
+        }
+        Some(FieldType::Base(BaseType::Digit)) => serde_json::json!(index as i64),
+        Some(FieldType::Base(BaseType::Float)) => serde_json::json!(index as f64),
+        Some(FieldType::Base(BaseType::Chars)) => {
+            serde_json::Value::String(format!("{prefix}_{key_name}_{index:06}"))
+        }
+        Some(FieldType::Base(BaseType::Hex)) => serde_json::Value::String(format!("{index:032x}")),
+        _ => serde_json::Value::String(format!("{prefix}_{key_name}_{index:06}")),
+    }
+}
+
 /// Generate unique key values for a cluster entity.
 ///
 /// Uses the entity counter and a prefix to produce deterministic unique values
@@ -340,33 +365,12 @@ pub(crate) fn generate_key_values(
                 .map(|f| &f.field_type)
         });
 
-        let value = match field_type {
-            Some(FieldType::Base(BaseType::Ip)) => {
-                let id = entity_counter + i as u64;
-                debug_assert!(
-                    id < ENTITY_ID_SPACE,
-                    "实体 id {id} 超出 24 位地址空间（{ENTITY_ID_SPACE}），Ip 映射会回绕、不同实体会拿到同一个值"
-                );
-                let a = ((id >> 16) & 0xFF) as u8;
-                let b = ((id >> 8) & 0xFF) as u8;
-                let c = (id & 0xFF) as u8;
-                serde_json::Value::String(format!("10.{a}.{b}.{c}"))
-            }
-            Some(FieldType::Base(BaseType::Digit)) => {
-                serde_json::json!(entity_counter as i64 + i as i64)
-            }
-            Some(FieldType::Base(BaseType::Float)) => {
-                serde_json::json!(entity_counter as f64 + i as f64)
-            }
-            _ => {
-                // Default: string
-                serde_json::Value::String(format!(
-                    "{prefix}_{key}_{id:06}",
-                    key = key_name,
-                    id = entity_counter
-                ))
-            }
-        };
+        let id = entity_counter + i as u64;
+        debug_assert!(
+            id < ENTITY_ID_SPACE,
+            "实体 id {id} 超出 24 位地址空间（{ENTITY_ID_SPACE}），Ip 映射会回绕、不同实体会拿到同一个值"
+        );
+        let value = entity_value_for_index(field_type, id, prefix, key_name);
 
         overrides.insert(key_name.clone(), value);
     }

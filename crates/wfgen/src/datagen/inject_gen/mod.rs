@@ -25,6 +25,7 @@ use extract::extract_rule_structure;
 pub(crate) use extract::field_ref_field_name;
 /// 实体 id 空间上限（24 位）：校验期 VN27 与生成侧的 Ip 映射共用同一份口径，避免两处漂移。
 pub(crate) use helpers::ENTITY_ID_SPACE;
+pub(crate) use helpers::entity_value_for_index;
 use structures::InjectEntities;
 pub use structures::{InjectEntityKey, InjectGenResult, InjectStepCount, WithoutGuard};
 

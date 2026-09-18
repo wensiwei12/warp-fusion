@@ -1,5 +1,5 @@
 use winnow::combinator::{alt, cut_err, opt};
-use winnow::error::{StrContext, StrContextValue};
+use winnow::error::{AddContext, StrContext, StrContextValue};
 use winnow::prelude::*;
 use winnow::token::literal;
 
@@ -7,6 +7,9 @@ use wf_lang::parse_utils::ident;
 
 use crate::wfg_ast::*;
 use crate::wfg_parser::primitives::{rate, ws_skip};
+/// `zipf(...)` 接受的参数集合（未知参数报错文案，设计 §10）。
+const ZIPF_UNKNOWN_PARAM: &str = "zipf(...) 只认 `pool` / `exponent` / `fresh` 三个参数";
+
 pub(crate) fn parse_background_block(input: &mut &str) -> ModalResult<BackgroundBlock> {
     ws_skip(input)?;
     cut_err(literal("{"))
@@ -16,8 +19,101 @@ pub(crate) fn parse_background_block(input: &mut &str) -> ModalResult<Background
         .parse_next(input)?;
 
     let mut streams = Vec::new();
+    let mut entities = Vec::new();
     loop {
         ws_skip(input)?;
+        // `entity <window>.<field> zipf(pool=N, exponent=S, fresh=R)`（设计 §10）
+        if opt(wf_lang::parse_utils::kw("entity"))
+            .parse_next(input)?
+            .is_some()
+        {
+            ws_skip(input)?;
+            let window = cut_err(ident)
+                .context(StrContext::Expected(StrContextValue::Description(
+                    "window name after `entity`",
+                )))
+                .parse_next(input)?
+                .to_string();
+            ws_skip(input)?;
+            cut_err(literal(".")).parse_next(input)?;
+            ws_skip(input)?;
+            let field = cut_err(ident)
+                .context(StrContext::Expected(StrContextValue::Description(
+                    "field name after `entity <window>.`",
+                )))
+                .parse_next(input)?
+                .to_string();
+            ws_skip(input)?;
+            cut_err(wf_lang::parse_utils::kw("zipf"))
+                .context(StrContext::Expected(StrContextValue::Description(
+                    "`zipf(...)` after `entity <window>.<field>`",
+                )))
+                .parse_next(input)?;
+            ws_skip(input)?;
+            cut_err(literal("(")).parse_next(input)?;
+            let mut pool: Option<u64> = None;
+            let mut exponent = 1.0f64;
+            let mut fresh = 0.0f64;
+            loop {
+                ws_skip(input)?;
+                if opt(literal(")")).parse_next(input)?.is_some() {
+                    break;
+                }
+                let key = cut_err(ident).parse_next(input)?.to_string();
+                // 未知参数在下面的 `other` 分支报错（消息里点名允许的三个键）。
+                ws_skip(input)?;
+                cut_err(literal("=")).parse_next(input)?;
+                ws_skip(input)?;
+                match key.as_str() {
+                    "pool" => {
+                        pool = Some(
+                            cut_err(wf_lang::parse_utils::nonneg_integer).parse_next(input)? as u64,
+                        );
+                    }
+                    "exponent" => {
+                        exponent =
+                            cut_err(wf_lang::parse_utils::number_literal).parse_next(input)?;
+                    }
+                    "fresh" => {
+                        fresh = cut_err(wf_lang::parse_utils::number_literal).parse_next(input)?;
+                    }
+                    _other => {
+                        return Err(winnow::error::ErrMode::Cut(
+                            winnow::error::ContextError::new().add_context(
+                                input,
+                                &input.checkpoint(),
+                                StrContext::Expected(StrContextValue::Description(
+                                    ZIPF_UNKNOWN_PARAM,
+                                )),
+                            ),
+                        ));
+                    }
+                }
+                ws_skip(input)?;
+                let _ = opt(literal(",")).parse_next(input)?;
+            }
+            let Some(pool) = pool else {
+                return Err(winnow::error::ErrMode::Cut(
+                    winnow::error::ContextError::new().add_context(
+                        input,
+                        &input.checkpoint(),
+                        StrContext::Expected(StrContextValue::Description(
+                            "zipf(...) 缺少必填参数 `pool=N`",
+                        )),
+                    ),
+                ));
+            };
+            ws_skip(input)?;
+            let _ = opt(literal(";")).parse_next(input)?;
+            entities.push(EntityDistStmt {
+                window,
+                field,
+                pool,
+                exponent,
+                fresh,
+            });
+            continue;
+        }
         if opt(literal("}")).parse_next(input)?.is_some() {
             break;
         }
@@ -54,7 +150,7 @@ pub(crate) fn parse_background_block(input: &mut &str) -> ModalResult<Background
         });
     }
 
-    Ok(BackgroundBlock { streams })
+    Ok(BackgroundBlock { streams, entities })
 }
 
 fn parse_rate_expr(input: &mut &str) -> ModalResult<RateExpr> {

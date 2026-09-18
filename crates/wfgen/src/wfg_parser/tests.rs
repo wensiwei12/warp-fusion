@@ -64,6 +64,58 @@ scenario rates<seed=2> {
     assert!(matches!(t[2].rate, RateExpr::Timeline(_)));
 }
 
+/// `entity <window>.<field> zipf(...)`（设计 §10 实体分布）进 AST。
+#[test]
+fn test_parse_entity_distribution() {
+    let input = r#"
+#[duration=10s]
+scenario dist<seed=7> {
+    background {
+        stream LoginWindow gen 400/s
+        entity LoginWindow.src_ip zipf(pool=8, exponent=1.5, fresh=0.2)
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let block = &wfg.syntax.as_ref().unwrap().background;
+    assert_eq!(block.streams.len(), 1, "分布声明不占 stream");
+    assert_eq!(block.entities.len(), 1);
+    let dist = &block.entities[0];
+    assert_eq!(dist.window, "LoginWindow");
+    assert_eq!(dist.field, "src_ip");
+    assert_eq!(dist.pool, 8);
+    assert!((dist.exponent - 1.5).abs() < 1e-9);
+    assert!((dist.fresh - 0.2).abs() < 1e-9);
+
+    // 只写 `pool` 时 `exponent` / `fresh` 取默认（1.0 / 0.0）。
+    let input = r#"
+#[duration=10s]
+scenario dist<seed=7> {
+    background {
+        stream LoginWindow gen 10/s
+        entity LoginWindow.src_ip zipf(pool=4)
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let dist = &wfg.syntax.as_ref().unwrap().background.entities[0];
+    assert_eq!(dist.pool, 4);
+    assert!((dist.exponent - 1.0).abs() < 1e-9);
+    assert!(dist.fresh.abs() < 1e-9);
+
+    // 缺 `pool` → 解析期报错（必填参数）。
+    let bad = r#"
+#[duration=10s]
+scenario dist<seed=7> {
+    background {
+        stream LoginWindow gen 10/s
+        entity LoginWindow.src_ip zipf(exponent=1.5)
+    }
+}
+"#;
+    assert!(parse_wfg(bad).is_err(), "缺 pool 应报错");
+}
+
 /// `join <window> as <key> { use … x N }`（设计 §9 跨流注入）进 AST。
 #[test]
 fn test_parse_join_block() {

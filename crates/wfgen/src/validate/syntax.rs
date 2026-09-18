@@ -66,6 +66,9 @@ pub(super) fn validate_syntax(
     // `replay`：与 WFL 无关（`--no-wfl` 也要发数据），因此不受 `skip_wfl` 门控（设计 §8）。
     validate_replays(syntax, schemas, duration, &mut errors);
 
+    // 注入实体值占用的 id 数（VN27 口径）；VN31 的空间预算也要用。
+    let mut total_entity_ids: u128 = 0;
+
     // VN20（旧的比例形式）在解析期就报错，走不到这里。
     if let Some(inj) = &syntax.injection {
         let background_streams: HashSet<&str> = syntax
@@ -78,7 +81,6 @@ pub(super) fn validate_syntax(
             .iter()
             .map(|schema| (schema.name.as_str(), schema))
             .collect();
-        let mut total_entity_ids: u128 = 0;
 
         for case in &inj.cases {
             total_entity_ids += entity_ids_consumed(case);
@@ -262,6 +264,9 @@ pub(super) fn validate_syntax(
         }
     }
 
+    // VN31：`entity <window>.<field> zipf(...)` 实体分布（设计 §10）。
+    validate_entity_dists(syntax, schemas, total_entity_ids, &mut errors);
+
     // Rule-presence check (VN14) is skipped when the WFL pipeline is opted out
     // (--no-wfl / --no-oracle): there are no rules to reference.
     if !skip_wfl && let Some(inj) = &syntax.injection {
@@ -330,6 +335,117 @@ fn validate_scenario_annos(syntax: &SyntaxScenario, errors: &mut Vec<ValidationE
                 message: format!(
                     "注解 'seed' 的值必须是非负数字，实际是{}",
                     attr_value_kind(&attr.value)
+                ),
+            });
+        }
+    }
+}
+
+/// VN31：`entity <window>.<field> zipf(...)` 实体分布（设计 §10）。
+///
+/// 值域**必须与注入实体分区**（注入占底部 `[0, total_entity_ids)`、池占顶部 `pool` 个、
+/// 新值带占再往下的 `pool` 个），否则背景噪声会撞上注入实体、污染 INJ1/INJ2 的口径。
+fn validate_entity_dists(
+    syntax: &SyntaxScenario,
+    schemas: &[WindowSchema],
+    total_entity_ids: u128,
+    errors: &mut Vec<ValidationError>,
+) {
+    let mut seen: HashSet<String> = HashSet::new();
+    for dist in &syntax.background.entities {
+        if !seen.insert(format!("{}.{}", dist.window, dist.field)) {
+            errors.push(ValidationError {
+                code: "VN31",
+                message: format!("entity 分布对 '{}.{}' 重复声明", dist.window, dist.field),
+            });
+        }
+
+        let Some(schema) = schemas.iter().find(|s| s.name == dist.window) else {
+            errors.push(ValidationError {
+                code: "VN31",
+                message: format!(
+                    "entity 分布的目标窗 '{}' 不在已加载的 schema 里",
+                    dist.window
+                ),
+            });
+            continue;
+        };
+
+        if !syntax
+            .background
+            .streams
+            .iter()
+            .any(|stream| stream.stream == dist.window)
+        {
+            errors.push(ValidationError {
+                code: "VN31",
+                message: format!(
+                    "entity 分布的目标窗 '{}' 没有对应的 `background` stream（该声明不会生效）",
+                    dist.window
+                ),
+            });
+        }
+
+        match schema.fields.iter().find(|f| f.name == dist.field) {
+            None => {
+                errors.push(ValidationError {
+                    code: "VN31",
+                    message: format!(
+                        "entity 分布的字段 '{}' 不在窗口 '{}' 的 schema 里",
+                        dist.field, dist.window
+                    ),
+                });
+            }
+            Some(field) => {
+                let supported = matches!(
+                    &field.field_type,
+                    wf_lang::FieldType::Base(
+                        wf_lang::BaseType::Ip
+                            | wf_lang::BaseType::Digit
+                            | wf_lang::BaseType::Float
+                            | wf_lang::BaseType::Chars
+                            | wf_lang::BaseType::Hex
+                    )
+                );
+                if !supported {
+                    errors.push(ValidationError {
+                        code: "VN31",
+                        message: format!(
+                            "entity 分布的字段 '{}' 类型不支持（只支持 ip / digit / float / chars / hex）",
+                            dist.field
+                        ),
+                    });
+                }
+            }
+        }
+
+        if dist.pool == 0 {
+            errors.push(ValidationError {
+                code: "VN31",
+                message: format!("entity '{}': `pool` 必须 ≥ 1", dist.field),
+            });
+        }
+        if !(dist.exponent.is_finite() && dist.exponent >= 0.0) {
+            errors.push(ValidationError {
+                code: "VN31",
+                message: format!("entity '{}': `exponent` 必须是 ≥ 0 的有限数", dist.field),
+            });
+        }
+        if !(dist.fresh.is_finite() && (0.0..=1.0).contains(&dist.fresh)) {
+            errors.push(ValidationError {
+                code: "VN31",
+                message: format!("entity '{}': `fresh` 必须落在 0..=1", dist.field),
+            });
+        }
+
+        // 值域预算：注入实体 + 池 + 新值带都必须塞进 24 位空间。
+        let need = total_entity_ids + u128::from(dist.pool) * 2;
+        if need > u128::from(ENTITY_ID_SPACE) {
+            errors.push(ValidationError {
+                code: "VN31",
+                message: format!(
+                    "entity '{}' 的值域超出 24 位地址空间：注入实体 {} + 池 {} + 新值带 {} > {}（背景池与注入实体值必须不重叠）",
+                    dist.field, total_entity_ids, dist.pool, dist.pool, ENTITY_ID_SPACE
                 ),
             });
         }

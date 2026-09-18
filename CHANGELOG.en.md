@@ -27,6 +27,7 @@ Counts are explicit now: both the entity count and the per-entity count are writ
 
 - **Generation-time hard assertions INJ1 / INJ2**: every `hit` entity must alert and every `near_miss` / `miss` entity must not; failures name the entity (instead of a single percentage line from `verify`).
 - `on each` rules can be injection targets.
+- **Background entity distribution `entity <window>.<field> zipf(pool=N, exponent=S, fresh=R)`**: background traffic used to draw every field fresh per event (so no entity ever repeated and hot entities were impossible); fields can now be drawn from an entity pool with Zipf weights plus a fresh-entity ratio. The value space is partitioned away from injected entities and its budget is checked at load time (`VN31`).
 - **Cross-stream injection `join <window> as <key> { ... }`**: builds the paired events a rule's `join` target window needs (the join key is written from the left entity's key value, the timestamp is taken from the left event — both derived, not hand-written), so join-family rules can now be fed assertable data from `.wfg`. v1 supports only the default inner form and single-key rules; anything else reports `VN30`.
 - Fixed: `gen`'s oracle evaluation did not load window schemas, so join-family rules could never produce expectations (INJ1 always failed and `.except.jsonl` stayed empty); it now evaluates with schemas, making join rules usable.
 - **New `replay <window> { use from "file" }` pass-through channel**: feed an existing dataset as-is (no count, no entity math, no entity assertions); timestamps are rebased onto the scenario start from the file's earliest record. Empty files, mixed time-field usage and spans beyond `#[duration]` fail at load/validation time.
@@ -46,6 +47,7 @@ New validation codes (reported at load time by `lint` / `gen`):
 | VN28 | a background rate uses `wave` / `burst` / `timeline`
 | VN29 | a scenario annotation key is not in the allow-list (`#[...]` takes only `duration`, `<...>` only `seed`), or its value type is invalid | (syntax is defined but the time-varying semantics are not implemented — it used to be generated silently at the constant `base=` rate) |
 | VN30 | a `join` block matches no join clause of the rule / its form is unsupported / the rule's `within` does not contain the left event time |
+| VN31 | an `entity` distribution's window / field / type / parameters are invalid, or its value-space budget collides with injected entities |
 
 ### Fixed
 
