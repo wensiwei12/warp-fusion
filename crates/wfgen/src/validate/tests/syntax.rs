@@ -64,6 +64,139 @@ scenario s<seed=1> {
     assert!(err.contains("VN20"), "unexpected error: {err}");
 }
 
+/// VN1：`background` 至少要有一条 stream（没有背景就没有流量可言）。
+#[test]
+fn test_vn1_empty_background_rejected() {
+    let input = r#"
+#[duration=10s]
+scenario s<seed=1> {
+    background { }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let errors = validate_wfg(&wfg, &[], &[], false);
+    assert!(
+        errors.iter().any(|e| e.code == "VN1"),
+        "空 background 应报 VN1: {errors:?}"
+    );
+}
+
+/// VN2：stream 速率必须大于 0。
+#[test]
+fn test_vn2_nonpositive_rate_rejected() {
+    let input = r#"
+#[duration=10s]
+scenario s<seed=1> {
+    background { stream LoginWindow gen 0/s }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let errors = validate_wfg(&wfg, &[], &[], false);
+    assert!(
+        errors.iter().any(|e| e.code == "VN2"),
+        "rate = 0 应报 VN2: {errors:?}"
+    );
+}
+
+/// VN30 的**形状**错误：空 `join` 块、块内 `x 0` → VN21（与主体事件组同口径）。
+#[test]
+fn test_vn30_join_block_shape_errors() {
+    let rule = "
+rule p_joins_a {
+    events { p : person_events }
+    on each p -> score(10)
+    join auction_events within [p.timestamp, <bucket_end(p.timestamp, 5s)] on p.id == auction_events.seller emit at bucket_end(p.timestamp, 5s)
+    entity(digit, p.id)
+    yield alerts(id = p.id)
+}";
+    let schemas = vec![
+        make_schema("person_events", vec![("id", BaseType::Digit)]),
+        make_schema(
+            "auction_events",
+            vec![("seller", BaseType::Digit), ("price", BaseType::Digit)],
+        ),
+    ];
+    let wfl = wf_lang::parse_wfl(rule).unwrap();
+
+    for (join_body, why) in [
+        ("join auction_events as seller { }", "空 join 块"),
+        (
+            "join auction_events as seller { use(price=1) x 0 }",
+            "join 块内 x 0",
+        ),
+    ] {
+        let input = format!(
+            r#"
+#[duration=10s]
+scenario s<seed=1> {{
+    background {{ stream person_events gen 5/s }}
+    inject {{
+        hit<id: 2> for p_joins_a person_events {{
+            use(id=1) x 1
+            {join_body}
+        }}
+    }}
+}}
+"#
+        );
+        let wfg = parse_wfg(&input).unwrap();
+        let errors = validate_wfg(&wfg, &schemas, std::slice::from_ref(&wfl), false);
+        assert!(
+            errors.iter().any(|e| e.code == "VN21"),
+            "{why}: 应报 VN21: {errors:?}"
+        );
+    }
+}
+
+/// `--no-wfl`（`skip_wfl`）：规则相关检查让位——join 块不再按规则 join 校验，
+/// 但 schema 相关的检查（目标窗存在）仍然做。
+#[test]
+fn test_vn30_join_skips_rule_checks_when_no_wfl() {
+    let schemas = vec![
+        make_schema("person_events", vec![("id", BaseType::Digit)]),
+        make_schema("auction_events", vec![("seller", BaseType::Digit)]),
+    ];
+    let input = r#"
+#[duration=10s]
+scenario s<seed=1> {
+    background { stream person_events gen 5/s }
+    inject {
+        hit<id: 2> for whatever_rule person_events {
+            use(id=1) x 1
+            join auction_events as seller { use(seller=1) x 1 }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    // 没有 WFL 文件：VN14/VN30 的规则匹配检查跳过，不报错。
+    let errors = validate_wfg(&wfg, &schemas, &[], true);
+    assert!(
+        !errors.iter().any(|e| e.code == "VN30" || e.code == "VN14"),
+        "skip_wfl 下不应报规则相关错误: {errors:?}"
+    );
+
+    // 目标窗不在 schema 里仍要报（与 WFL 无关）。
+    let bad = r#"
+#[duration=10s]
+scenario s<seed=1> {
+    background { stream person_events gen 5/s }
+    inject {
+        hit<id: 2> for whatever_rule person_events {
+            use(id=1) x 1
+            join nope_events as seller { use(seller=1) x 1 }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(bad).unwrap();
+    let errors = validate_wfg(&wfg, &schemas, &[], true);
+    assert!(
+        errors.iter().any(|e| e.code == "VN30"),
+        "目标窗不在 schema 应报 VN30: {errors:?}"
+    );
+}
+
 /// VN31：`entity <window>.<field> zipf(...)`（设计 §10）的静态一致性——窗口/字段存在、
 /// 类型可承载实体、参数取值、重复声明、以及与注入实体的**值域预算**。
 #[test]

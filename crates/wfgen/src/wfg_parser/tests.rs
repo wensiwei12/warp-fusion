@@ -64,6 +64,51 @@ scenario rates<seed=2> {
     assert!(matches!(t[2].rate, RateExpr::Timeline(_)));
 }
 
+/// `join` 块的事件组复用主体那套值来源：`use(preds)` / `use({json})` / `use from "file"`。
+#[test]
+fn test_parse_join_block_value_sources() {
+    let input = r#"
+#[duration=10s]
+scenario cross<seed=3> {
+    background { stream person_events gen 5/s }
+    inject {
+        hit<id: 4> for r person_events {
+            use(name="p") x 1
+            join auction_events as seller {
+                use(price=42) x 2
+                then use({"category": [1, 2]}) x 1
+                then use from "raw/bids.ndjson" x 3
+            }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let case = &wfg
+        .syntax
+        .as_ref()
+        .unwrap()
+        .injection
+        .as_ref()
+        .unwrap()
+        .cases[0];
+    let join = &case.joins[0];
+    assert_eq!(join.groups.len(), 3);
+    assert!(matches!(
+        join.groups[0].source,
+        crate::wfg_ast::ValueSource::Predicates(_)
+    ));
+    assert!(matches!(
+        join.groups[1].source,
+        crate::wfg_ast::ValueSource::Json(_)
+    ));
+    assert!(matches!(
+        join.groups[2].source,
+        crate::wfg_ast::ValueSource::File(_)
+    ));
+    assert_eq!(join.groups[2].count, 3);
+}
+
 /// `entity <window>.<field> zipf(...)`（设计 §10 实体分布）进 AST。
 #[test]
 fn test_parse_entity_distribution() {
