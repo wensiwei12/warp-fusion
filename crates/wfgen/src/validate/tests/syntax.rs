@@ -326,6 +326,139 @@ scenario s<seed=1> {
     );
 }
 
+/// VN24：`use` 事件组数超过规则的事件步骤数（每个 `use ... x N` 对应一个步骤）。
+#[test]
+fn test_syntax_use_groups_must_not_exceed_rule_steps() {
+    let input = r#"
+#[duration=10m]
+scenario s<seed=1> {
+    background { stream auth_events gen 100/s }
+    inject {
+        hit<sip: 5> for rule_a auth_events {
+            use(login="failed") x 1
+            use(login="failed") x 1
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![("sip", BaseType::Ip), ("login", BaseType::Chars)],
+    )];
+    // `match<sip:1m> { on event { a | count >= 1; } }` → 1 个事件步骤
+    let wfl = make_wfl("rule_a", vec![("a", "auth_events")]);
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        errors.iter().any(|e| e.code == "VN24"),
+        "errors: {:?}",
+        errors
+    );
+}
+
+/// VN24 的「步骤数」口径必须与编译产物一致（跱模块不变量）：用编译器推导的
+/// `event_steps`（`on each` 则按生成器合成的 1 步）当 oracle，对每种规则形态验证边界
+/// ——组数 == 步骤数放行、+1 报 VN24。链形态的 `not` 步骤不计入（编译器把它交给 L2 的
+/// `SeqPlan`），这条由第三个用例锁定。
+#[test]
+fn vn24_step_count_matches_compiled_event_steps() {
+    const WIN: &str = "auth_events";
+    let cases: &[(&str, &str)] = &[
+        (
+            "match 单步",
+            r#"rule probe_rule {
+    events { a : auth_events }
+    match<sip : 1m> { on event { a | count >= 1; } }
+    -> score(1)
+    entity(ip, a.sip)
+    yield alerts()
+}"#,
+        ),
+        (
+            "match 三步",
+            r#"rule probe_rule {
+    events { a : auth_events }
+    match<sip : 1m> { on event { a | count >= 1; a | count >= 1; a | count >= 1; } }
+    -> score(1)
+    entity(ip, a.sip)
+    yield alerts()
+}"#,
+        ),
+        (
+            "seq 链含 not（not 不计入）",
+            r#"rule probe_rule {
+    events { a : auth_events }
+    match<sip : 1m> { on event seq { has a; not has a; has a within 10m; } }
+    -> score(1)
+    entity(ip, a.sip)
+    yield alerts()
+}"#,
+        ),
+        (
+            "on each（生成器合成 1 步）",
+            r#"rule probe_rule {
+    events { a : auth_events }
+    on each a -> score(1)
+    entity(ip, a.sip)
+    yield alerts()
+}"#,
+        ),
+    ];
+
+    for (name, rule_src) in cases {
+        let schemas = vec![
+            make_schema(
+                WIN,
+                vec![
+                    ("sip", BaseType::Ip),
+                    ("retry", BaseType::Digit),
+                    ("login", BaseType::Chars),
+                ],
+            ),
+            make_schema("alerts", vec![]),
+        ];
+        let wfl = wf_lang::parse_wfl(rule_src).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let plans = wf_lang::compile_wfl(&wfl, &schemas)
+            .unwrap_or_else(|e| panic!("{name} 编译失败: {e:?}"));
+        // oracle：编译器的事件步骤数；`on each` 的步骤由生成器合成，故为 1。
+        let step_count = plans
+            .iter()
+            .find(|plan| plan.name == "probe_rule")
+            .map(|plan| {
+                if plan.each_plan.is_some() {
+                    1
+                } else {
+                    plan.match_plan.event_steps.len()
+                }
+            })
+            .unwrap_or_else(|| panic!("{name}: 找不到 probe_rule"));
+
+        assert!(
+            !vn24_probe(&schemas, rule_src, step_count),
+            "{name}: use 组数 == 步骤数 {step_count} 时不该报 VN24"
+        );
+        assert!(
+            vn24_probe(&schemas, rule_src, step_count + 1),
+            "{name}: use 组数 > 步骤数 {step_count} 时必须报 VN24"
+        );
+    }
+}
+
+/// 造一个「`for probe_rule` + 指定个数 `use` 组」的场景，返回是否报了 VN24。
+fn vn24_probe(schemas: &[wf_lang::WindowSchema], rule_src: &str, groups: usize) -> bool {
+    let win = schemas[0].name.as_str();
+    let groups_src: String = (0..groups)
+        .map(|i| format!("            use(retry={i}) x 1\n"))
+        .collect();
+    let wfg_src = format!(
+        "#[duration=10m]\nscenario s<seed=1> {{\n    background {{ stream {win} gen 100/s }}\n    inject {{\n        hit<sip: 5> for probe_rule {win} {{\n{groups_src}        }}\n    }}\n}}\n"
+    );
+    let wfg = parse_wfg(&wfg_src).unwrap();
+    let wfl = wf_lang::parse_wfl(rule_src).unwrap();
+    let errors = validate_wfg(&wfg, schemas, &[wfl], false);
+    errors.iter().any(|e| e.code == "VN24")
+}
+
 /// 多个用例各自 `for RULE`（`for` 现在是必填，不再从 `expect` 反推）。
 #[test]
 fn test_syntax_injection_multi_rule_cases_are_allowed() {

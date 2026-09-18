@@ -269,6 +269,7 @@ hit<sip: 20> for sdm_rule sdm_event {
 | VN21 | 实体个数为 0、`x 0`、或没有任何事件组 | `… 实体个数必须大于 0 / 第 k 个事件组 x 0 / 至少需要一个 use … x N 事件组` |
 | VN22 | 显式实体字段不在该 stream 的 schema | `… 实体字段 '<f>' 不在 stream '<s>' 的 schema '<w>' 里` |
 | VN23 | 显式实体字段与规则推断不一致（单 key `match` = 该 key；`on each` = `entity(...)` 的单字段） | `… 显式实体字段 '<f>' 与规则 '<r>' 推断的实体字段 '<g>' 不一致（去掉显式字段即用推断值；多 key 规则才需要显式消歧）` |
+| VN24 | `use` 事件组数 > 规则的事件步骤数（每个 `use ... x N` 对应一个步骤） | `… use 事件组数 2 超过规则 '<r>' 的事件步骤数 1（每个 `use ... x N` 对应一个步骤）` |
 | VN25 | `spread` 超过 `#[duration]` | `spread 20m` 超过场景 duration `10m` |
 
 其他层级的校验：`SC2/SC2a/SC3/SC4`（stream 与规则的绑定关系）、`SV2/SV3/SV4/SV6/SV7/SV8`
@@ -405,6 +406,10 @@ wfg + wfs + wfl
   规则推断的实体字段一致（单 key `match` = 该 key；`on each` = `entity(...)` 的单字段；
   多 key 规则的显式字段按消歧用法放行）。缺了它，注入会静默指向错实体——生成器对拿不到
   类型的字段只会用字符串兜底。
+- 校验期 `use` 组数检查 VN24：`use` 事件组数不得超过规则的事件步骤数，口径与编译产物一致
+  （`on event seq` 链只数非 `neg` 步骤、`on each` = 1、stats = 0；由一条「以编译产物为
+  oracle」的边界测试锁定）。数错组数会静默少注入某个步骤的事件；生成期 `plan_use_steps`
+  仍保留同一检查（纵深防御）。
 - 背景与注入完全分离：背景保留自己的配额（`rate × duration`），注入在其上叠加
   （旧口径 `背景 = 配额 − 注入` 及其 `inject_counts` 链路已删除）。
 - `use from "file"` 的值文件解析（`loader::resolve_inject_files`）：相对 `.wfg` 目录解析路径，
@@ -433,7 +438,7 @@ wfg + wfs + wfl
 | `replay STREAM { use from "f" }` 照单发货 | 未实现 |
 | `without(...)` 步骤（取代旧 `not(...) within(...)`） | 未实现 |
 | 时间**均匀**铺开 | 部分：`spread` 已可写并覆盖窗口长度，铺开策略仍是"随机簇起点 + 窗口内铺开" |
-| VN24（事件组数 > 步骤数）、VN26（replay 文件） | 未实现；事件组数超限目前是生成期的 `exceeds rule step count` |
+| VN26（replay 文件） | 未实现；**依赖 `replay STREAM { use from }` 先落地**（该语法尚不存在，无物可校验） |
 | 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | **已落地**（§7.1；16/16 `lint` + `gen` 断言通过） |
 | 文档：CHANGELOG | 未写；按本仓惯例随 `chore(release)` 提交一起写（`git log -- CHANGELOG.md` 全是 release 提交） |
 

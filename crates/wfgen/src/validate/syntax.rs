@@ -133,6 +133,27 @@ pub(super) fn validate_syntax(
                 }
             }
 
+            // VN24：`use` 事件组数不得超过规则的事件步骤数（每个 `use ... x N` 对应
+            // 一个步骤）。生成期也拦（`inject_gen::helpers::plan::plan_use_steps`），
+            // 这里提前到校验期——数错组数会静默少注入某个步骤的事件。
+            if !skip_wfl
+                && let Some(rule) = all_rules.iter().find(|rule| rule.name == case.target_rule)
+            {
+                let step_count = injectable_step_count(rule);
+                if case.groups.len() > step_count {
+                    errors.push(ValidationError {
+                        code: "VN24",
+                        message: format!(
+                            "injection case '{}' 的 use 事件组数 {} 超过规则 '{}' 的事件步骤数 {}（每个 `use ... x N` 对应一个步骤）",
+                            stream,
+                            case.groups.len(),
+                            case.target_rule,
+                            step_count
+                        ),
+                    });
+                }
+            }
+
             for (idx, group) in case.groups.iter().enumerate() {
                 if group.count == 0 {
                     errors.push(ValidationError {
@@ -178,6 +199,27 @@ pub(super) fn validate_syntax(
     }
 
     errors
+}
+
+/// 规则可注入的事件步骤数（设计 §4.1 VN24）。
+///
+/// 与编译产物同口径（`wf_lang` 的 `compiler/match_build` 装配 `event_steps`）：
+/// - `match` 普通形态 = `on event` 的步骤数；
+/// - `match` 链形态（`on event seq`）= 链步骤数，**negation 步骤不计**（编译器把它们
+///   交给 L2 的 `SeqPlan` 强制执行，不产出 use-step）；
+/// - `on each` = 1（生成器为该绑定合成一个步骤）；
+/// - stats 形态 = 0（不走 CEP 路径，没有可注入的事件步骤）。
+fn injectable_step_count(rule: &RuleDecl) -> usize {
+    if rule.each_clause.is_some() {
+        return 1;
+    }
+    if rule.stats_clause.is_some() {
+        return 0;
+    }
+    match &rule.match_clause.seq {
+        Some(chain) => chain.steps.iter().filter(|step| !step.neg).count(),
+        None => rule.match_clause.on_event.len(),
+    }
 }
 
 /// 规则推断出的实体字段（设计 §3.7）：单 key `match` → 该 key；`on each` →

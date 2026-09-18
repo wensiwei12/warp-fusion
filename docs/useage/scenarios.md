@@ -124,6 +124,9 @@ hit<sip: 20> for sdm_rule sdm_event {
 | `VN10` | 用例的 stream 没在 `background` 里声明 |
 | `VN17` | `use({...})` / `use from` 的形态非法（非 object / object 数组，或空数组） |
 | `VN11` | `use(...)` 的字段不在 schema 里 |
+| `VN22` | 显式实体字段不在该 stream 的 schema 里 |
+| `VN23` | 显式实体字段与规则推断的实体字段不一致（多 key 规则的显式字段属消歧用法，放行） |
+| `VN24` | `use` 事件组数超过规则的事件步骤数（每个 `use ... x N` 对应一个步骤） |
 | `VN25` | `spread` 超过 `#[duration]` |
 | INJ1 / INJ2 | 生成期断言失败：`hit` 实体没报警（INJ1），或 `near_miss` / `miss` 实体报了警（INJ2） |
 
