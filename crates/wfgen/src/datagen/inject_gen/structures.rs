@@ -218,11 +218,25 @@ fn entity_identity_field(rule_struct: &RuleStructure) -> Option<String> {
 
 /// Extracted rule structure for inject generation.
 #[allow(dead_code)]
+/// 规则侧的一个 join 子句口径（设计 §9）：与用例的 `join` 块按
+/// `(目标窗, 右侧连接键)` 配对，决定右事件该放哪里。
+pub(super) struct RuleJoinInfo {
+    pub(super) window: String,
+    pub(super) right_field: String,
+    /// 右事件相对左事件的时间偏移（纳秒）：
+    /// - `0` = deferred（`emit at` + `within`）：到期评估时右行已在窗内；
+    /// - `-1` = snapshot（无 `within`）：右行必须在驱动事件被处理时**已可见**，
+    ///   故前挪 1ns（最小让位，仍落在窗口内）。
+    pub(super) offset_nanos: i64,
+}
+
 pub(super) struct RuleStructure {
     pub(super) keys: Vec<String>,
     pub(super) window_dur: Duration,
     pub(super) steps: Vec<StepInfo>,
     pub(super) entity_id_field: Option<String>,
+    /// 规则的 join 子句口径（设计 §9 跨流注入）。
+    pub(super) joins: Vec<RuleJoinInfo>,
 }
 
 impl RuleStructure {

@@ -218,3 +218,189 @@ scenario cross_stream_oracle<seed=5> {
         alerts.alerts
     );
 }
+
+// ---------------------------------------------------------------------------
+// snapshot（无 `within`）：q3/q20 形态
+// ---------------------------------------------------------------------------
+
+/// `snapshot` 点查：`join auction_events snapshot on b.auction == auction_events.id`。
+/// 右事件必须**提前 1ms**——snapshot 在驱动事件被处理时查找右窗，同刻右行还没进去。
+const SNAPSHOT_RULE: &str = r#"rule bid_expands_auction {
+    events {
+        b : bid_events
+    }
+    on each b -> score(10)
+    join auction_events snapshot on b.auction == auction_events.id
+    entity(digit, b.auction)
+    yield alerts(id = b.auction)
+}"#;
+
+fn snapshot_schemas() -> Vec<WindowSchema> {
+    vec![
+        WindowSchema {
+            name: "bid_events".to_string(),
+            streams: vec!["bid_events".to_string()],
+            time_field: Some("timestamp".to_string()),
+            over: Duration::from_secs(300),
+            fields: vec![
+                FieldDef {
+                    name: "timestamp".to_string(),
+                    field_type: FieldType::Base(BaseType::Time),
+                },
+                FieldDef {
+                    name: "auction".to_string(),
+                    field_type: FieldType::Base(BaseType::Digit),
+                },
+                FieldDef {
+                    name: "price".to_string(),
+                    field_type: FieldType::Base(BaseType::Digit),
+                },
+            ],
+        },
+        WindowSchema {
+            name: "auction_events".to_string(),
+            streams: vec!["auction_events".to_string()],
+            time_field: Some("timestamp".to_string()),
+            over: Duration::from_secs(300),
+            fields: vec![
+                FieldDef {
+                    name: "timestamp".to_string(),
+                    field_type: FieldType::Base(BaseType::Time),
+                },
+                FieldDef {
+                    name: "id".to_string(),
+                    field_type: FieldType::Base(BaseType::Digit),
+                },
+                FieldDef {
+                    name: "category".to_string(),
+                    field_type: FieldType::Base(BaseType::Digit),
+                },
+            ],
+        },
+        alerts_schema(),
+    ]
+}
+
+/// snapshot 形态：右事件提前 1ms、键 = 左实体键值、字段被 `use(...)` 覆盖。
+#[test]
+fn snapshot_join_puts_right_event_earlier() {
+    let input = r#"
+#[duration=10s]
+scenario snap<seed=11> {
+    background { stream bid_events gen 5/s }
+    inject {
+        hit<auction: 3> for bid_expands_auction bid_events {
+            use(price=5) x 1
+            join auction_events as id {
+                use(category=10) x 1
+            }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = snapshot_schemas();
+    let wfl = wf_lang::parse_wfl(SNAPSHOT_RULE).expect("rule parse");
+    let mut plans = wf_lang::compile_wfl(&wfl, &schemas).expect("rule compile");
+    let plan = plans.remove(0);
+    let start: DateTime<Utc> = "2024-01-01T00:00:00Z".parse().unwrap();
+    let duration = wfg.scenario.time_clause.duration;
+    let mut rng = StdRng::seed_from_u64(wfg.scenario.seed);
+
+    let result = generate_inject_events(
+        &wfg,
+        std::slice::from_ref(&plan),
+        &schemas,
+        &start,
+        &duration,
+        &mut rng,
+    )
+    .unwrap();
+
+    let bids: Vec<_> = result
+        .events
+        .iter()
+        .filter(|e| e.window_name == "bid_events")
+        .collect();
+    let auctions: Vec<_> = result
+        .events
+        .iter()
+        .filter(|e| e.window_name == "auction_events")
+        .collect();
+    assert_eq!(bids.len(), 3);
+    assert_eq!(auctions.len(), 3);
+
+    for auction in &auctions {
+        let id = auction.fields.get("id").expect("右行连接键");
+        let paired = bids
+            .iter()
+            .find(|b| b.fields.get("auction") == Some(id))
+            .unwrap_or_else(|| panic!("右事件 id={id} 必须配对到左实体"));
+        assert_eq!(
+            paired.timestamp - auction.timestamp,
+            chrono::Duration::milliseconds(1),
+            "snapshot 形态：右事件应比左事件早 1ms（保证驱动事件处理时已可见，且毫秒精度的下游也看得出先后）"
+        );
+        assert_eq!(
+            auction.fields.get("category").and_then(|v| v.as_f64()),
+            Some(10.0),
+            "use(category=10) 归一成浮点"
+        );
+    }
+}
+
+/// 配对**有效**：snapshot 形态下 oracle 也应产出 3 条告警（右行提前才可见）。
+#[test]
+fn snapshot_join_pairs_actually_trigger_the_rule() {
+    let input = r#"
+#[duration=10s]
+scenario snap_oracle<seed=13> {
+    background { stream bid_events gen 5/s }
+    inject {
+        hit<auction: 3> for bid_expands_auction bid_events {
+            use(price=5) x 1
+            join auction_events as id {
+                use(category=10) x 1
+            }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = snapshot_schemas();
+    let wfl = wf_lang::parse_wfl(SNAPSHOT_RULE).expect("rule parse");
+    let mut plans = wf_lang::compile_wfl(&wfl, &schemas).expect("rule compile");
+    let plan = plans.remove(0);
+    let start: DateTime<Utc> = "2024-01-01T00:00:00Z".parse().unwrap();
+    let duration = wfg.scenario.time_clause.duration;
+    let mut rng = StdRng::seed_from_u64(wfg.scenario.seed);
+
+    let result = generate_inject_events(
+        &wfg,
+        std::slice::from_ref(&plan),
+        &schemas,
+        &start,
+        &duration,
+        &mut rng,
+    )
+    .unwrap();
+
+    let alerts = run_oracle_events_full(
+        result.events.clone(),
+        &[plan],
+        &schemas,
+        &start,
+        &duration,
+        None,
+        true,
+    )
+    .unwrap();
+    let ids: std::collections::BTreeSet<&str> =
+        alerts.alerts.iter().map(|a| a.entity_id.as_str()).collect();
+    assert_eq!(
+        ids.len(),
+        3,
+        "每个 hit 实体都应因 snapshot 配对命中而产出告警：{:?}",
+        alerts.alerts
+    );
+}

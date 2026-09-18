@@ -5,10 +5,18 @@ use wf_lang::plan::RulePlan;
 use wf_lang::plan::WindowSpec;
 
 use super::structures::{
-    AliasMap, InjectOverrides, InjectUseStepOverrides, RuleStructure, StepInfo,
+    AliasMap, InjectOverrides, InjectUseStepOverrides, RuleJoinInfo, RuleStructure, StepInfo,
 };
 use crate::error::{self, WfgenReason, WfgenResult};
 use crate::wfg_ast::{InjectCase, ValueSource};
+
+/// snapshot 形态右事件的提前量：**1ms**。
+///
+/// 取 1ms 而不是 1ns 是为了同时满足两类下游：时钟按纳秒走的（引擎按 schema 的
+/// `time_field` 读事件时间）1ns 就够，而 JSONL 里的 `_timestamp` 便利字段是**毫秒精度**——
+/// 1ns 的前挪在同一毫秒内会被抹平，先后关系看不出来。1ms 对 snapshot（无 `within` 时间界）
+/// 没有任何副作用。
+const SNAPSHOT_LEAD_NANOS: i64 = -1_000_000;
 
 pub(super) fn extract_rule_structure(
     rule_plan: &RulePlan,
@@ -113,11 +121,39 @@ pub(super) fn extract_rule_structure(
 
     let entity_id_field = extract_entity_id_field(&rule_plan.entity_plan.entity_id_expr);
 
+    // 规则侧 join 口径（设计 §9）：决定用例 `join` 块的右事件放哪。
+    let mut joins = Vec::new();
+    for join in &rule_plan.joins {
+        let Some(right_field) = join
+            .conds
+            .first()
+            .and_then(|cond| cond.right_field_name().map(str::to_string))
+        else {
+            continue;
+        };
+        // 只登记生成器支持的两种形态（其余由 VN30 在校验期拦下）：
+        //  - deferred：`emit at` + `within` → 右事件与左事件同刻（到期评估时右行已在窗内）；
+        //  - snapshot：无 `within` 的点查 → 右事件提前（驱动事件处理时必须已可见）。
+        let offset_nanos = if join.emit_at.is_some() && join.within.is_some() {
+            0
+        } else if matches!(join.mode, wf_lang::ast::JoinMode::Snapshot) && join.within.is_none() {
+            SNAPSHOT_LEAD_NANOS
+        } else {
+            continue;
+        };
+        joins.push(RuleJoinInfo {
+            window: join.right_window.clone(),
+            right_field,
+            offset_nanos,
+        });
+    }
+
     Ok(RuleStructure {
         keys,
         window_dur,
         steps,
         entity_id_field,
+        joins,
     })
 }
 

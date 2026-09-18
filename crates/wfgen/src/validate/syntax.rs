@@ -500,24 +500,23 @@ fn validate_case_joins(
             continue;
         };
 
-        // v1 只支持 **deferred**（`emit at`）join：即时 inner join 要求右行在驱动事件被处理
-        // 时就已可见（右事件必须早于左事件），而规则的 `within` 下界常常就是左事件时间
-        // （如 q8 的 `[p.dateTime, …]`）——两者不可兼得，造出来必然时好时坏。
-        if join_clause.emit_at.is_none() {
+        // 生成器支持两种形态（设计 §9）；右事件的放置由形态决定：
+        //  - **deferred**：inner + `within` + `emit at` → 右事件与左事件**同刻**（到期评估时
+        //    右行必已在窗内）；
+        //  - **snapshot**：`snapshot` 且**无** `within` 的点查 → 右事件**前挪 1ns**（驱动事件
+        //    被处理时右行必须已可见）。
+        // 其余（`asof` / `anti`、无 `emit at` 的即时 inner、`snapshot` + `within`）明确拒绝：
+        // 即时 inner 要求右行更早、而 `within` 下界常就是左事件时间，两者冲突会时好时坏。
+        let deferred = matches!(join_clause.mode, JoinMode::Inner)
+            && join_clause.emit_at.is_some()
+            && join_clause.within.is_some();
+        let snapshot =
+            matches!(join_clause.mode, JoinMode::Snapshot) && join_clause.within.is_none();
+        if !deferred && !snapshot {
             errors.push(ValidationError {
                 code: "VN30",
                 message: format!(
-                    "injection case '{}' 的 `join {}` 指向的规则 join 没有 `emit at`：v1 只支持 deferred join（即时 inner join 要求右行先于驱动事件可见，与 within 区间冲突）",
-                    case.stream, join.window
-                ),
-            });
-        }
-
-        if !matches!(join_clause.mode, JoinMode::Inner) {
-            errors.push(ValidationError {
-                code: "VN30",
-                message: format!(
-                    "injection case '{}' 的 `join {}` 指向的规则 join 是 snapshot/asof/anti 形态，暂不支持（v1 只支持缺省 inner）",
+                    "injection case '{}' 的 `join {}` 形态不支持：只支持 deferred（inner + `within` + `emit at`）与 snapshot（无 `within`）两种；asof / anti、即时 inner（无 `emit at`）、以及 snapshot + `within` 暂不支持",
                     case.stream, join.window
                 ),
             });

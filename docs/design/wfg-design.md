@@ -758,30 +758,50 @@ hit<id: 200> for q8_monitor_new_user person_events {
 
 1. **连接键**：右行的连接键字段（`as <key>`）写成**左实体键值**——与规则 `on <left> ==
    <right>` 的右侧字段名对齐（VN30 校验能唯一匹配到该 join 子句）。
-2. **时间**：取**所属左事件的时间**。deferred 形态下这正是 `within` 下界的常见形状
-   （q8 的 `[p.timestamp, …)`），因此落在区间内。
+2. **时间**：由规则 join 的**形态**决定（§9.4 的表），用户不写时间。
 3. **其余字段**：按目标窗 schema 随机生成，再由 `use(...)` 的谓词覆盖（复用
    `build_event_fields_with_predicates`，时间字段口径因此与左事件天然一致）。
 
 断言口径不变：仍以**驱动侧实体**为单位（`hit` 必报 / `near_miss`·`miss` 必不报）；右事件
 不产生独立实体。
 
-### 9.4 边界（v1）
+### 9.4 支持的两种形态（右事件放在哪，由形态决定）
 
-- **只支持 deferred（`emit at`）形态**：`snapshot` / `asof` / `anti` 与**没有 `emit at`** 的
-  即时 inner join 都报 VN30。即时 join 要求右行在驱动事件被处理时就已可见（右事件必须更早），
-  而 `within` 下界常常就是左事件时间——两者冲突，造出来的数据会时好时坏，故明确拒绝。
+| 规则 join 形态 | 判据 | 右事件时间 | 理由 |
+|---|---|---|---|
+| **deferred** | inner + `within` + `emit at` | 与左事件**同刻** | 到期评估时右行必已在窗内（q4/q8/q9） |
+| **snapshot** | `snapshot` 且**无** `within` | 左事件**提前 1ms** | snapshot 在驱动事件被处理时查右窗，同刻右行还没进去（q3/q20）；取 1ms 而非 1ns 是为了让**毫秒精度**的下游（JSONL 的 `_timestamp`）也看得出先后 |
+
+其余形态都报 VN30：`asof` / `anti`、**没有 `emit at` 的即时 inner join**（它要求右行更早、而
+`within` 下界常就是左事件时间，两者冲突会时好时坏）、`snapshot` + `within`（WFL 语法本身也不接受）。
+
+其余边界：
+
 - **`within` 区间不做静态校验**：引擎要求 deferred join 的上界是**绝对时间表达式**
   （`bucket_end(...)` / `a.expires`），注入器侧没有求值器（引擎的 `eval_interval_bound` 是
-  `pub(crate)`），算不了。若用户把下界写成晚于左事件时间，右事件会落在区间外——后果是
-  生成期 INJ1 报「hit 实体不会触发」，属于**可见的失败**（不是静默产出）。
+  `pub(crate)`），算不了。若用户把下界写成晚于左事件时间，右事件会落在区间外——后果是生成期
+  INJ1 报「hit 实体不会触发」，属于**可见的失败**（不是静默产出）。
 - **只支持单键规则**：多键时右行连接键无法唯一确定 → 生成期报错。
-- **区间界为绝对时间表达式时不做检查**（如 `bucket_end(p.dateTime, 10s)`）：求值器在引擎侧，
-  注入器算不了，按「下界 = 左事件时间」这一常见形状处理（q8/q9 都是）。
 - `spread` 只管左簇；右事件跟随所属左事件的时间，不单独铺开。
 - 目标窗必须已在 schema 里、`use` 的字段必须属于目标窗（VN11）、在 `use` 里重复连接键报 VN12。
 
-### 9.5 落地清单
+### 9.5 未覆盖：join-then-key（nexmark q6 形态）
+
+q6 的 `match<seller:10m>` 里，**键 `seller` 不在驱动事件（bid）上，而在 join 侧（auction）**：
+引擎先 snapshot join（`b.auction == auction_events.id`）拿到 `seller`，再按该键分组。
+
+这与本节的模型差一层：这里把「用例的实体键值」同时写进**驱动侧字段**与**join 右侧字段**，
+即假设**实体键在驱动侧**。q6 需要区分两个不同的值：
+
+| 角色 | q6 的值 | 本模型 |
+|---|---|---|
+| 断言实体 | `auction.seller`（join 侧） | ✗ 不在驱动侧，无法代入 |
+| 连接键 | `auction.id` ↔ `bid.auction` | ✓（但与上面的实体是两个不同的值） |
+
+要覆盖它，需要把「实体键」与「连接键」拆成两个概念（例如在 `join … as <key>` 之外再声明实体
+取自哪一侧），并同步改 VN23 的实体推断与 INJ1/INJ2 的实体口径。**本次不做**，登记为已知缺口。
+
+### 9.6 落地清单
 
 `wfg_ast.rs`（`JoinStmt` + `InjectCase.joins`）、`wfg_parser/syntax/inject.rs`（`join` 块 +
 抽出共用的 `parse_use_group`）、`validate/syntax.rs`（VN30）、`extract.rs`
@@ -789,9 +809,12 @@ hit<id: 200> for q8_monitor_new_user person_events {
 `near_miss.rs` / `non_hit.rs`（在左事件之后补发右事件）、**`cmd_gen.rs`（oracle 调用改为带
 schemas，否则 join 规则永远出不了期望）**。
 
-测试：解析 1、VN30 3、生成 + oracle 复核 2（`datagen/tests/inject/join.rs`——配对后**真能触发
-规则**，配对错就掉到 0 条）；另有 CLI 端到端实测（q8 形态：`lint` OK、`gen` 断言 4/4 通过、
-8 条右事件的 `seller` = 左实体键值且 `_timestamp` = 左事件时间、期望告警 4 条 `origin=deferred`）。
+`extract.rs` 额外登记规则侧 join 口径（`RuleJoinInfo`：目标窗 + 右侧连接键 + 放置偏移），
+生成时按 `(目标窗, 连接键)` 与用例的 `join` 块配对后决定右事件时间。
+
+测试：解析 1、VN30 4、生成 + oracle 复核 4（deferred 与 snapshot 各 2；配对后**真能触发规则**，
+配对错或时间放错就掉到 0 条）；另有 CLI 端到端实测（q8 与 q20 两种形态：`lint` OK、`gen` 断言
+全过、右事件键与时间符合 §9.4 的表、期望告警数正确）。
 
 ## 10. 实体分布：`entity <window>.<field> zipf(...)`（**已落地**）
 

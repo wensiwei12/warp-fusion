@@ -70,6 +70,7 @@ pub(super) fn generate_hit_clusters(
             &key_overrides,
             &overrides.use_steps,
             &overrides.joins,
+            &rule_struct.joins,
             cluster_start_secs,
             window_secs,
             schemas,

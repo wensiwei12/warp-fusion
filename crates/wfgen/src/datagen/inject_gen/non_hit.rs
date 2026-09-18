@@ -169,6 +169,7 @@ fn generate_non_hit_use_step_events(
                 // 设计 §9：为一个左事件补发 `join` 块声明的右事件。
                 push_join_events(
                     &overrides.joins,
+                    &rule_struct.joins,
                     &key_overrides,
                     &ts,
                     schemas,

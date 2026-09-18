@@ -253,6 +253,73 @@ scenario s<seed=1> {
     );
 }
 
+/// VN30：`snapshot`（无 `within`）形态**放行**——右事件前挪 1ns 即可在驱动事件处理时可见
+/// （q3/q20 形状）；但 `snapshot` + `within`、以及 `asof` 仍拒绝。
+#[test]
+fn test_vn30_snapshot_join_is_supported() {
+    let schemas = vec![
+        make_schema("bid_events", vec![("auction", BaseType::Digit)]),
+        make_schema(
+            "auction_events",
+            vec![("id", BaseType::Digit), ("category", BaseType::Digit)],
+        ),
+    ];
+    let check = |join_clause: &str| {
+        let rule = format!(
+            "
+rule bid_expands {{
+    events {{ b : bid_events }}
+    on each b -> score(10)
+    {join_clause}
+    entity(digit, b.auction)
+    yield alerts(id = b.auction)
+}}"
+        );
+        let wfl = wf_lang::parse_wfl(&rule).expect("rule parse");
+        let input = "
+#[duration=10s]
+scenario s<seed=1> {
+    background { stream bid_events gen 5/s }
+    inject {
+        hit<auction: 2> for bid_expands bid_events {
+            use(auction=1) x 1
+            join auction_events as id { use(category=10) x 1 }
+        }
+    }
+}
+";
+        let wfg = parse_wfg(input).unwrap();
+        let errors = validate_wfg(&wfg, &schemas, &[wf_lang::parse_wfl(&rule).unwrap()], false);
+        (wfl, errors)
+    };
+
+    // snapshot（无 within）→ 放行
+    let (_wfl, errors) = check("join auction_events snapshot on b.auction == auction_events.id");
+    assert!(
+        !errors.iter().any(|e| e.code == "VN30"),
+        "snapshot join 应被支持：{errors:?}"
+    );
+
+    // asof → 拒绝（形态未支持）
+    let (_wfl, errors) =
+        check("join auction_events asof within 5s on b.auction == auction_events.id");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.code == "VN30" && e.message.contains("形态不支持")),
+        "asof 应报 VN30：{errors:?}"
+    );
+
+    // 即时 inner（无 emit at）→ 拒绝
+    let (_wfl, errors) = check("join auction_events within 5s on b.auction == auction_events.id");
+    assert!(
+        errors.iter().any(|e| e.code == "VN30"),
+        "无 emit at 的 inner 应报 VN30：{errors:?}"
+    );
+
+    // 占位（保持 asof 分支后的断言结构）
+}
+
 /// VN30 的字段检查落在**目标窗** schema 上；连接键由生成器写，重复声明按 VN12 报。
 #[test]
 fn test_vn30_join_fields_checked_against_target_window() {

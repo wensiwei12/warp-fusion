@@ -6,7 +6,7 @@ use wf_lang::{BaseType, FieldType, WindowSchema};
 
 use crate::datagen::field_gen::generate_field_value;
 use crate::datagen::inject_gen::extract::source_to_records;
-use crate::datagen::inject_gen::structures::{InjectUseStepOverrides, StepInfo};
+use crate::datagen::inject_gen::structures::{InjectUseStepOverrides, RuleJoinInfo, StepInfo};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::{self, WfgenReason, WfgenResult};
 use crate::wfg_ast::JoinStmt;
@@ -27,6 +27,7 @@ pub(crate) fn generate_cluster_events(
     key_overrides: &HashMap<String, serde_json::Value>,
     use_step_overrides: &[InjectUseStepOverrides],
     joins: &[JoinStmt],
+    rule_joins: &[RuleJoinInfo],
     cluster_start_secs: f64,
     window_secs: f64,
     schemas: &[WindowSchema],
@@ -40,6 +41,7 @@ pub(crate) fn generate_cluster_events(
         key_overrides,
         use_step_overrides,
         joins,
+        rule_joins,
         cluster_start_secs,
         window_secs,
         schemas,
@@ -57,6 +59,7 @@ fn generate_cluster_events_with_filter_validation(
     key_overrides: &HashMap<String, serde_json::Value>,
     use_step_overrides: &[InjectUseStepOverrides],
     joins: &[JoinStmt],
+    rule_joins: &[RuleJoinInfo],
     cluster_start_secs: f64,
     window_secs: f64,
     schemas: &[WindowSchema],
@@ -131,7 +134,7 @@ fn generate_cluster_events_with_filter_validation(
                 fields,
             });
             // 设计 §9：为一个左事件补发 `join` 块声明的右事件。
-            push_join_events(joins, key_overrides, &ts, schemas, rng, out)?;
+            push_join_events(joins, rule_joins, key_overrides, &ts, schemas, rng, out)?;
         }
 
         cumulative_offset += per_step_window;
@@ -147,6 +150,7 @@ fn generate_cluster_events_with_filter_validation(
 /// 覆盖——复用 `build_event_fields_with_predicates`，时间字段口径因此与左事件天然一致。
 pub(crate) fn push_join_events(
     joins: &[JoinStmt],
+    rule_joins: &[RuleJoinInfo],
     key_overrides: &HashMap<String, serde_json::Value>,
     left_ts: &DateTime<Utc>,
     schemas: &[WindowSchema],
@@ -176,6 +180,21 @@ pub(crate) fn push_join_events(
 
     let no_filters: HashMap<String, serde_json::Value> = HashMap::new();
     for join in joins {
+        // 规则侧口径：决定右事件相对左事件的偏移（deferred 同刻 / snapshot 前挪 1ns）。
+        let info = rule_joins
+            .iter()
+            .find(|info| info.window == join.window && info.right_field == join.key_field)
+            .ok_or_else(|| {
+                error::error(
+                    WfgenReason::Validation,
+                    format!(
+                        "join 块 `join {} as {}` 在规则里找不到匹配的 join 子句（校验期应已由 VN30 拦下）",
+                        join.window, join.key_field
+                    ),
+                )
+            })?;
+        let right_ts = *left_ts + ChronoDuration::nanoseconds(info.offset_nanos);
+
         let schema = schemas
             .iter()
             .find(|s| s.name == join.window)
@@ -203,13 +222,13 @@ pub(crate) fn push_join_events(
                     &right_keys,
                     &no_filters,
                     predicates,
-                    left_ts,
+                    &right_ts,
                     rng,
                 );
                 out.push(GenEvent {
                     stream_name: stream_name.clone(),
                     window_name: join.window.clone(),
-                    timestamp: *left_ts,
+                    timestamp: right_ts,
                     fields,
                 });
             }

@@ -135,12 +135,15 @@ hit<id: 200> for q8_monitor_new_user person_events {   // 左（驱动）侧
 
 - **连接键**：`as seller` 的 `seller` 会被写成**左实体键值**——名字要和规则
   `on p.id == auction_events.seller` 的**右侧字段**一致（VN30 校验能唯一匹配到该 join 子句）。
-- **时间**：取所属左事件的时间（deferred 形态下这正是 `within` 下界的常见形状）。
+- **时间**：由规则 join 的形态决定 —— `deferred`（inner + `within` + `emit at`）放**同刻**；
+  `snapshot`（无 `within`）放**提前 1ms**（点查在驱动事件处理时就要能看见右行）。
 - 断言口径不变：仍以**驱动侧实体**为单位（`hit` 必报、`near_miss` / `miss` 必不报）。
-- v1 边界：只支持 **deferred**（规则写了 `emit at`）**且缺省 inner** 形态的 join、只支持单键
-  规则；`snapshot` / `asof` / `anti`、没有 `emit at` 的即时 join、多键规则都会明确报错。
-  若规则的 `within` 下界晚于左事件时间，右事件会落在区间外——生成期 INJ1 会报
+- 支持两种形态：**deferred**（`inner` + `within` + `emit at`）与 **snapshot**（无 `within`）。
+  其余（`asof` / `anti`、没有 `emit at` 的即时 inner）明确报错；多键规则也不支持。
+- 若规则的 `within` 下界晚于左事件时间，右事件会落在区间外——生成期 INJ1 会报
   「hit 实体不会触发」（可见的失败，不会静默出数据）。
+- **已知缺口**：键取自 join 侧的 "join-then-key" 规则（如 `match<seller:…>` 而 `seller` 在
+  `auction` 上）还不支持——本语法假设实体键在驱动事件上。
 
 ## 背景实体分布：`entity(...)`
 
