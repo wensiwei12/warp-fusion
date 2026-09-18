@@ -171,9 +171,15 @@ where
             // 跨桶边界事件才 scan（避免每事件全扫实例：q4 10m 162s → 秒级）。
             // Hop 窗口在 slide 对齐时刻收口（expire = w_start + size 亦为 slide
             // 边界），跨 slide 边界才 scan 同样安全。
+            // `Fixed(0)`（空 match_plan / stats 占位）没有桶可言：视作 None，
+            // 否则下面的 `div_euclid(dur)` 会 panic。
             fixed_bucket_nanos: match plan.match_plan.window_spec {
-                wf_lang::plan::WindowSpec::Fixed(dur) => Some(dur.as_nanos() as i64),
-                wf_lang::plan::WindowSpec::Hop { slide, .. } => Some(slide.as_nanos() as i64),
+                wf_lang::plan::WindowSpec::Fixed(dur) if !dur.is_zero() => {
+                    Some(dur.as_nanos() as i64)
+                }
+                wf_lang::plan::WindowSpec::Hop { slide, .. } if !slide.is_zero() => {
+                    Some(slide.as_nanos() as i64)
+                }
                 _ => None,
             },
             // Hop 扫描用无界预算（每 slide 边界恰一个窗口到期，收口原子）。

@@ -60,7 +60,7 @@ pub(super) fn generate_near_miss_clusters(
             "nm",
             schemas,
             &rule_struct.steps,
-            overrides.entity_field.as_deref(),
+            rule_struct.effective_entity_field(overrides.entity_field.as_deref()),
         );
         entities.record_entity(
             case,

@@ -191,6 +191,10 @@ hit<sip: 20> for sdm_rule sdm_event {
   这是约束而不是断言误报）。
 - **实体键空间按用例分段**：每个用例独占一段实体 id（`hit`/`near_miss`/`miss` 之间不重叠），
   否则同一实体既被声明为 `hit` 又被声明为 `near_miss`，两个模式的口径互相矛盾。
+- **`on each` 规则可注入**：该规则没有窗口与阈值——命中的**一条**事件即产出告警，故断言的
+  步骤阈值取 1；`hit` = 注入事件满足 each 过滤条件，`near_miss` / `miss` = 一个都不许命中
+  （两者在 `on each` 上**同义**，设计上没有"接近但未达阈值"可言）。实体字段可省：从
+  `entity(...)` 的单一字段推断（§3.7 第三行）。
 
 ### 3.3 值与值模板（P2）
 
@@ -240,7 +244,7 @@ hit<sip: 20> for sdm_rule sdm_event {
 |---|---|
 | `match<sip:5m>`（单 key） | `sip` |
 | `match<sip,dport:5m>`（多 key） | 全部 key 各生成唯一值（实体 = key 元组） |
-| `on each s` + `entity(<type>, s.event_id)` | `event_id` |
+| `on each s` + `entity(<type>, s.event_id)` | `event_id`（注入侧同口径推断，见 §3.2） |
 
 - 显式给出时才用 `hit<sip: 500>`；显式值应与推断结果一致。
 - "显式与推断不一致"（VN23）与"字段不在 schema"（VN22）**未实现**（§7.2）。
@@ -328,6 +332,10 @@ VN20 旧注入语法已移除：`hit<N%>` 里的 N 是 stream 配额的百分比
 | `examples/avg/dns_tunnel` | 100/s × 10m = 60000 | hit | 30 | 3 | 6000 | 18000 | `hit<sip: 6000>` + `x 3` |
 | `examples/sum/data_exfil` | 100/s × 15m = 90000 | hit | 25 | 4 | 5625 | 22500 | `hit<sip: 5625>` + `x 4` |
 | `examples/conv/top_scanners` | 40/s × 2h = 288000 | hit | 25 | 5 | 14400 | 72000 | `hit<sip: 14400>` + `x 5` |
+| `nginx_log_stats/nginx_access_quick` | 100/s × 2m = 12000 | hit | 10 | 4 | 300 | 1200 | `hit<300>` + `x 4` |
+| | | miss | 90 | 1 | 10800 | 10800 | `miss<10800>` + `x 1` |
+| `nginx_log_stats/live/nginx_access_live` | 100/s × 2h = 720000 | hit | 10 | 4 | 18000 | 72000 | `hit<18000>` + `x 4` |
+| | | miss | 90 | 1 | 648000 | 648000 | `miss<648000>` + `x 1` |
 
 **背景速率的折算**（迁移时可选，用于让新总条数贴近旧总条数）：
 
@@ -350,6 +358,13 @@ VN20 旧注入语法已移除：`hit<N%>` 里的 N 是 stream 配额的百分比
     → `hit<2>`；`near_miss` 由 `x 3`（达到 `on close` 的 `distinct >= 3`）→ `x 2`（达不到）。
   - `examples/sum/data_exfil`：`near_miss` 的 `bytes` 由 `12000000` → `9000000`
     （45MB < 50MB 关闭阈值；原值 60MB 靠 `on close` 触发，与 `near_miss` 不得报警冲突）。
+- 背景速率**不折**：外部语料迁移统一按“保留原 `gen` 速率”处理（新总条数 = 背景配额 + 注入，
+  故 ≈ 旧总量的两倍，如 `nginx_access_quick` 12000 → 24000）。需要贴回旧总量时再按上面的
+  `rate_new` 折一次（对 nginx 两个用例会折成 `gen 0/s`）。
+- 迁移脚本曾把单行 `traffic { stream … }` 压成空的 `background {`（块未闭合，加载即报
+  `Expected('stream' in background block)`）：`wf-rules/…/ssh_brute_quick.wfg` 与
+  `wf-examples/core/meta_disable/…/ssh_brute_quick.wfg` 已修复。迁移后**必须**用 `wfgen lint`
+  + `wfgen gen` 逐文件过一遍（带 INJ 断言），不能只比对新旧关键字。
 
 ## 6. 运行闭环
 
@@ -388,6 +403,8 @@ wfg + wfs + wfl
 - `use from "file"` 的值文件解析（`loader::resolve_inject_files`）：相对 `.wfg` 目录解析路径，
   支持顶层 object / object 数组 / NDJSON，数组与 NDJSON 按事件序号循环取用；`gen` / `lint` /
   `bench` / `send` / `stream` 都经 `loader::load_from_uses` 走同一条解析。
+- `on each` 规则作为注入目标：别名取自 `each_plan.alias`，注入步骤由该绑定合成（阈值 1、
+  过滤条件取 bind filter + each filter 的等值约束），实体字段可从 `entity(...)` 推断。
 - 结构化列与引擎契约对齐：wfgen 写 Arrow 时对 `object` / `array` / `array/<base>` 字段统一用
   **JSON 文本的 Utf8 列 + `wf.wfl.field_type` metadata**（常量取自 `wf-engine`，不复制字符串）。
   引擎只在带该 metadata 时把列值解析成 `Value::Object` / `Value::Array`，否则一律 `Value::Str`
@@ -397,6 +414,10 @@ wfg + wfs + wfl
   同一条链的 oracle 侧同步收口：`GenEvent` → 引擎 `Value` 的转换**递归保留** object / array
   （旧实现 `_ => None` 把结构化字段整个丢掉，读嵌套字段的规则在 oracle 侧恒不命中）。
 - 14 个仓内语料在断言下**全部通过**；其中 2 个按断言口径调整过（§5.3）。
+- 外部语料迁移（P3）：`wf-rules`（4）· `wf-examples`（11）· `wf-conf-example`（1）共 **16 个**
+  tracked `.wfg` 已迁到新语法并逐文件验证——`wfgen lint` 16/16 OK、`wfgen gen` 带 INJ1/INJ2
+  断言 16/16 通过（其中 `performance/rule_scale_test` 是纯背景场景，验证覆盖“加载 + 生成”）。
+  包含本仓外修复的 2 个迁移时写坏的文件（§5.3）。
 
 ### 7.2 未落地 / 未决
 
@@ -405,9 +426,8 @@ wfg + wfs + wfl
 | `replay STREAM { use from "f" }` 照单发货 | 未实现 |
 | `without(...)` 步骤（取代旧 `not(...) within(...)`） | 未实现 |
 | 时间**均匀**铺开 | 部分：`spread` 已可写并覆盖窗口长度，铺开策略仍是"随机簇起点 + 窗口内铺开" |
-| `on each` 规则作为注入目标 | 未实现：`extract_rule_structure` 只遍历 `match_plan.event_steps`，对 `on each` 规则报 `inject stream '…' cannot be mapped to any event step bind`（实测） |
 | VN22 / VN23（实体字段存在性与推断一致性）、VN24（事件组数 > 步骤数）、VN26（replay 文件） | 未实现；事件组数超限目前是生成期的 `exceeds rule step count` |
-| 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | 未迁移 |
+| 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | **已落地**（§7.1；16/16 `lint` + `gen` 断言通过） |
 | 文档（getting-started / cli / wfadm 模板说明 / CHANGELOG） | 未同步 |
 
 未决（不阻塞实现）：

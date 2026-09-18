@@ -137,7 +137,7 @@ fn generate_non_hit_use_step_events(
                     "miss",
                     schemas,
                     steps,
-                    overrides.entity_field.as_deref(),
+                    rule_struct.effective_entity_field(overrides.entity_field.as_deref()),
                 );
                 let mut entity_step_counts = vec![0_u64; steps.len()];
                 entity_step_counts[step_idx] = 1;

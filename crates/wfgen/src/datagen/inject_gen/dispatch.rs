@@ -31,24 +31,28 @@ pub(super) fn build_alias_map_for_syntax_case(
         })?;
 
     let mut bind_to_scenario = HashMap::new();
+    let map_bind = |bind_alias: &str, bind_to_scenario: &mut HashMap<String, (String, String)>| {
+        let Some(bind) = rule_plan.binds.iter().find(|bind| bind.alias == bind_alias) else {
+            return;
+        };
+        if bind.window != stream_block.window {
+            return;
+        }
+        bind_to_scenario
+            .entry(bind_alias.to_string())
+            .or_insert_with(|| (stream_block.alias.clone(), stream_block.window.clone()));
+    };
 
     for step_plan in &rule_plan.match_plan.event_steps {
         for branch in &step_plan.branches {
-            let bind_alias = &branch.source;
-            let Some(bind) = rule_plan
-                .binds
-                .iter()
-                .find(|bind| bind.alias == *bind_alias)
-            else {
-                continue;
-            };
-            if bind.window != stream_block.window {
-                continue;
-            }
-            bind_to_scenario
-                .entry(bind_alias.clone())
-                .or_insert_with(|| (stream_block.alias.clone(), stream_block.window.clone()));
+            map_bind(&branch.source, &mut bind_to_scenario);
         }
+    }
+
+    // `on each` 规则没有 match 步骤（`match_plan` 是空的 `Fixed(0)`）：别名来自
+    // `each_plan.alias`（设计 §3.7：`on each s` + `entity(…, s.event_id)` 可被注入）。
+    if let Some(each) = &rule_plan.each_plan {
+        map_bind(&each.alias, &mut bind_to_scenario);
     }
 
     if bind_to_scenario.is_empty() {

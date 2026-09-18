@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use wf_lang::ast::{BinOp, Expr, FieldRef};
+use wf_lang::ast::{BinOp, Expr, FieldRef, Measure};
 use wf_lang::plan::RulePlan;
 use wf_lang::plan::WindowSpec;
 
@@ -69,6 +69,33 @@ pub(super) fn extract_rule_structure(
             window_name: window_name.clone(),
             measure: branch.agg.measure,
             threshold,
+            filter_overrides,
+        });
+    }
+
+    // `on each` 规则：没有 match 步骤，注入的"步骤"就是该规则的 each 绑定本身。
+    // 无阈值可言——命中的**一条**事件即产出告警（设计 §3.2：断言以实体为单位，
+    // 任一路径产出告警即算报警）。
+    if steps.is_empty()
+        && let Some(each) = &rule_plan.each_plan
+        && let Some((scenario_alias, window_name)) = alias_map.bind_to_scenario.get(&each.alias)
+    {
+        let mut filter_overrides = rule_plan
+            .binds
+            .iter()
+            .find(|b| b.alias == each.alias)
+            .and_then(|b| b.filter.as_ref())
+            .map(extract_filter_constraints)
+            .unwrap_or_default();
+        if let Some(filter) = &each.filter {
+            filter_overrides.extend(extract_filter_constraints(filter));
+        }
+        steps.push(StepInfo {
+            bind_alias: each.alias.clone(),
+            scenario_alias: scenario_alias.clone(),
+            window_name: window_name.clone(),
+            measure: Measure::Count,
+            threshold: 1,
             filter_overrides,
         });
     }

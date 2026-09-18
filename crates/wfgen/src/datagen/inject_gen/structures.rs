@@ -127,6 +127,22 @@ pub(super) struct RuleStructure {
     pub(super) entity_id_field: Option<String>,
 }
 
+impl RuleStructure {
+    /// 生成器用的实体键字段：用例显式写的优先；`on each` 形态没有 match keys，
+    /// 用 `entity(...)` 的单一字段推断（设计 §3.7 第三行）。match 规则的推断仍由
+    /// [`RuleStructure::keys`] 承担（多 key = 实体是 key 元组，不在这里代入）。
+    pub(super) fn effective_entity_field<'a>(
+        &'a self,
+        explicit: Option<&'a str>,
+    ) -> Option<&'a str> {
+        match explicit {
+            Some(field) => Some(field),
+            None if self.keys.is_empty() => self.entity_id_field.as_deref(),
+            None => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 #[allow(dead_code)]
 pub(super) struct StepInfo {
