@@ -40,6 +40,18 @@ pub fn parse_wfg(input: &str) -> WfgenResult<WfgFile> {
     Ok(result)
 }
 
+/// 覆盖场景时长（`wfgen gen --duration`）。
+///
+/// 必须在**校验之前**调用：`spread` / `without ... within` / `replay` 跨度的 VN25 都按场景
+/// 时长判定，覆盖后应按**生效时长**判定；同时 `scenario.total`（背景条数的推导基数，
+/// `datagen` 用它决定每流条数）也要跟着重算——只改 `duration` 会让背景仍按文件里的旧时长生成。
+pub fn override_duration(wfg: &mut WfgFile, duration: std::time::Duration) {
+    wfg.scenario.time_clause.duration = duration;
+    if let Some(syntax) = &wfg.syntax {
+        wfg.scenario.total = syntax::derive_total(&syntax.background, duration);
+    }
+}
+
 fn wfg_file(input: &mut &str) -> ModalResult<WfgFile> {
     let mut uses = Vec::new();
     loop {

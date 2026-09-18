@@ -33,6 +33,7 @@ fn gen_args(out: PathBuf, wfl: Vec<PathBuf>, no_wfl: bool, no_oracle: bool) -> c
         no_oracle,
         send: false,
         addr: "127.0.0.1:1".to_string(),
+        duration: None,
     }
 }
 

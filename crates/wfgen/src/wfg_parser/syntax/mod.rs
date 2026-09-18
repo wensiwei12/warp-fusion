@@ -209,7 +209,7 @@ fn rate_from_expr(rate_expr: &RateExpr) -> Rate {
 }
 
 /// 背景条数的推导基数：`Σ stream 速率 × duration`（`--duration` 覆盖后要重算）。
-fn derive_total(background: &BackgroundBlock, duration: Duration) -> u64 {
+pub(super) fn derive_total(background: &BackgroundBlock, duration: Duration) -> u64 {
     let eps_sum: f64 = background.streams.iter().map(|s| s.rate.approx_eps()).sum();
     if eps_sum <= 0.0 {
         return 1;

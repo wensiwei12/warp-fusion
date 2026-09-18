@@ -2,8 +2,35 @@ use std::path::PathBuf;
 
 use orion_error::conversion::SourceErr;
 
-use crate::error::{WfgenReason, WfgenResult, WfgenStructExt};
+use crate::error::{self, WfgenReason, WfgenResult, WfgenStructExt};
 use crate::prelude;
+
+/// 解析命令行里的时长字面量：与 `#[duration=…]` **同一套写法**（`500ms` / `30s` / `10m` /
+/// `2h` / `1d`）。
+///
+/// 裸数字不接受（`10` 是秒还是分钟？）——与注解口径保持一致，报错时给出正确写法。
+pub fn parse_duration_literal(s: &str) -> WfgenResult<std::time::Duration> {
+    let original = s.trim();
+    if original.is_empty() {
+        return error::fail(WfgenReason::Validation, "empty duration literal");
+    }
+    let mut rest = original;
+    let duration = wf_lang::parse_utils::duration_value(&mut rest).map_err(|_| {
+        error::error(
+            WfgenReason::Validation,
+            format!(
+                "invalid duration literal '{original}': expected e.g. `30s`, `10m`, `2h`, `1d`"
+            ),
+        )
+    })?;
+    if !rest.is_empty() {
+        return error::fail(
+            WfgenReason::Validation,
+            format!("invalid duration literal '{original}': unexpected trailing `{rest}`"),
+        );
+    }
+    Ok(duration)
+}
 
 pub fn load_ws_files(paths: &[PathBuf]) -> WfgenResult<Vec<wf_lang::WindowSchema>> {
     let mut schemas = Vec::new();

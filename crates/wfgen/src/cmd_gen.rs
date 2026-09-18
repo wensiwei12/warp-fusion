@@ -62,6 +62,13 @@ pub struct Args {
     #[arg(long)]
     pub send: bool,
 
+    /// Override the scenario duration (`#[duration=…]`), e.g. `30s` / `10m`.
+    ///
+    /// 用于从同一场景快速生成更短/更长的样本。校验按**生效时长**跑，所以
+    /// `spread` / `without ... within` / `replay` 跨度仍需 ≤ 该值（VN25）。
+    #[arg(long)]
+    pub duration: Option<String>,
+
     /// Runtime TCP address used with --send, e.g. 127.0.0.1:9800
     #[arg(long, default_value = "127.0.0.1:9800")]
     pub addr: String,
@@ -78,6 +85,7 @@ pub async fn run(args: Args) -> WfgenResult<()> {
         no_oracle,
         send,
         addr,
+        duration,
     } = args;
     // At least one sink must be requested: write files via --out, stream via
     // --send, or both. Having neither is a usage error, not a silent no-op.
@@ -108,6 +116,17 @@ pub async fn run(args: Args) -> WfgenResult<()> {
         format!("reading .wfg file: {}", scenario.display()),
     )?;
     let mut wfg = parse_wfg(&wfg_content)?;
+    // `--duration` 覆盖场景时长。放在**校验之前**：VN25（`spread` / `within` / `replay`
+    // 跨度 ≤ 场景时长）要按生效时长判定，`scenario.total` 也要跟着重算。
+    if let Some(literal) = &duration {
+        let overridden = crate::cmd_helpers::parse_duration_literal(literal)?;
+        println!(
+            "Duration override: {}s -> {}s",
+            wfg.scenario.time_clause.duration.as_secs_f64(),
+            overridden.as_secs_f64()
+        );
+        crate::wfg_parser::override_duration(&mut wfg, overridden);
+    }
     let output_case = scenario
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -360,6 +379,7 @@ mod tests {
             no_oracle: false,
             send: false,
             addr: "127.0.0.1:1".to_string(),
+            duration: None,
         })
         .await;
         let err = err.unwrap_err();
