@@ -8,7 +8,6 @@ use crate::datagen::field_gen::generate_field_value;
 use crate::datagen::inject_gen::structures::{InjectUseStepOverrides, StepInfo};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::{self, WfgenReason, WfgenResult};
-use crate::wfg_ast::StreamBlock;
 
 use super::plan::*;
 
@@ -28,7 +27,6 @@ pub(crate) fn generate_cluster_events(
     cluster_start_secs: f64,
     window_secs: f64,
     schemas: &[WindowSchema],
-    scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     rng: &mut StdRng,
     out: &mut Vec<GenEvent>,
@@ -41,7 +39,6 @@ pub(crate) fn generate_cluster_events(
         cluster_start_secs,
         window_secs,
         schemas,
-        scenario_streams,
         start,
         rng,
         out,
@@ -58,7 +55,6 @@ fn generate_cluster_events_with_filter_validation(
     cluster_start_secs: f64,
     window_secs: f64,
     schemas: &[WindowSchema],
-    scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     rng: &mut StdRng,
     out: &mut Vec<GenEvent>,
@@ -95,17 +91,6 @@ fn generate_cluster_events_with_filter_validation(
                 )
             })?;
 
-        let stream_block = scenario_streams
-            .iter()
-            .find(|s| s.alias == step.scenario_alias)
-            .unwrap();
-
-        let overrides_map: HashMap<&str, &crate::wfg_ast::GenExpr> = stream_block
-            .overrides
-            .iter()
-            .map(|o| (o.field_name.as_str(), &o.gen_expr))
-            .collect();
-
         let empty_predicates: HashMap<String, serde_json::Value> = HashMap::new();
         let step_event_predicates = step_predicate_overrides.get(step_idx);
 
@@ -120,7 +105,6 @@ fn generate_cluster_events_with_filter_validation(
 
             let fields = build_event_fields_with_predicates(
                 schema,
-                &overrides_map,
                 key_overrides,
                 &step.filter_overrides,
                 per_event_predicates,
@@ -193,7 +177,6 @@ pub(crate) fn map_use_predicates_to_rule_steps(
 /// Build event fields with key, filter, and predicate overrides applied.
 pub(crate) fn build_event_fields_with_predicates(
     schema: &WindowSchema,
-    overrides_map: &HashMap<&str, &crate::wfg_ast::GenExpr>,
     key_overrides: &HashMap<String, serde_json::Value>,
     filter_overrides: &HashMap<String, serde_json::Value>,
     predicate_overrides: &HashMap<String, serde_json::Value>,
@@ -223,46 +206,19 @@ pub(crate) fn build_event_fields_with_predicates(
 
         // 4. Time field
         if matches!(&field_def.field_type, FieldType::Base(BaseType::Time)) {
-            let override_expr = overrides_map.get(field_def.name.as_str()).copied();
-            if override_expr.is_none()
-                || matches!(override_expr, Some(crate::wfg_ast::GenExpr::GenFunc { name, .. }) if name == "timestamp")
-            {
-                fields.insert(
-                    field_def.name.clone(),
-                    serde_json::json!(ts.timestamp_nanos_opt().unwrap_or(0)),
-                );
-                continue;
-            }
+            fields.insert(
+                field_def.name.clone(),
+                serde_json::json!(ts.timestamp_nanos_opt().unwrap_or(0)),
+            );
+            continue;
         }
 
-        // 5. Normal field with possible stream override
-        let override_expr = overrides_map.get(field_def.name.as_str()).copied();
-        let value = generate_field_value(&field_def.field_type, override_expr, rng);
+        // 5. Normal field：按类型生成随机值
+        let value = generate_field_value(&field_def.field_type, rng);
         fields.insert(field_def.name.clone(), value);
     }
 
     fields
-}
-
-/// Build event fields with key and filter overrides applied.
-#[allow(dead_code)]
-pub(crate) fn build_event_fields(
-    schema: &WindowSchema,
-    overrides_map: &HashMap<&str, &crate::wfg_ast::GenExpr>,
-    key_overrides: &HashMap<String, serde_json::Value>,
-    filter_overrides: &HashMap<String, serde_json::Value>,
-    ts: &DateTime<Utc>,
-    rng: &mut StdRng,
-) -> serde_json::Map<String, serde_json::Value> {
-    build_event_fields_with_predicates(
-        schema,
-        overrides_map,
-        key_overrides,
-        filter_overrides,
-        &HashMap::new(),
-        ts,
-        rng,
-    )
 }
 
 /// Generate unique key values for a cluster entity.

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use crate::wfg_ast::InjectCase;
 use std::time::Duration;
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -12,7 +12,6 @@ use super::helpers::{
 use super::structures::{InjectEntities, InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::{self, WfgenReason, WfgenResult};
-use crate::wfg_ast::{InjectCase, StreamBlock};
 
 /// `miss` 用例：条数就是 `use ... x N`，每个实体一条独立键 → 永远不成簇、不触发规则。
 #[allow(clippy::too_many_arguments)]
@@ -21,7 +20,6 @@ pub(super) fn generate_non_hit_events(
     rule_struct: &RuleStructure,
     entity_base: u64,
     schemas: &[WindowSchema],
-    scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     duration: &Duration,
     rng: &mut StdRng,
@@ -39,7 +37,6 @@ pub(super) fn generate_non_hit_events(
         rule_struct,
         entity_base,
         schemas,
-        scenario_streams,
         start,
         duration,
         rng,
@@ -54,7 +51,6 @@ fn generate_non_hit_use_step_events(
     rule_struct: &RuleStructure,
     entity_base: u64,
     schemas: &[WindowSchema],
-    scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     duration: &Duration,
     rng: &mut StdRng,
@@ -106,17 +102,6 @@ fn generate_non_hit_use_step_events(
                     )
                 })?;
 
-            let stream_block = scenario_streams
-                .iter()
-                .find(|s| s.alias == step.scenario_alias)
-                .unwrap();
-
-            let overrides_map: HashMap<&str, &crate::wfg_ast::GenExpr> = stream_block
-                .overrides
-                .iter()
-                .map(|o| (o.field_name.as_str(), &o.gen_expr))
-                .collect();
-
             let records = step_records[step_idx].as_ref().ok_or_else(|| {
                 error::error(
                     WfgenReason::Validation,
@@ -162,7 +147,6 @@ fn generate_non_hit_use_step_events(
                 let predicates = &records[event_in_step as usize % records.len()];
                 let fields = build_event_fields_with_predicates(
                     schema,
-                    &overrides_map,
                     &key_overrides,
                     &step.filter_overrides,
                     predicates,

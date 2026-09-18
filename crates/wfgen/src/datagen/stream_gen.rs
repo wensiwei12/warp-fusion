@@ -1,11 +1,9 @@
-use std::collections::HashMap;
-
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rand::rngs::StdRng;
 use serde_json::Value;
 use wf_lang::{BaseType, FieldType, WindowSchema};
 
-use crate::wfg_ast::{GenExpr, StreamBlock};
+use crate::wfg_ast::StreamBlock;
 
 use super::field_gen::generate_field_value;
 
@@ -38,13 +36,6 @@ pub fn generate_stream_events(
         .cloned()
         .unwrap_or_else(|| schema.name.clone());
 
-    // Build field override lookup
-    let overrides: HashMap<&str, &GenExpr> = stream
-        .overrides
-        .iter()
-        .map(|o| (o.field_name.as_str(), &o.gen_expr))
-        .collect();
-
     let duration_nanos = duration.as_nanos() as i64;
     let interval = if event_count > 1 {
         duration_nanos / (event_count as i64)
@@ -58,13 +49,8 @@ pub fn generate_stream_events(
         let mut fields = serde_json::Map::new();
 
         for field_def in &schema.fields {
-            let override_expr = overrides.get(field_def.name.as_str()).copied();
-
             // For Time fields, set the timestamp
-            if matches!(&field_def.field_type, FieldType::Base(BaseType::Time))
-                && (override_expr.is_none()
-                    || matches!(override_expr, Some(GenExpr::GenFunc { name, .. }) if name == "timestamp"))
-            {
+            if matches!(&field_def.field_type, FieldType::Base(BaseType::Time)) {
                 fields.insert(
                     field_def.name.clone(),
                     serde_json::json!(ts.timestamp_nanos_opt().unwrap_or(0)),
@@ -72,7 +58,7 @@ pub fn generate_stream_events(
                 continue;
             }
 
-            let value = generate_field_value(&field_def.field_type, override_expr, rng);
+            let value = generate_field_value(&field_def.field_type, rng);
             fields.insert(field_def.name.clone(), value);
         }
 

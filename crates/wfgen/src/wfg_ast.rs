@@ -298,59 +298,14 @@ impl Rate {
 // Stream
 // ---------------------------------------------------------------------------
 
-/// Stream declaration.
-///
-/// Supported forms:
-/// - `stream ALIAS : WINDOW RATE { field_override* }` (legacy)
-/// - `stream ALIAS from WINDOW rate RATE { field_override* }` (readable)
+/// Stream declaration —— 由 `background { stream ALIAS gen RATE }` 派生
+/// （`derive_legacy_streams`），`datagen` 按 `rate × duration` 出背景流量。
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct StreamBlock {
     pub alias: String,
     pub window: String,
     pub rate: Rate,
-    pub overrides: Vec<FieldOverride>,
-}
-
-/// `FIELD_NAME = gen_expr`
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct FieldOverride {
-    pub field_name: String,
-    pub gen_expr: GenExpr,
-}
-
-/// Generator expression for a field override.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum GenExpr {
-    StringLit(String),
-    NumberLit(f64),
-    BoolLit(bool),
-    GenFunc { name: String, args: Vec<GenArg> },
-}
-
-/// A gen function argument, optionally named.
-///
-/// Supports both positional `ipv4(500)` and named `ipv4(pool: 500)` syntax.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct GenArg {
-    pub name: Option<String>,
-    pub value: GenExpr,
-}
-
-impl GenArg {
-    pub fn positional(value: GenExpr) -> Self {
-        Self { name: None, value }
-    }
-
-    pub fn named(name: impl Into<String>, value: GenExpr) -> Self {
-        Self {
-            name: Some(name.into()),
-            value,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

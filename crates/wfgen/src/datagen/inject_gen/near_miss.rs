@@ -1,3 +1,4 @@
+use crate::wfg_ast::InjectCase;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -11,7 +12,6 @@ use super::helpers::{
 use super::structures::{InjectEntities, InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::WfgenResult;
-use crate::wfg_ast::{InjectCase, StreamBlock};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn generate_near_miss_clusters(
@@ -19,7 +19,6 @@ pub(super) fn generate_near_miss_clusters(
     rule_struct: &RuleStructure,
     entity_base: u64,
     schemas: &[WindowSchema],
-    scenario_streams: &[StreamBlock],
     start: &DateTime<Utc>,
     duration: &Duration,
     rng: &mut StdRng,
@@ -81,7 +80,6 @@ pub(super) fn generate_near_miss_clusters(
             cluster_start_secs,
             window_secs,
             schemas,
-            scenario_streams,
             start,
             rng,
             &mut events,

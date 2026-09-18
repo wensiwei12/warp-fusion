@@ -67,7 +67,6 @@ pub fn generate_inject_events(
                 &rule_struct,
                 entity_base,
                 schemas,
-                &scenario.streams,
                 start,
                 duration,
                 rng,

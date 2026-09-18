@@ -165,7 +165,6 @@ fn derive_legacy_streams(background: &BackgroundBlock) -> Vec<StreamBlock> {
             alias: s.stream.clone(),
             window: s.stream.clone(),
             rate: rate_from_expr(&s.rate),
-            overrides: Vec::new(),
         })
         .collect()
 }
