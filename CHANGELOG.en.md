@@ -3,6 +3,52 @@
 This file records user-facing changes to `wfusion` / `wfl` / `wfgen` / `wfadm`.
 Internal implementation details, dependency alignment, and test counts are not covered here.
 
+## [0.7.0]
+
+The `.wfg` scenario DSL injection syntax is rewritten (**breaking** — existing scenarios must be rewritten), generation-time hard assertions are added, and the engine is aligned to wp-reactor 2.1.0.
+
+### Injection syntax (breaking)
+
+Counts are explicit now: both the entity count and the per-entity count are written in the case (total events = background quota + injected). Old spellings fail at load time with the target spelling in the message.
+
+| Old | New |
+|---|---|
+| `hit<20%>` | `hit<sip: 500>` + `use(...) x 12` |
+| `traffic { ... }` | `background { ... }` |
+| `injection { ... }` | `inject { ... }` |
+| `use(...) with(N)` | `use(...) x N` |
+| `<field> seq { ... }` | removed -- the entity field goes in the case header (inferred from the rule when omitted) |
+| `not(...) within(...)` | `without(preds) [within D]` -- no count, no step slot |
+| `expect { ... }` | removed -- expectations are carried by the mode `hit` / `near_miss` / `miss` |
+
+`without(...)` declares "this entity's window must contain no matching event"; `use from "file"` now works (resolved relative to the `.wfg`, supporting a top-level object / array / NDJSON).
+
+### Added
+
+- **Generation-time hard assertions INJ1 / INJ2**: every `hit` entity must alert and every `near_miss` / `miss` entity must not; failures name the entity (instead of a single percentage line from `verify`).
+- `on each` rules can be injection targets.
+- object / array fields from `use({...})` / `use from` are parsed as structured values by the engine (previously strings, so rules reading nested fields never matched).
+- New guide `docs/useage/scenarios.md` (including the `VN` / `SC` / `SV` / `INJ` validation-code families); the `wfadm init` templates and example scenarios are migrated to the new syntax.
+
+New validation codes (reported at load time by `lint` / `gen`):
+
+| Code | Trigger |
+|---|---|
+| VN22 | an explicit entity field is not in the stream schema |
+| VN23 | an explicit entity field disagrees with the rule-inferred one |
+| VN24 | the number of `use` groups exceeds the rule's event steps |
+| VN25 | `spread` / `without ... within` exceeds `#[duration]` |
+
+### Fixed
+
+- `array/<base>` fields (e.g. `array/digit`) no longer degrade and lose their array structure and values.
+- Structured fields are no longer dropped on the assertion side, where expected files disagreed with the actual output.
+
+### Engine (aligned with wp-reactor 2.1.0)
+
+- **Online behavioral baseline detection**: real-time `judge` (against the last K closed windows, `|z| > 3`) and periodic `detect` (against a same-phase historical profile, for magnitude drift); new rule-side built-ins `baseline_dev` / `sumsq` / `phase_bucket`.
+- External feed refresh is more consistent (configuration and usage unchanged); a malformed feed SQL variable config now fails **at startup** instead of at the first refresh; fixed an occasional join degradation when refresh races with dynamic join configuration.
+
 ## [0.6.3]
 
 ### Fixed

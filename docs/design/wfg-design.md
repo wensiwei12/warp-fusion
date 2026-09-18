@@ -334,6 +334,17 @@ VN25（`within` ≤ `#[duration]`）。
 
 ### 4.1 校验期（`wfgen lint` / `gen` 加载阶段）
 
+码前缀按**校验域**分族（族内编号递增，删除的旧号不复用）：
+
+| 族 | 管什么 |
+|---|---|
+| `VN` | `.wfg` 的语法与注入语义（本节的表） |
+| `SC` | stream 与规则 / schema 的绑定关系 |
+| `SV` | 场景基础值、字段类型与 oracle 参数 |
+| `INJ` | **生成期**断言（§4.2，不属校验期） |
+
+下表为 `VN` 族：
+
 | 码 | 触发 | 消息要点 |
 |---|---|---|
 | VN1 | `background` 无 stream | `background block must contain at least one stream` |
@@ -355,8 +366,8 @@ VN25（`within` ≤ `#[duration]`）。
 `without(...)` 的谓词与 `use(...)` 共用同一套字段检查：重名 VN9、不在 schema VN11、
 重复实体键 VN12（VN12 在这条路径上尤其重要——见 §3.8）。
 
-其他层级的校验：`SC2/SC2a/SC3/SC4`（stream 与规则的绑定关系）、`SV2/SV3/SV4/SV6/SV7/SV8`
-（场景基础值、字段类型、oracle 参数）。
+其他族（不在上表）：`SC2/SC2a/SC3/SC4`（stream 与规则 / schema 的绑定关系）、
+`SV2/SV3/SV4/SV6/SV7/SV8`（场景基础值、字段类型、oracle 参数）。
 
 > 旧号（占比域、`expect` 规则存在性、`seq`/`not(...)` 步骤相关）随旧语法一起删除。
 
@@ -540,7 +551,7 @@ wfg + wfs + wfl
 | 时间**均匀**铺开 | 部分：`spread` 已可写并覆盖窗口长度，铺开策略仍是“随机簇起点 + 窗口内铺开” |
 | VN26（replay 文件） | 未实现；**依赖 `replay STREAM { use from }` 先落地**（该语法尚不存在，无物可校验） |
 | 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | **已落地**（§7.1；16/16 `lint` + `gen` 断言通过） |
-| 文档：CHANGELOG | 未写；按本仓惯例随 `chore(release)` 提交一起写（`git log -- CHANGELOG.md` 全是 release 提交） |
+| 文档：CHANGELOG | **已落地**（v0.7.0 随 release 提交写入 `CHANGELOG.md` / `CHANGELOG.en.md`，中英双语） |
 
 未决（不阻塞实现）：
 
@@ -549,6 +560,7 @@ wfg + wfs + wfl
 - 实体分段的**上限**：分段使实体值不重叠依赖 Ip 映射的 24 位地址空间（`10.a.b.c`），
   因此一个场景的实体 id 总数需 < 2^24（约 1670 万，实际够用）。超出后段会重叠，
   目前未做校验，建议改成明确报错。
+- 场景注解 `tick` / `rows` / `emit`：语法上可写，但**未被消费**（当前只 `duration` / `seed` 生效，§2.1）。
 
 ### 7.3 扩展规划
 

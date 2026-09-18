@@ -146,6 +146,10 @@ scenario no_login_then_xfer<seed=7> {
 
 ## 常见错误码
 
+码前缀按校验域分族：`VN`（`.wfg` 语法与注入语义）、`SC`（stream 与规则 / schema 的
+绑定）、`SV`（场景基础值、字段类型、oracle 参数）、`INJ`（**生成期**断言）；族内编号递增，
+删除的旧号不复用。下表是常见的 `VN` 与 `INJ`：
+
 | 码 | 含义 |
 |---|---|
 | `VN20` | 用了旧注入语法（`hit<N%>` / `with(N)` / `not(...) within(...)` / `injection` / `traffic` / `expect` / `<field> seq`），文案里给出改写方向 |
