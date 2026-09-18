@@ -781,25 +781,28 @@ hit<id: 200> for q8_monitor_new_user person_events {
   （`bucket_end(...)` / `a.expires`），注入器侧没有求值器（引擎的 `eval_interval_bound` 是
   `pub(crate)`），算不了。若用户把下界写成晚于左事件时间，右事件会落在区间外——后果是生成期
   INJ1 报「hit 实体不会触发」，属于**可见的失败**（不是静默产出）。
-- **只支持单键规则**：多键时右行连接键无法唯一确定 → 生成期报错。
 - `spread` 只管左簇；右事件跟随所属左事件的时间，不单独铺开。
 - 目标窗必须已在 schema 里、`use` 的字段必须属于目标窗（VN11）、在 `use` 里重复连接键报 VN12。
 
-### 9.5 未覆盖：join-then-key（nexmark q6 形态）
+### 9.5 join-then-key（nexmark q6 形态）
 
 q6 的 `match<seller:10m>` 里，**键 `seller` 不在驱动事件（bid）上，而在 join 侧（auction）**：
-引擎先 snapshot join（`b.auction == auction_events.id`）拿到 `seller`，再按该键分组。
+引擎先 snapshot join（`b.auction == auction_events.id`）拿到 `seller`，再按该键分组。注意它的
+**实体仍是驱动侧的 `b.auction`**（`entity(digit, b.auction)`）——只有分组键取自 join 侧。
 
-这与本节的模型差一层：这里把「用例的实体键值」同时写进**驱动侧字段**与**join 右侧字段**，
-即假设**实体键在驱动侧**。q6 需要区分两个不同的值：
+判据与引擎一致（`JoinKeyPlan`）：单个 key 不在任何 bind 的窗口 schema 上、且恰有一个
+`snapshot` join 的目标窗提供它。生成侧据此做三件事（**语法无需新增**）：
 
-| 角色 | q6 的值 | 本模型 |
-|---|---|---|
-| 断言实体 | `auction.seller`（join 侧） | ✗ 不在驱动侧，无法代入 |
-| 连接键 | `auction.id` ↔ `bid.auction` | ✓（但与上面的实体是两个不同的值） |
+| 环节 | 做法 |
+|---|---|
+| 连接键 | 取规则 `on <left> == <right>` 的 **left（驱动侧）字段**值，写进驱动事件与右行的 `right` 字段——两侧因此指向同一实体（q6 的 `b.auction` ↔ `auction_events.id`） |
+| join 侧键 | 驱动 schema 里没有的 match key（`seller`）**写到右行**上，按目标窗字段类型生成 |
+| 实体推断 | VN23 在 join-then-key 时不再拿 match 键当实体（那会误报不一致），改取规则 `entity(...)` |
 
-要覆盖它，需要把「实体键」与「连接键」拆成两个概念（例如在 `join … as <key>` 之外再声明实体
-取自哪一侧），并同步改 VN23 的实体推断与 INJ1/INJ2 的实体口径。**本次不做**，登记为已知缺口。
+join 侧键的值落在**与背景噪声分开的值带**（`1 << 22` 起）：背景 digit 是 `0..100_000`、ip 是
+随机 24 位——不分开的话，注入实例会和背景事件并到同一条窗口实例上，`avg >= 200` 之类的阈值
+被背景稀释，断言随背景波动。**已知边界**：驱动实体值域超过 `1<<22`（> 420 万实体）时可能与
+实体段重叠（VN27 只守 `< 2^24`），此时该边界靠 INJ1 的可见失败暴露。
 
 ### 9.6 落地清单
 
@@ -809,12 +812,14 @@ q6 的 `match<seller:10m>` 里，**键 `seller` 不在驱动事件（bid）上�
 `near_miss.rs` / `non_hit.rs`（在左事件之后补发右事件）、**`cmd_gen.rs`（oracle 调用改为带
 schemas，否则 join 规则永远出不了期望）**。
 
-`extract.rs` 额外登记规则侧 join 口径（`RuleJoinInfo`：目标窗 + 右侧连接键 + 放置偏移），
-生成时按 `(目标窗, 连接键)` 与用例的 `join` 块配对后决定右事件时间。
+`extract.rs` 额外登记规则侧 join 口径（`RuleJoinInfo`：目标窗 + 右侧连接键 + **驱动侧连接键** +
+放置偏移），生成时按 `(目标窗, 连接键)` 与用例的 `join` 块配对后决定右事件时间与键的来源；
+`generate_key_values` 的字段类型查找扩到所有窗口，并给 join 侧键用分离值带；VN23 的实体推断
+在 join-then-key 时改取 `entity(...)`。
 
-测试：解析 1、VN30 4、生成 + oracle 复核 4（deferred 与 snapshot 各 2；配对后**真能触发规则**，
-配对错或时间放错就掉到 0 条）；另有 CLI 端到端实测（q8 与 q20 两种形态：`lint` OK、`gen` 断言
-全过、右事件键与时间符合 §9.4 的表、期望告警数正确）。
+测试：解析 1、VN30 4、生成 + oracle 复核 6（deferred / snapshot / join-then-key 各 2；配对后
+**真能触发规则**，配对错、时间放错或值带选错就掉到 0 条）；另有 CLI 端到端实测（q8、q20 与
+q6 三种形态：`lint` OK、`gen` 断言全过、右事件键与时间符合 §9.4/§9.5、期望告警数正确）。
 
 ## 10. 实体分布：`entity <window>.<field> zipf(...)`（**已落地**）
 

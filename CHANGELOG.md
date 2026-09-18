@@ -29,6 +29,7 @@
 - **背景实体分布 `entity <window>.<field> zipf(pool=N, exponent=S, fresh=R)`**：背景流量此前每个字段逐条现随机（同一实体永不重复、造不出热点），现可按 Zipf 权重从实体池抽取并保留新实体比例；值域与注入实体分区，校验期检查预算（`VN31`）。
 - **跨流注入 `join <window> as <key> { … }`**：为规则的 join 目标窗造配对事件（连接键 = 左实体键值、时间取左事件时间，均由生成器推导），补上 join 家族规则在 `.wfg` 里造可断言数据的能力。v1 只支持缺省 inner 形态与单键规则，其余明确报 `VN30`。
 - 跨流注入补齐 **snapshot 形态**（`join … snapshot on …`，无 `within`）：右事件提前 1ms，覆盖 q3/q20 这类点查富化规则；并登记「join-then-key」（键在 join 侧，如 q6）为已知缺口。
+- 跨流注入支持 **join-then-key**（`match<seller:…>` 而 `seller` 在 join 目标窗上，如 nexmark q6）：连接键两侧同源、join 侧键自动写到右行且与背景噪声的值域分开，实体仍取驱动侧字段。
 - 修复：`gen` 的 oracle 评估此前不加载窗口 schema，join 家族规则因此永远产不出期望（INJ1 必然失败、`.except.jsonl` 为空）——现带 schema 评估，join 规则可用。
 - **新增 `replay <window> { use from "file" }` 照单发货通道**：把现成数据原样灌进去（不写条数、不做实体数学、不参与断言），时间以文件最早一条为锚平移到场景起点；为空 / 时间字段口径不齐 / 跨度超 `#[duration]` 都在加载与校验期报错。
 - 注入时间在场景 `#[duration]` 内**等距铺开**（此前每簇随机起点，实体之间会重叠）。

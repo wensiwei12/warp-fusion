@@ -124,13 +124,13 @@ pub(super) fn extract_rule_structure(
     // 规则侧 join 口径（设计 §9）：决定用例 `join` 块的右事件放哪。
     let mut joins = Vec::new();
     for join in &rule_plan.joins {
-        let Some(right_field) = join
-            .conds
-            .first()
-            .and_then(|cond| cond.right_field_name().map(str::to_string))
-        else {
+        let Some(first_cond) = join.conds.first() else {
             continue;
         };
+        let Some(right_field) = first_cond.right_field_name().map(str::to_string) else {
+            continue;
+        };
+        let left_field = field_ref_field_name(&first_cond.left).to_string();
         // 只登记生成器支持的两种形态（其余由 VN30 在校验期拦下）：
         //  - deferred：`emit at` + `within` → 右事件与左事件同刻（到期评估时右行已在窗内）；
         //  - snapshot：无 `within` 的点查 → 右事件提前（驱动事件处理时必须已可见）。
@@ -144,6 +144,7 @@ pub(super) fn extract_rule_structure(
         joins.push(RuleJoinInfo {
             window: join.right_window.clone(),
             right_field,
+            left_field,
             offset_nanos,
         });
     }

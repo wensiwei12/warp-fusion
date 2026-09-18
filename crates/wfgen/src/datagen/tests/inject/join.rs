@@ -404,3 +404,175 @@ scenario snap_oracle<seed=13> {
         alerts.alerts
     );
 }
+
+// ---------------------------------------------------------------------------
+// join-then-key（nexmark q6 形态）：match 键取自 join 侧
+// ---------------------------------------------------------------------------
+
+/// `match<seller:10m>` 的键 `seller` 不在驱动事件（bid）上，而在 join 侧（auction）：
+/// 引擎先 snapshot join 拿到 `seller`，再按它分组。实体仍是驱动侧的 `b.auction`。
+const JOIN_THEN_KEY_RULE: &str = r#"rule avg_price_by_seller {
+    events {
+        b : bid_events
+    }
+    match<seller:10m> {
+        on event { b.price | avg >= 200; }
+    } -> score(20)
+    join auction_events snapshot on b.auction == auction_events.id
+    entity(digit, b.auction)
+    yield alerts(id = b.auction)
+}"#;
+
+fn join_then_key_schemas() -> Vec<WindowSchema> {
+    let mut schemas = snapshot_schemas();
+    // auction_events 补上 `seller`（join 侧的分组键）。
+    let auction = schemas
+        .iter_mut()
+        .find(|s| s.name == "auction_events")
+        .expect("auction_events");
+    auction.fields.push(FieldDef {
+        name: "seller".to_string(),
+        field_type: FieldType::Base(BaseType::Digit),
+    });
+    schemas
+}
+
+/// join 侧键（`seller`）必须写到**右行**上，且与背景噪声（digit `0..100_000`）所在的带分开
+/// ——否则注入实例会和背景事件并到同一条窗口实例，阈值口径被稀释。
+#[test]
+fn join_then_key_writes_join_side_key_on_the_right_row() {
+    let input = r#"
+#[duration=10s]
+scenario jtk<seed=17> {
+    background { stream bid_events gen 5/s }
+    inject {
+        hit<auction: 3> for avg_price_by_seller bid_events {
+            use(price=250) x 2
+            join auction_events as id {
+                use({}) x 1
+            }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = join_then_key_schemas();
+    let wfl = wf_lang::parse_wfl(JOIN_THEN_KEY_RULE).expect("rule parse");
+    let mut plans = wf_lang::compile_wfl(&wfl, &schemas).expect("rule compile");
+    let plan = plans.remove(0);
+    // 前提锁定：规则确实是 join-then-key（键 `seller` 不在 bid 上）。
+    let key_join = plan
+        .match_plan
+        .key_join
+        .as_ref()
+        .expect("规则应是 join-then-key（key_join 有值）");
+    assert_eq!(key_join.right_field, "seller");
+    assert_eq!(key_join.right_window, "auction_events");
+
+    let start: DateTime<Utc> = "2024-01-01T00:00:00Z".parse().unwrap();
+    let duration = wfg.scenario.time_clause.duration;
+    let mut rng = StdRng::seed_from_u64(wfg.scenario.seed);
+    let result = generate_inject_events(
+        &wfg,
+        std::slice::from_ref(&plan),
+        &schemas,
+        &start,
+        &duration,
+        &mut rng,
+    )
+    .unwrap();
+
+    let auctions: Vec<_> = result
+        .events
+        .iter()
+        .filter(|e| e.window_name == "auction_events")
+        .collect();
+    let bids: Vec<_> = result
+        .events
+        .iter()
+        .filter(|e| e.window_name == "bid_events")
+        .collect();
+    // `x 2` = 每实体 2 条左事件；`join` 块按**左事件**逐条补发，因此右事件也是 6 条。
+    assert_eq!(bids.len(), 6);
+    assert_eq!(auctions.len(), 6);
+
+    let mut sellers = std::collections::BTreeSet::new();
+    for auction in &auctions {
+        let seller = auction
+            .fields
+            .get("seller")
+            .and_then(|v| v.as_i64())
+            .expect("右行必须带 join 侧键 seller");
+        assert!(
+            seller >= 1 << 22,
+            "join 侧键值应落在与背景噪声分开的带里（≥ 1<<22），实际 {seller}"
+        );
+        sellers.insert(seller);
+        // 连接键：右行 id = 驱动侧 auction（两侧指向同一实体）
+        assert!(
+            bids.iter()
+                .any(|b| b.fields.get("auction") == auction.fields.get("id")),
+            "右行 id 必须与某条驱动 bid 的 auction 相同"
+        );
+    }
+    assert_eq!(
+        sellers.len(),
+        3,
+        "每个实体一个独立的 join 侧键值（实例不合并）"
+    );
+}
+
+/// join-then-key 的配对**有效**：oracle 应产出 3 条告警（引擎按 join 侧键分组）。
+#[test]
+fn join_then_key_pairs_actually_trigger_the_rule() {
+    let input = r#"
+#[duration=10s]
+scenario jtk_oracle<seed=19> {
+    background { stream bid_events gen 5/s }
+    inject {
+        hit<auction: 3> for avg_price_by_seller bid_events {
+            use(price=250) x 2
+            join auction_events as id {
+                use({}) x 1
+            }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = join_then_key_schemas();
+    let wfl = wf_lang::parse_wfl(JOIN_THEN_KEY_RULE).expect("rule parse");
+    let mut plans = wf_lang::compile_wfl(&wfl, &schemas).expect("rule compile");
+    let plan = plans.remove(0);
+    let start: DateTime<Utc> = "2024-01-01T00:00:00Z".parse().unwrap();
+    let duration = wfg.scenario.time_clause.duration;
+    let mut rng = StdRng::seed_from_u64(wfg.scenario.seed);
+    let result = generate_inject_events(
+        &wfg,
+        std::slice::from_ref(&plan),
+        &schemas,
+        &start,
+        &duration,
+        &mut rng,
+    )
+    .unwrap();
+
+    let alerts = run_oracle_events_full(
+        result.events.clone(),
+        &[plan],
+        &schemas,
+        &start,
+        &duration,
+        None,
+        true,
+    )
+    .unwrap();
+    let ids: std::collections::BTreeSet<&str> =
+        alerts.alerts.iter().map(|a| a.entity_id.as_str()).collect();
+    assert_eq!(
+        ids.len(),
+        3,
+        "每个 hit 实体都应因 join-then-key 配对命中而产出告警：{:?}",
+        alerts.alerts
+    );
+}

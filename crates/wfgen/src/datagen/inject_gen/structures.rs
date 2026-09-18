@@ -223,6 +223,9 @@ fn entity_identity_field(rule_struct: &RuleStructure) -> Option<String> {
 pub(super) struct RuleJoinInfo {
     pub(super) window: String,
     pub(super) right_field: String,
+    /// 驱动侧的连接键字段（规则 `on <left> == <right>` 的 left，如 `b.auction`）——
+    /// 右行的连接键取它的值，两侧因此指向同一个实体。
+    pub(super) left_field: String,
     /// 右事件相对左事件的时间偏移（纳秒）：
     /// - `0` = deferred（`emit at` + `within`）：到期评估时右行已在窗内；
     /// - `-1` = snapshot（无 `within`）：右行必须在驱动事件被处理时**已可见**，

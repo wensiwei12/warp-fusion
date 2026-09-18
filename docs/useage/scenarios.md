@@ -139,11 +139,12 @@ hit<id: 200> for q8_monitor_new_user person_events {   // 左（驱动）侧
   `snapshot`（无 `within`）放**提前 1ms**（点查在驱动事件处理时就要能看见右行）。
 - 断言口径不变：仍以**驱动侧实体**为单位（`hit` 必报、`near_miss` / `miss` 必不报）。
 - 支持两种形态：**deferred**（`inner` + `within` + `emit at`）与 **snapshot**（无 `within`）。
-  其余（`asof` / `anti`、没有 `emit at` 的即时 inner）明确报错；多键规则也不支持。
+  其余（`asof` / `anti`、没有 `emit at` 的即时 inner）明确报错。
 - 若规则的 `within` 下界晚于左事件时间，右事件会落在区间外——生成期 INJ1 会报
   「hit 实体不会触发」（可见的失败，不会静默出数据）。
-- **已知缺口**：键取自 join 侧的 "join-then-key" 规则（如 `match<seller:…>` 而 `seller` 在
-  `auction` 上）还不支持——本语法假设实体键在驱动事件上。
+- **join-then-key**（如 `match<seller:…>` 而 `seller` 在 `auction` 上）**已支持**：连接键取规则
+  `on <left> == <right>` 的左侧字段值（两侧同源），join 侧键（`seller`）自动写到右行上，且值域
+  与背景噪声分开；实体仍是驱动侧字段（如 `entity(digit, b.auction)` 的 `auction`）。
 
 ## 背景实体分布：`entity(...)`
 

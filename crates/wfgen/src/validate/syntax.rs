@@ -174,7 +174,7 @@ pub(super) fn validate_syntax(
                 }
                 if !skip_wfl
                     && let Some(rule) = all_rules.iter().find(|rule| rule.name == case.target_rule)
-                    && let Some(inferred) = inferred_entity_field(rule)
+                    && let Some(inferred) = inferred_entity_field(rule, schemas)
                     && inferred != explicit
                 {
                     errors.push(ValidationError {
@@ -710,7 +710,7 @@ fn injectable_step_count(rule: &RuleDecl) -> usize {
 ///
 /// 多 key（实体 = key 元组）、stats 形态、`entity(...)` 是复合表达式时返回 `None`
 /// ——此时"推断"不是单一字段，显式字段不被视为不一致。
-fn inferred_entity_field(rule: &RuleDecl) -> Option<String> {
+fn inferred_entity_field(rule: &RuleDecl, schemas: &[WindowSchema]) -> Option<String> {
     if rule.each_clause.is_some() {
         return match &rule.entity.id_expr {
             Expr::Field(fr) => leaf_name(fr),
@@ -724,9 +724,41 @@ fn inferred_entity_field(rule: &RuleDecl) -> Option<String> {
         };
     }
     match rule.match_clause.keys.as_slice() {
-        [key] => leaf_name(key),
+        [key] => {
+            let name = leaf_name(key)?;
+            // join-then-key（设计 §9.6）：单个 key **不在驱动事件的窗口上**、而由某个 snapshot
+            // join 的目标窗提供时，驱动侧的实体是 `entity(...)`，不是这个键——否则 VN23 会把
+            // 「显式实体字段 = 驱动侧字段」误判成不一致。
+            if is_join_then_key(&name, rule, schemas) {
+                return match &rule.entity.id_expr {
+                    Expr::Field(fr) => leaf_name(fr),
+                    _ => None,
+                };
+            }
+            Some(name)
+        }
         _ => None,
     }
+}
+
+/// 单个 match key 是否取自 join 侧（引擎 `JoinKeyPlan` 的同口径判据）：该字段不在任何
+/// bind 的窗口 schema 上，且恰有一个 `snapshot` join 的目标窗提供它。
+fn is_join_then_key(field: &str, rule: &RuleDecl, schemas: &[WindowSchema]) -> bool {
+    let schema_of = |name: &str| schemas.iter().find(|schema| schema.name == name);
+    let has_field = |schema: &WindowSchema| schema.fields.iter().any(|f| f.name == field);
+
+    for decl in &rule.events.decls {
+        if schema_of(&decl.window).is_some_and(&has_field) {
+            return false;
+        }
+    }
+    let providers = rule
+        .joins
+        .iter()
+        .filter(|join| matches!(join.mode, JoinMode::Snapshot))
+        .filter(|join| schema_of(&join.target_window).is_some_and(&has_field))
+        .count();
+    providers == 1
 }
 
 /// 字段引用的叶子字段名；无法判定（空串）时 `None`，调用方据此跳过一致性检查。

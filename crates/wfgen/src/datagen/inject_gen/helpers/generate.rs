@@ -161,23 +161,6 @@ pub(crate) fn push_join_events(
         return Ok(());
     }
 
-    // 驱动键：v1 只支持单键规则——多键时无法唯一确定右行的连接键值。
-    let key_value = match key_overrides.len() {
-        0 => {
-            return error::fail(
-                WfgenReason::Validation,
-                "join 块需要规则的 match 键值，但本用例没有任何键覆盖",
-            );
-        }
-        1 => key_overrides.values().next().expect("len == 1").clone(),
-        n => {
-            return error::fail(
-                WfgenReason::Validation,
-                format!("join 块暂不支持多键规则（本用例有 {n} 个键值）：右行连接键无法唯一确定"),
-            );
-        }
-    };
-
     let no_filters: HashMap<String, serde_json::Value> = HashMap::new();
     for join in joins {
         // 规则侧口径：决定右事件相对左事件的偏移（deferred 同刻 / snapshot 前挪 1ns）。
@@ -195,6 +178,27 @@ pub(crate) fn push_join_events(
             })?;
         let right_ts = *left_ts + ChronoDuration::nanoseconds(info.offset_nanos);
 
+        // 连接键：取规则 `on <left> == <right>` 的 **left（驱动侧）字段**值——两侧因此指向
+        // 同一个实体（q6 的 `b.auction` ↔ `auction_events.id`）。
+        let connective = key_overrides
+            .get(&info.left_field)
+            .or_else(|| {
+                if key_overrides.len() == 1 {
+                    key_overrides.values().next()
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                error::error(
+                    WfgenReason::Validation,
+                    format!(
+                        "join 块需要规则 join 驱动侧键 `{}` 的取值（`on {} == {}.{}`），但本用例没有它",
+                        info.left_field, info.left_field, join.window, join.key_field
+                    ),
+                )
+            })?;
+
         let schema = schemas
             .iter()
             .find(|s| s.name == join.window)
@@ -210,8 +214,10 @@ pub(crate) fn push_join_events(
             .cloned()
             .unwrap_or_else(|| schema.name.clone());
 
-        let mut right_keys = HashMap::new();
-        right_keys.insert(join.key_field.clone(), key_value.clone());
+        // 右行带上本案的全部键值（右窗 schema 里有的字段才会被写进去）：驱动键 + join 侧键
+        // （join-then-key 的 `seller` 就是这样落到右行上的），再把连接键覆盖成上面那个值。
+        let mut right_keys = key_overrides.clone();
+        right_keys.insert(join.key_field.clone(), connective.clone());
 
         for group in &join.groups {
             let records = source_to_records(&group.source)?;
@@ -325,6 +331,38 @@ pub(crate) fn build_event_fields_with_predicates(
     fields
 }
 
+/// schema 里某个字段的类型（不存在则 `None`）。
+fn field_type_of<'a>(schema: &'a WindowSchema, field: &str) -> Option<&'a FieldType> {
+    schema
+        .fields
+        .iter()
+        .find(|f| f.name == field)
+        .map(|f| &f.field_type)
+}
+
+/// join 侧键（join-then-key：`match<seller:…>` 而 `seller` 在 join 目标窗上）的**值带起点**。
+///
+/// 必须与背景噪声分开——背景 digit 落在 `0..100_000`、ip 是随机 24 位；否则注入实例会和
+/// 背景事件并到同一条窗口实例上，阈值（`avg >= 200` 之类）被背景稀释，断言随背景波动。
+/// 已知边界：驱动实体值域超过 `1<<22`（> 420 万实体）时可能与实体段重叠（设计 §9.5）。
+const JOIN_SIDE_KEY_BASE: u64 = 1 << 22;
+
+/// join 侧键的值：按目标窗字段类型生成，落在与背景噪声分开的带里。
+fn join_side_key_value(
+    field_type: Option<&FieldType>,
+    index: u64,
+    key_name: &str,
+) -> serde_json::Value {
+    let v = JOIN_SIDE_KEY_BASE + index;
+    match field_type {
+        Some(FieldType::Base(BaseType::Digit)) => serde_json::json!(v as i64),
+        Some(FieldType::Base(BaseType::Float)) => serde_json::json!(v as f64),
+        Some(FieldType::Base(BaseType::Ip)) => entity_value_for_index(field_type, v, "j", key_name),
+        Some(FieldType::Base(BaseType::Hex)) => serde_json::Value::String(format!("{v:032x}")),
+        _ => serde_json::Value::String(format!("join_{key_name}_{index:06}")),
+    }
+}
+
 /// 24 位实体索引 → 字段值。**注入与背景实体池共用**这套映射，值域才能分区
 /// （注入占底部 `[0, total_entity_ids)`、背景池占顶部两段，设计 §10）。
 pub(crate) fn entity_value_for_index(
@@ -377,20 +415,22 @@ pub(crate) fn generate_key_values(
     }
 
     for (i, key_name) in names.iter().enumerate() {
-        let field_type = first_schema.and_then(|sch| {
-            sch.fields
-                .iter()
-                .find(|f| &f.name == key_name)
-                .map(|f| &f.field_type)
-        });
-
         let id = entity_counter + i as u64;
-        debug_assert!(
-            id < ENTITY_ID_SPACE,
-            "实体 id {id} 超出 24 位地址空间（{ENTITY_ID_SPACE}），Ip 映射会回绕、不同实体会拿到同一个值"
-        );
-        let value = entity_value_for_index(field_type, id, prefix, key_name);
-
+        let value = match first_schema.and_then(|sch| field_type_of(sch, key_name)) {
+            Some(field_type) => {
+                debug_assert!(
+                    id < ENTITY_ID_SPACE,
+                    "实体 id {id} 超出 24 位地址空间（{ENTITY_ID_SPACE}），Ip 映射会回绕、不同实体会拿到同一个值"
+                );
+                entity_value_for_index(Some(field_type), id, prefix, key_name)
+            }
+            // 不在驱动事件上 → **join 侧键**（join-then-key，设计 §9）：它属于某个 join 目标窗，
+            // 值取自与背景噪声分开的值带。
+            None => {
+                let field_type = schemas.iter().find_map(|sch| field_type_of(sch, key_name));
+                join_side_key_value(field_type, id, key_name)
+            }
+        };
         overrides.insert(key_name.clone(), value);
     }
 
