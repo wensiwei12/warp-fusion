@@ -48,19 +48,19 @@ fn first_event_offsets(wfg_src: &str) -> BTreeMap<String, i64> {
     first
 }
 
-/// 5 个实体、`#[duration=100s]`、`spread 10s` → span 90s → 起点 0 / 18 / 36 / 54 / 72s
-/// （左闭右开，末簇留 span/N = 18s 的尾余量）。
+/// 5 个实体、`#[duration=100s]`、`spread 10s` → span 90s → 起点 0 / 22.5 / 45 / 67.5 / 90s
+/// （首簇贴 0、末簇贴 span，覆盖整段）。
 fn assert_evenly_spread(offsets: &BTreeMap<String, i64>) {
     let mut values: Vec<i64> = offsets.values().copied().collect();
     values.sort_unstable();
 
     let seconds: Vec<f64> = values.iter().map(|ns| *ns as f64 / 1e9).collect();
-    let expected = [0.0, 18.0, 36.0, 54.0, 72.0];
+    let expected = [0.0, 22.5, 45.0, 67.5, 90.0];
     assert_eq!(seconds.len(), expected.len(), "偏移: {seconds:?}");
     for (actual, want) in seconds.iter().zip(expected.iter()) {
         assert!(
             (actual - want).abs() < 1e-6,
-            "簇起点应等距铺在 [0, span) 上：期望 {expected:?}，实际 {seconds:?}"
+            "簇起点应等距铺满 [0, span]：期望 {expected:?}，实际 {seconds:?}"
         );
     }
 }

@@ -46,6 +46,7 @@ New validation codes (reported at load time by `lint` / `gen`):
 
 - `array/<base>` fields (e.g. `array/digit`) no longer degrade and lose their array structure and values.
 - Structured fields are no longer dropped on the assertion side, where expected files disagreed with the actual output.
+- Close timing: tail instances of `close` rules could previously disagree with the engine's `close:flush` timestamp (same count and entities, time only); now aligned with the engine.
 
 ### Engine (aligned with wp-reactor 2.1.0)
 

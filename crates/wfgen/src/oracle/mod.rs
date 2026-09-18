@@ -258,9 +258,14 @@ where
         .map(String::from)
         .collect();
 
+    // 数据末尾（最后一条事件的时间）：引擎收尾时用的水位是
+    // `final_wm = max(窗口 max_event_time, 机器水位)`，即**数据末尾**而不是场景边界。
+    let mut last_event_nanos = i64::MIN;
+
     // Process events in order (caller should have sorted by timestamp)
     for event in events {
         let event_nanos = event.timestamp.timestamp_nanos_opt().unwrap_or(0);
+        last_event_nanos = last_event_nanos.max(event_nanos);
 
         let core_event = gen_event_to_core(&event);
 
@@ -503,6 +508,16 @@ where
         *scenario_start + chrono::Duration::from_std(*scenario_duration).unwrap_or_default();
     let eos_nanos = eos_time.timestamp_nanos_opt().unwrap_or(i64::MAX);
 
+    // 收尾水位：batch（close_at_eos=true）对齐引擎的 `final_wm` = **数据末尾**。
+    // 用场景边界（eos_nanos）会把「窗口到期点在数据末尾之后」的实例误判为
+    // `close:timeout`（窗口到期），而引擎此时根本没有事件把水位推到到期点 → 走
+    // 收尾 `close:flush`。两侧告警数量/实体一致、只有时间不同，超容差即报差异。
+    let sweep_nanos = if close_at_eos && last_event_nanos != i64::MIN {
+        last_event_nanos
+    } else {
+        eos_nanos
+    };
+
     // 引擎 replay 语义（close_at_eos = false）：不 close_all 剩余实例；但引擎
     // replay 的 slice 水位会推进到数据末尾的 slice 边界（fixed 桶在数据末尾
     // 恰好到期时会收口——q5 实证：30m 数据 + 10m 桶引擎收 3 桶、oracle 只收
@@ -516,13 +531,13 @@ where
             engine
                 .sm
                 .scan_expired_at_with_conv_skip_non_alerting_unbounded(
-                    eos_nanos,
+                    sweep_nanos,
                     engine.conv_plan.as_ref(),
                 )
         } else {
             engine
                 .sm
-                .scan_expired_at_with_conv(eos_nanos, engine.conv_plan.as_ref())
+                .scan_expired_at_with_conv(sweep_nanos, engine.conv_plan.as_ref())
         };
         collect_close_alerts(
             &engine.executor,

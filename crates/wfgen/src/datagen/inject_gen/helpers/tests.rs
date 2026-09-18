@@ -312,18 +312,16 @@ fn hit_and_near_miss_share_the_same_counts() {
 
 #[test]
 fn uniform_cluster_start_is_evenly_spaced() {
-    // duration 100s、窗口 10s → span 90s；5 个簇 → 左闭右开 0 / 18 / 36 / 54 / 72。
+    // duration 100s、窗口 10s → span 90s；5 个簇 → 0 / 22.5 / 45 / 67.5 / 90。
     let starts: Vec<f64> = (0..5).map(|i| uniform_cluster_start(i, 5, 90.0)).collect();
-    assert_eq!(starts, vec![0.0, 18.0, 36.0, 54.0, 72.0]);
+    assert_eq!(starts, vec![0.0, 22.5, 45.0, 67.5, 90.0]);
 
-    // 首簇贴 0；末簇**不贴** span —— 留出 span / N 的尾余量，窗口不顶到场景末尾
-    // （顶到末尾会让引擎走 close:flush、oracle 走 close:timeout，verify 报时间差异）。
+    // 首簇贴 0、末簇贴 span，整段 duration 被均匀覆盖、两端不留空档。
     assert_eq!(starts[0], 0.0);
-    assert_eq!(starts[4], 72.0);
-    assert!(starts[4] < 90.0);
+    assert_eq!(starts[4], 90.0);
 
-    // 等距：相邻差恒为 span / count。
-    let step = 90.0 / 5.0;
+    // 等距：相邻差恒为 span / (count - 1)。
+    let step = 90.0 / 4.0;
     for pair in starts.windows(2) {
         assert!((pair[1] - pair[0] - step).abs() < 1e-9, "{starts:?}");
     }

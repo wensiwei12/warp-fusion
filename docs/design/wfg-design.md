@@ -263,11 +263,11 @@ scenario no_login_then_xfer<seed=7> {
 ### 3.5 时间铺开（P6）
 
 - `spread D` 显式给出铺开窗口，覆盖默认的规则窗口长度；必须 ≤ `#[duration]`（VN25）。
-- 实体的簇起点在 `[0, 跨度)` 上**等距**铺开（`uniform_cluster_start`，跨度 = `duration − 窗口`）：
-  首簇贴 `0`、末簇贴在 `跨度 − 跨度/N`，**不把末簇顶到场景末尾**；只有一个簇时取中点。
-  留这段尾余量不是审美：窗口若正好收在 `duration`，其后再无事件推进水位，引擎走收尾
-  `close:flush`、oracle 走 `close:timeout`——两者告警数量与实体一致、只有时间不同，`verify`
-  会报时间差异（实测 4800 实体的 `count/brute_force` e2e 由 FAIL 转 PASS）。
+- 实体的簇起点在 `[0, 跨度]` 上**等距**铺开（`uniform_cluster_start`，跨度 = `duration − 窗口`）：
+  首簇贴 `0`、末簇贴 `跨度`（末簇窗口刚好收在场景末尾），整段 `duration` 被均匀覆盖、两端
+  不留空档；只有一个簇时取中点。
+  “末簇顶到场景末尾”本身不再有风险：引擎的收尾水位是 `final_wm` = **数据末尾**，oracle 已按
+  同一口径扫收尾（§7.2 那条已落地，回归见 `crates/wfgen/tests/e2e_datagen.rs`）。
   窗口不短于 `duration` 时无法错开，退回起点 `0`（簇必然重叠，保持旧行为）。
 - 簇内事件仍按步骤顺序在窗口内均匀落下（`per_step_window × i / N`）；`miss` 本来就按
   `duration × 事件序号 / 总条数` 均匀落下，不受影响。
@@ -587,7 +587,7 @@ wfg + wfs + wfl
 - 背景与注入完全分离：背景保留自己的配额（`rate × duration`），注入在其上叠加
   （旧口径 `背景 = 配额 − 注入` 及其 `inject_counts` 链路已删除）。
 - 注入时间在场景 `duration` 内**等距铺开**：簇起点由 `uniform_cluster_start` 算出
-  （`[0, duration − 窗口)` 上等距，末簇留 `跨度/N` 的尾余量以免窗口顶到场景末尾），
+  （`[0, duration − 窗口]` 上等距：首簇贴 `0`、末簇贴 `跨度`，覆盖整段），
   取代旧的“每簇随机起点”；窗口不短于 `duration` 时退回起点 `0`。
 - `use from "file"` 的值文件解析（`loader::resolve_inject_files`）：相对 `.wfg` 目录解析路径，
   支持顶层 object / object 数组 / NDJSON，数组与 NDJSON 按事件序号循环取用；`gen` / `lint` /
@@ -614,31 +614,14 @@ wfg + wfs + wfl
 |---|---|
 | 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | **已落地**（§7.1；16/16 `lint` + `gen` 断言通过） |
 | 文档：CHANGELOG | **已落地**（v0.7.0 随 release 提交写入 `CHANGELOG.md` / `CHANGELOG.en.md`，中英双语） |
+| 尾部实例的 `close:flush` / `close:timeout` 时间口径 | **已落地**（oracle 收尾水位改用数据末尾 `final_wm`，与引擎 `close:flush` 对齐；回归见 `crates/wfgen/tests/e2e_datagen.rs`，`hop_oracle_closes_every_covered_window` / `batch_sweep_uses_data_end_not_scenario_end` 锁定口径） |
 
 未决（不阻塞实现）：
 
 - 生成期断言在**分片 / 多实例**下的口径（当前 oracle 是单机内存模型）。
-- **尾部实例的 `close:flush` / `close:timeout` 时间口径**（本轮发现，已另立任务）：某个实例的
-  窗口到期点落在“最后一条能推进水位的事件”**之后**时，引擎再没有事件可推 → 走收尾
-  `close:flush`（`fired_at` = 该实例最后一条事件），oracle 走 `close:timeout`（窗口到期）。
-  **告警数量与实体完全一致，只有时间不同**：超过 `verify` 的默认 1s 时间容差就报一条差异
-  （INJ1/INJ2 只看实体集合，不受影响）。
-  - 实测：4800 实体的 `count/brute_force` e2e（3 步 `on event` + `close` 规则）里，末簇窗口
-    顶到 `#[duration]` 时稳定复现——已由注入铺开改为左闭右开（留尾余量）避开（`39fbbea`）。
-  - 触发面比“末簇顶到末尾”更宽：**背景很稀疏**（最后一条背景事件远早于 `duration`）时，
-    靠近末尾的簇窗口同样会晚于最后一条背景事件。
-  - 可选方向：(a) 生成期按背景事件时间线算出尾簇起点上限（背景事件时刻可解析算出，代价
-    是把注入/背景的生成顺序耦合起来）；(b) 把尾部 flush 告警的**时间**在对拍口径里按同类
-    归一（与现有 `close:flush` → `close:eos` 的 origin 归一一致）；(c) 让 oracle 的 eos 水位
-    模型对齐引擎的收尾语义；(d) 给 `.wfg` 补一个时间容差旋钮（`oracle { … }` 块已随旧语法
-    删除，容差现固定 1s，用户无法自行放宽）。
 - 场景注解 `tick` / `rows` / `emit`：语法上可写，但**未被消费**（当前只 `duration` / `seed` 生效，§2.1）。
 
 ### 7.3 扩展规划
-
-**P0（本轮新增的独立任务）**
-
-- 尾部实例的 `close:flush` / `close:timeout` 时间口径（见 §7.2 未决里那条；含四个可选方向）。
 
 **P1（优先）**
 
