@@ -305,3 +305,38 @@ fn hit_and_near_miss_share_the_same_counts() {
     assert_eq!(hit, vec![12], "hit 条数不被阈值 10 改写");
     assert_eq!(near_miss, hit, "两模式条数口径必须一致");
 }
+
+// ---------------------------------------------------------------------------
+// 时间铺开：簇起点等距（设计 §4.7）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn uniform_cluster_start_is_evenly_spaced() {
+    // duration 100s、窗口 10s → span 90s；5 个簇 → 0 / 22.5 / 45 / 67.5 / 90。
+    let starts: Vec<f64> = (0..5).map(|i| uniform_cluster_start(i, 5, 90.0)).collect();
+    assert_eq!(starts, vec![0.0, 22.5, 45.0, 67.5, 90.0]);
+
+    // 首簇贴 0、末簇贴 span（末簇窗口刚好收在场景末尾），两端不留空档。
+    assert_eq!(starts[0], 0.0);
+    assert_eq!(starts[4], 90.0);
+
+    // 等距：相邻差恒为 span / (count - 1)。
+    let step = 90.0 / 4.0;
+    for pair in starts.windows(2) {
+        assert!((pair[1] - pair[0] - step).abs() < 1e-9, "{starts:?}");
+    }
+}
+
+#[test]
+fn uniform_cluster_start_degenerate_cases() {
+    // 单个簇取中点（与 miss 单条事件居中同风格）。
+    assert_eq!(uniform_cluster_start(0, 1, 90.0), 45.0);
+
+    // 窗口不短于 duration（span 0）：无法错开，退回 0（保持旧行为）。
+    assert_eq!(uniform_cluster_start(3, 5, 0.0), 0.0);
+    assert_eq!(uniform_cluster_start(0, 1, 0.0), 0.0);
+    assert_eq!(uniform_cluster_start(0, 1, -1.0), 0.0);
+
+    // 0 个簇（生成侧不会走到，防御性）同样取中点而非除零。
+    assert_eq!(uniform_cluster_start(0, 0, 90.0), 45.0);
+}

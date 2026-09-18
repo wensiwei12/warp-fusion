@@ -249,7 +249,11 @@ scenario no_login_then_xfer<seed=7> {
 ### 3.5 时间铺开（P6）
 
 - `spread D` 显式给出铺开窗口，覆盖默认的规则窗口长度；必须 ≤ `#[duration]`（VN25）。
-- 当前实现仍是"随机簇起点 + 窗口内铺开"，**均匀铺开未实现**（§7.2）。
+- 实体的簇起点在场景 `duration` 内**等距**铺开（`uniform_cluster_start`）：首簇贴 `0`、
+  末簇贴 `duration − 窗口`，整段时长被均匀覆盖、两端不留空档；只有一个簇时取中点。
+  窗口不短于 `duration` 时无法错开，退回起点 `0`（簇必然重叠，保持旧行为）。
+- 簇内事件仍按步骤顺序在窗口内均匀落下（`per_step_window × i / N`）；`miss` 本来就按
+  `duration × 事件序号 / 总条数` 均匀落下，不受影响。
 
 ### 3.6 字段覆盖优先级
 
@@ -524,6 +528,9 @@ wfg + wfs + wfl
   带改写方向的 VN20 文案（§5.1）。
 - 背景与注入完全分离：背景保留自己的配额（`rate × duration`），注入在其上叠加
   （旧口径 `背景 = 配额 − 注入` 及其 `inject_counts` 链路已删除）。
+- 注入时间在场景 `duration` 内**等距铺开**：簇起点由 `uniform_cluster_start` 算出
+  （首簇贴 `0`、末簇贴 `duration − 窗口`），取代旧的“每簇随机起点”；窗口不短于
+  `duration` 时退回起点 `0`。
 - `use from "file"` 的值文件解析（`loader::resolve_inject_files`）：相对 `.wfg` 目录解析路径，
   支持顶层 object / object 数组 / NDJSON，数组与 NDJSON 按事件序号循环取用；`gen` / `lint` /
   `bench` / `send` / `stream` 都经 `loader::load_from_uses` 走同一条解析。
@@ -548,7 +555,6 @@ wfg + wfs + wfl
 | 项 | 状态 |
 |---|---|
 | `replay STREAM { use from "f" }` 照单发货 | 未实现 |
-| 时间**均匀**铺开 | 部分：`spread` 已可写并覆盖窗口长度，铺开策略仍是“随机簇起点 + 窗口内铺开” |
 | VN26（replay 文件） | 未实现；**依赖 `replay STREAM { use from }` 先落地**（该语法尚不存在，无物可校验） |
 | 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | **已落地**（§7.1；16/16 `lint` + `gen` 断言通过） |
 | 文档：CHANGELOG | **已落地**（v0.7.0 随 release 提交写入 `CHANGELOG.md` / `CHANGELOG.en.md`，中英双语） |

@@ -1,13 +1,12 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use rand::Rng;
 use rand::rngs::StdRng;
 use wf_lang::WindowSchema;
 
 use super::helpers::{
     compute_near_miss_counts, compute_window_bounds, generate_cluster_events, generate_key_values,
-    resolve_cluster_count,
+    resolve_cluster_count, uniform_cluster_start,
 };
 use super::structures::{InjectEntities, InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
@@ -71,11 +70,8 @@ pub(super) fn generate_near_miss_clusters(
             &near_miss_counts,
         );
 
-        let cluster_start_secs = if max_start_offset > 0.0 {
-            rng.random_range(0.0..max_start_offset)
-        } else {
-            0.0
-        };
+        let cluster_start_secs =
+            uniform_cluster_start(entity_counter, num_clusters, max_start_offset);
 
         generate_cluster_events(
             steps,

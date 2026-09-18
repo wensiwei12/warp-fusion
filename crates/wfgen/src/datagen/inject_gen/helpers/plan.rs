@@ -21,6 +21,23 @@ pub(crate) fn compute_window_bounds(dur_secs: f64, window_dur: Duration) -> (f64
     (window_secs, max_start_offset)
 }
 
+/// 第 `index` 个簇（共 `count` 个）的起点：在 `[0, max_start_offset]` 内**等距**铺开（设计 §4.7）。
+///
+/// 首簇贴 `0`、末簇贴 `max_start_offset`（末簇的窗口刚好收在场景末尾），整段 `duration`
+/// 被均匀覆盖、两端不留空档；只有一个簇时取中点（与 `miss` 单条事件居中同风格）。
+///
+/// 窗口不短于 `duration` 时（`max_start_offset == 0`，规则窗口比场景还长）无法错开，
+/// 仍退回起点 `0`：此时簇必然重叠，错开没有意义，保持旧行为。
+pub(crate) fn uniform_cluster_start(index: u64, count: u64, max_start_offset: f64) -> f64 {
+    if max_start_offset <= 0.0 {
+        return 0.0;
+    }
+    if count <= 1 {
+        return max_start_offset / 2.0;
+    }
+    max_start_offset * index as f64 / (count - 1) as f64
+}
+
 /// 每个步骤每实体生成多少条事件。
 ///
 /// 就是 `use ... x N` 写的数：不做任何隐式推导、补全或夹取——旧语法的

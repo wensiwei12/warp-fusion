@@ -5,5 +5,6 @@ mod assert;
 mod correctness;
 mod each;
 mod records;
+mod spread;
 mod syntax;
 mod without;
