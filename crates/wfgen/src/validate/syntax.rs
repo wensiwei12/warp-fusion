@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use wf_lang::WindowSchema;
-use wf_lang::ast::RuleDecl;
+use wf_lang::ast::{Expr, FieldRef, RuleDecl};
 
 use super::ValidationError;
+use crate::datagen::inject_gen::field_ref_field_name;
 use crate::wfg_ast::{AttrValue, FieldPredicate, ValueSource, WfgFile, json_top_level_entries};
 
 pub(super) fn validate_syntax(
@@ -96,6 +97,42 @@ pub(super) fn validate_syntax(
                 });
             }
 
+            // VN22 / VN23：显式实体字段（`hit<sip: 500>`）的静态一致性。
+            //
+            // 两处漂移都会让注入**静默指向错实体**（生成器拿不到类型时给字符串兜底 /
+            // 逐实体变化的字段与规则聚合的 key 不是同一个），最后表现为断言覆盖不到或
+            // 断言错对象，因此在校验期就拦下：
+            // - VN22：字段必须在该 stream 的 schema 里；
+            // - VN23：字段必须与规则**推断**的实体字段一致（单 key `match` = 该 key；
+            //   `on each` = `entity(...)` 的单字段）。多 key 规则的实体是 key 元组，
+            //   显式写字段是消歧用法，不算不一致（设计 §3.7）。
+            if let Some(explicit) = case.entity_field.as_deref() {
+                if let Some(schema) = case_schema
+                    && !schema.fields.iter().any(|field| field.name == explicit)
+                {
+                    errors.push(ValidationError {
+                        code: "VN22",
+                        message: format!(
+                            "injection case '{}' 实体字段 '{}' 不在 stream '{}' 的 schema '{}' 里",
+                            stream, explicit, stream, schema.name
+                        ),
+                    });
+                }
+                if !skip_wfl
+                    && let Some(rule) = all_rules.iter().find(|rule| rule.name == case.target_rule)
+                    && let Some(inferred) = inferred_entity_field(rule)
+                    && inferred != explicit
+                {
+                    errors.push(ValidationError {
+                        code: "VN23",
+                        message: format!(
+                            "injection case '{}' 显式实体字段 '{}' 与规则 '{}' 推断的实体字段 '{}' 不一致（去掉显式字段即用推断值；多 key 规则才需要显式消歧）",
+                            stream, explicit, case.target_rule, inferred
+                        ),
+                    });
+                }
+            }
+
             for (idx, group) in case.groups.iter().enumerate() {
                 if group.count == 0 {
                     errors.push(ValidationError {
@@ -141,6 +178,37 @@ pub(super) fn validate_syntax(
     }
 
     errors
+}
+
+/// 规则推断出的实体字段（设计 §3.7）：单 key `match` → 该 key；`on each` →
+/// `entity(<type>, <field>)` 的单字段表达式；显式 key 映射 → 映射的来源字段
+/// （真正逐实体变化的字段）。
+///
+/// 多 key（实体 = key 元组）、stats 形态、`entity(...)` 是复合表达式时返回 `None`
+/// ——此时"推断"不是单一字段，显式字段不被视为不一致。
+fn inferred_entity_field(rule: &RuleDecl) -> Option<String> {
+    if rule.each_clause.is_some() {
+        return match &rule.entity.id_expr {
+            Expr::Field(fr) => leaf_name(fr),
+            _ => None,
+        };
+    }
+    if let Some(mapping) = &rule.match_clause.key_mapping {
+        return match mapping.as_slice() {
+            [item] => leaf_name(&item.source_field),
+            _ => None,
+        };
+    }
+    match rule.match_clause.keys.as_slice() {
+        [key] => leaf_name(key),
+        _ => None,
+    }
+}
+
+/// 字段引用的叶子字段名；无法判定（空串）时 `None`，调用方据此跳过一致性检查。
+fn leaf_name(fr: &FieldRef) -> Option<String> {
+    let name = field_ref_field_name(fr);
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// 事件组的字段覆盖记录：`use({...})` 与 loader 解析后的 `use from` 同构。

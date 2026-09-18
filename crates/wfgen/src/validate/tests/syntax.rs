@@ -13,13 +13,13 @@ scenario brute_force_detect<seed=42> {
         stream auth_events gen 100/s
     }
     inject {
-        hit<user: 500> for brute_force_then_scan auth_events {
+        hit<sip: 500> for brute_force_then_scan auth_events {
             use(login="failed") x 3
         }
-        near_miss<user: 200> for brute_force_then_scan auth_events {
+        near_miss<sip: 200> for brute_force_then_scan auth_events {
             use(login="failed") x 2
         }
-        miss<user: 100> for brute_force_then_scan auth_events {
+        miss<sip: 100> for brute_force_then_scan auth_events {
             use(login="success") x 1
         }
     }
@@ -181,6 +181,147 @@ scenario s<seed=1> {
     assert!(
         errors.iter().any(|e| e.code == "VN12"),
         "errors: {:?}",
+        errors
+    );
+}
+
+/// VN22：显式实体字段不在该 stream 的 schema 里。生成器对拿不到类型的字段只会用
+/// 字符串兜底，注入会静默指向一个"看似实体"的字段。
+#[test]
+fn test_syntax_explicit_entity_field_must_exist_in_schema() {
+    let input = r#"
+#[duration=10m]
+scenario s<seed=1> {
+    background { stream auth_events gen 100/s }
+    inject {
+        hit<sip: 50> for rule_a auth_events {
+            use(login="failed") x 1
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    // schema 里没有 sip
+    let schemas = vec![make_schema("auth_events", vec![("login", BaseType::Chars)])];
+    let wfl = make_wfl("rule_a", vec![("a", "auth_events")]);
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        errors.iter().any(|e| e.code == "VN22"),
+        "errors: {:?}",
+        errors
+    );
+    assert!(
+        !errors.iter().any(|e| e.code == "VN23"),
+        "显式字段与推断一致时不该报 VN23：{:?}",
+        errors
+    );
+}
+
+/// VN23：单 key `match` 规则的实体就是该 key；显式写成别的字段会使"逐实体变化的字段"
+/// 与"规则聚合的 key"不是同一个。
+#[test]
+fn test_syntax_explicit_entity_field_must_match_match_key() {
+    let input = r#"
+#[duration=10m]
+scenario s<seed=1> {
+    background { stream auth_events gen 100/s }
+    inject {
+        hit<user: 50> for rule_a auth_events {
+            use(login="failed") x 1
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![
+            ("user", BaseType::Chars),
+            ("sip", BaseType::Ip),
+            ("login", BaseType::Chars),
+        ],
+    )];
+    // `match<sip:1m>` → 推断实体字段 = sip
+    let wfl = make_wfl("rule_a", vec![("a", "auth_events")]);
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        errors.iter().any(|e| e.code == "VN23"),
+        "errors: {:?}",
+        errors
+    );
+    assert!(
+        !errors.iter().any(|e| e.code == "VN22"),
+        "字段在 schema 里就不该报 VN22：{:?}",
+        errors
+    );
+}
+
+/// VN23（`on each`）：实体字段由 `entity(...)` 的单字段推断，显式写另一个字段同样不一致。
+#[test]
+fn test_syntax_explicit_entity_field_must_match_each_entity_expr() {
+    let input = r#"
+#[duration=10m]
+scenario s<seed=1> {
+    background { stream LoginWindow gen 20/s }
+    inject {
+        hit<username: 3> for each_alert LoginWindow {
+            use(attempts=500) x 1
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_schema(
+        "LoginWindow",
+        vec![
+            ("username", BaseType::Chars),
+            ("sip", BaseType::Ip),
+            ("attempts", BaseType::Digit),
+        ],
+    )];
+    // `entity(ip, e.sip)` → 推断实体字段 = sip
+    let wfl = make_wfl_each("each_alert", "LoginWindow", "sip");
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        errors.iter().any(|e| e.code == "VN23"),
+        "errors: {:?}",
+        errors
+    );
+    assert!(
+        !errors.iter().any(|e| e.code == "VN22"),
+        "字段在 schema 里就不该报 VN22：{:?}",
+        errors
+    );
+}
+
+/// 多 key 规则的实体是 key 元组（设计 §3.7 第二行），显式写字段是**消歧**用法 → 不报 VN23。
+#[test]
+fn test_syntax_explicit_entity_field_allowed_on_multi_key_rule() {
+    let input = r#"
+#[duration=10m]
+scenario s<seed=1> {
+    background { stream auth_events gen 100/s }
+    inject {
+        hit<sip: 20> for rule_a auth_events {
+            use(login="failed") x 1
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![
+            ("sip", BaseType::Ip),
+            ("dport", BaseType::Digit),
+            ("login", BaseType::Chars),
+        ],
+    )];
+    let wfl = make_wfl_match("rule_a", vec![("a", "auth_events")], "sip, dport", None);
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        !errors.iter().any(|e| e.code == "VN22" || e.code == "VN23"),
+        "多 key 下显式字段是消歧用法：{:?}",
         errors
     );
 }
@@ -448,7 +589,7 @@ fn test_use_records_array_is_accepted() {
     ]));
     let schemas = vec![make_schema(
         "auth_events",
-        vec![("action", BaseType::Chars)],
+        vec![("action", BaseType::Chars), ("login", BaseType::Chars)],
     )];
     let errors = validate_wfg(&wfg, &schemas, &[], true);
     assert!(

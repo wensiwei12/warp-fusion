@@ -18,6 +18,9 @@ use crate::wfg_ast::WfgFile;
 
 use dispatch::build_alias_map_for_syntax_case;
 use extract::extract_rule_structure;
+/// 校验期（`validate/syntax.rs` 的 VN22/VN23）与生成期共用同一份「字段引用 → 叶子
+/// 字段名」规则，避免两边对「实体字段是什么」的判断漂移。
+pub(crate) use extract::field_ref_field_name;
 use structures::InjectEntities;
 pub use structures::{InjectEntityKey, InjectGenResult, InjectStepCount};
 

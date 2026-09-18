@@ -247,7 +247,8 @@ hit<sip: 20> for sdm_rule sdm_event {
 | `on each s` + `entity(<type>, s.event_id)` | `event_id`（注入侧同口径推断，见 §3.2） |
 
 - 显式给出时才用 `hit<sip: 500>`；显式值应与推断结果一致。
-- "显式与推断不一致"（VN23）与"字段不在 schema"（VN22）**未实现**（§7.2）。
+- 显式与推断不一致 → `VN23`；字段不在该 stream 的 schema → `VN22`（都是**校验期**错误，
+  §4.1）。注意多 key 规则的实体是 key 元组，显式写字段属于**消歧**用法，不算不一致。
 
 ## 4. 校验与错误码
 
@@ -266,6 +267,8 @@ hit<sip: 20> for sdm_rule sdm_event {
 | VN17 | `use({...})` 顶层不是 object / object 数组（或记录不是 object、数组为空） | `… use({...}) 的顶层必须是 JSON object 或 object 数组` |
 | VN20 | 使用旧语法 `hit<N%>` / `with(N)` | 见 §5.1（**解析期**报错） |
 | VN21 | 实体个数为 0、`x 0`、或没有任何事件组 | `… 实体个数必须大于 0 / 第 k 个事件组 x 0 / 至少需要一个 use … x N 事件组` |
+| VN22 | 显式实体字段不在该 stream 的 schema | `… 实体字段 '<f>' 不在 stream '<s>' 的 schema '<w>' 里` |
+| VN23 | 显式实体字段与规则推断不一致（单 key `match` = 该 key；`on each` = `entity(...)` 的单字段） | `… 显式实体字段 '<f>' 与规则 '<r>' 推断的实体字段 '<g>' 不一致（去掉显式字段即用推断值；多 key 规则才需要显式消歧）` |
 | VN25 | `spread` 超过 `#[duration]` | `spread 20m` 超过场景 duration `10m` |
 
 其他层级的校验：`SC2/SC2a/SC3/SC4`（stream 与规则的绑定关系）、`SV2/SV3/SV4/SV6/SV7/SV8`
@@ -398,6 +401,10 @@ wfg + wfs + wfl
   必须不报警；复用 oracle 结果，失败在写期望文件之前报出。
 - 实体键空间按用例分段（`InjectEntities::next_entity_base`）：用例之间实体值不重叠，
   否则 `hit` 与 `near_miss` 会指向同一实体、两个口径互相污染。
+- 校验期实体字段检查 VN22 / VN23：显式实体字段必须在该 stream 的 schema 里，且必须与
+  规则推断的实体字段一致（单 key `match` = 该 key；`on each` = `entity(...)` 的单字段；
+  多 key 规则的显式字段按消歧用法放行）。缺了它，注入会静默指向错实体——生成器对拿不到
+  类型的字段只会用字符串兜底。
 - 背景与注入完全分离：背景保留自己的配额（`rate × duration`），注入在其上叠加
   （旧口径 `背景 = 配额 − 注入` 及其 `inject_counts` 链路已删除）。
 - `use from "file"` 的值文件解析（`loader::resolve_inject_files`）：相对 `.wfg` 目录解析路径，
@@ -426,7 +433,7 @@ wfg + wfs + wfl
 | `replay STREAM { use from "f" }` 照单发货 | 未实现 |
 | `without(...)` 步骤（取代旧 `not(...) within(...)`） | 未实现 |
 | 时间**均匀**铺开 | 部分：`spread` 已可写并覆盖窗口长度，铺开策略仍是"随机簇起点 + 窗口内铺开" |
-| VN22 / VN23（实体字段存在性与推断一致性）、VN24（事件组数 > 步骤数）、VN26（replay 文件） | 未实现；事件组数超限目前是生成期的 `exceeds rule step count` |
+| VN24（事件组数 > 步骤数）、VN26（replay 文件） | 未实现；事件组数超限目前是生成期的 `exceeds rule step count` |
 | 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | **已落地**（§7.1；16/16 `lint` + `gen` 断言通过） |
 | 文档：CHANGELOG | 未写；按本仓惯例随 `chore(release)` 提交一起写（`git log -- CHANGELOG.md` 全是 release 提交） |
 
