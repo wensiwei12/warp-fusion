@@ -154,6 +154,7 @@ pub(super) fn extract_syntax_case_overrides(case: &InjectCase) -> WfgenResult<In
         entity_count: Some(case.entity_count),
         within: case.spread,
         use_steps,
+        joins: case.joins.clone(),
     })
 }
 
@@ -162,7 +163,9 @@ pub(super) fn extract_syntax_case_overrides(case: &InjectCase) -> WfgenResult<In
 /// `use from "file"` 必须已由 `loader::resolve_inject_files` 解析成
 /// [`ValueSource::Json`]（`gen` / `lint` / `bench` / `send` 都会走
 /// `loader::load_from_uses`）；残留的 `File` 会**报错**而不是静默生成空字段。
-fn source_to_records(source: &ValueSource) -> WfgenResult<Vec<HashMap<String, serde_json::Value>>> {
+pub(crate) fn source_to_records(
+    source: &ValueSource,
+) -> WfgenResult<Vec<HashMap<String, serde_json::Value>>> {
     let records = match source {
         ValueSource::Predicates(predicates) => {
             vec![predicates_to_entries(predicates).into_iter().collect()]

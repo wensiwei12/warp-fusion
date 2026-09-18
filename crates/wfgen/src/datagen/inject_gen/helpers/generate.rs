@@ -5,9 +5,11 @@ use rand::rngs::StdRng;
 use wf_lang::{BaseType, FieldType, WindowSchema};
 
 use crate::datagen::field_gen::generate_field_value;
+use crate::datagen::inject_gen::extract::source_to_records;
 use crate::datagen::inject_gen::structures::{InjectUseStepOverrides, StepInfo};
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::{self, WfgenReason, WfgenResult};
+use crate::wfg_ast::JoinStmt;
 
 use super::plan::*;
 
@@ -24,6 +26,7 @@ pub(crate) fn generate_cluster_events(
     step_event_counts: &[u64],
     key_overrides: &HashMap<String, serde_json::Value>,
     use_step_overrides: &[InjectUseStepOverrides],
+    joins: &[JoinStmt],
     cluster_start_secs: f64,
     window_secs: f64,
     schemas: &[WindowSchema],
@@ -36,6 +39,7 @@ pub(crate) fn generate_cluster_events(
         step_event_counts,
         key_overrides,
         use_step_overrides,
+        joins,
         cluster_start_secs,
         window_secs,
         schemas,
@@ -52,6 +56,7 @@ fn generate_cluster_events_with_filter_validation(
     step_event_counts: &[u64],
     key_overrides: &HashMap<String, serde_json::Value>,
     use_step_overrides: &[InjectUseStepOverrides],
+    joins: &[JoinStmt],
     cluster_start_secs: f64,
     window_secs: f64,
     schemas: &[WindowSchema],
@@ -125,11 +130,91 @@ fn generate_cluster_events_with_filter_validation(
                 timestamp: ts,
                 fields,
             });
+            // 设计 §9：为一个左事件补发 `join` 块声明的右事件。
+            push_join_events(joins, key_overrides, &ts, schemas, rng, out)?;
         }
 
         cumulative_offset += per_step_window;
     }
 
+    Ok(())
+}
+
+/// 为一个左事件补发 `join` 块声明的右事件（设计 §9 跨流注入）。
+///
+/// 右行的**连接键** = 左实体键值、**时间** = 该左事件时间（校验期 VN30 已保证规则的
+/// `within` 区间含左事件时间）；其余字段按目标窗 schema 随机生成、再由 `use(...)` 的谓词
+/// 覆盖——复用 `build_event_fields_with_predicates`，时间字段口径因此与左事件天然一致。
+pub(crate) fn push_join_events(
+    joins: &[JoinStmt],
+    key_overrides: &HashMap<String, serde_json::Value>,
+    left_ts: &DateTime<Utc>,
+    schemas: &[WindowSchema],
+    rng: &mut StdRng,
+    out: &mut Vec<GenEvent>,
+) -> WfgenResult<()> {
+    if joins.is_empty() {
+        return Ok(());
+    }
+
+    // 驱动键：v1 只支持单键规则——多键时无法唯一确定右行的连接键值。
+    let key_value = match key_overrides.len() {
+        0 => {
+            return error::fail(
+                WfgenReason::Validation,
+                "join 块需要规则的 match 键值，但本用例没有任何键覆盖",
+            );
+        }
+        1 => key_overrides.values().next().expect("len == 1").clone(),
+        n => {
+            return error::fail(
+                WfgenReason::Validation,
+                format!("join 块暂不支持多键规则（本用例有 {n} 个键值）：右行连接键无法唯一确定"),
+            );
+        }
+    };
+
+    let no_filters: HashMap<String, serde_json::Value> = HashMap::new();
+    for join in joins {
+        let schema = schemas
+            .iter()
+            .find(|s| s.name == join.window)
+            .ok_or_else(|| {
+                error::error(
+                    WfgenReason::Validation,
+                    format!("schema not found for join window '{}'", join.window),
+                )
+            })?;
+        let stream_name = schema
+            .streams
+            .first()
+            .cloned()
+            .unwrap_or_else(|| schema.name.clone());
+
+        let mut right_keys = HashMap::new();
+        right_keys.insert(join.key_field.clone(), key_value.clone());
+
+        for group in &join.groups {
+            let records = source_to_records(&group.source)?;
+            for i in 0..group.count {
+                let predicates = &records[i as usize % records.len()];
+                let fields = build_event_fields_with_predicates(
+                    schema,
+                    &right_keys,
+                    &no_filters,
+                    predicates,
+                    left_ts,
+                    rng,
+                );
+                out.push(GenEvent {
+                    stream_name: stream_name.clone(),
+                    window_name: join.window.clone(),
+                    timestamp: *left_ts,
+                    fields,
+                });
+            }
+        }
+    }
     Ok(())
 }
 

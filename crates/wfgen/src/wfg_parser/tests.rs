@@ -64,6 +64,43 @@ scenario rates<seed=2> {
     assert!(matches!(t[2].rate, RateExpr::Timeline(_)));
 }
 
+/// `join <window> as <key> { use … x N }`（设计 §9 跨流注入）进 AST。
+#[test]
+fn test_parse_join_block() {
+    let input = r#"
+#[duration=10s]
+scenario cross<seed=3> {
+    background { stream person_events gen 5/s }
+    inject {
+        hit<id: 4> for person_creates_auction person_events {
+            use(name="p") x 1
+            join auction_events as seller {
+                use(price=42) x 2
+                then use(price=7) x 1
+            }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let case = &wfg
+        .syntax
+        .as_ref()
+        .unwrap()
+        .injection
+        .as_ref()
+        .unwrap()
+        .cases[0];
+    assert_eq!(case.groups.len(), 1, "join 块不占事件步骤位");
+    assert_eq!(case.joins.len(), 1);
+    let join = &case.joins[0];
+    assert_eq!(join.window, "auction_events");
+    assert_eq!(join.key_field, "seller");
+    assert_eq!(join.groups.len(), 2);
+    assert_eq!(join.groups[0].count, 2);
+    assert_eq!(join.groups[1].count, 1);
+}
+
 #[test]
 fn test_parse_injection_extensions() {
     let input = r#"

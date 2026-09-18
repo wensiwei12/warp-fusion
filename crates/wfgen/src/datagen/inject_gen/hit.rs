@@ -69,6 +69,7 @@ pub(super) fn generate_hit_clusters(
             &step_event_counts,
             &key_overrides,
             &overrides.use_steps,
+            &overrides.joins,
             cluster_start_secs,
             window_secs,
             schemas,

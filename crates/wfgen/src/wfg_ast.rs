@@ -189,6 +189,9 @@ pub struct InjectCase {
     pub stream: String,
     /// 按步骤顺序的事件组；每组给出「每实体几条」与「值从哪来」。
     pub groups: Vec<UseGroup>,
+    /// `join <target_window> as <right_key_field> { use … x N }`（设计 §9 跨流注入）：
+    /// 为规则的某个 join 目标窗造配对事件。
+    pub joins: Vec<JoinStmt>,
     /// `without(...)` 构造约束（设计 §3.8）：该实体在其事件跨度内不得出现匹配的事件。
     ///
     /// 与 `groups` **解耦**（位置无语义）：它不是"一个步骤"、不参与 VN24 的组数口径、
@@ -196,6 +199,22 @@ pub struct InjectCase {
     pub withouts: Vec<WithoutStep>,
     /// 时间铺开窗口；`None` = 均匀铺满场景 duration。
     pub spread: Option<Duration>,
+}
+
+/// `join <target_window> as <right_key_field> { use … x N }`（设计 §9）。
+///
+/// 为规则的某个 join 目标窗造配对事件：右行的**连接键**自动写成左实体的键值，
+/// 时间取所属左事件的时间（落在规则 `within` 区间内由校验期保证），因此用户不需要
+/// 手写键值或时间。断言仍以**驱动侧（用例 `stream`）实体**为单位。
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct JoinStmt {
+    /// 目标窗：规则 `join <window>` 的窗口名。
+    pub window: String,
+    /// 右行的连接键字段：规则 `on <left> == <right>` 的 right 字段名。
+    pub key_field: String,
+    /// 每**条左事件**在该窗造几条（`x N`）；值来源同 `use(...)`。
+    pub groups: Vec<UseGroup>,
 }
 
 /// `without(preds) [within D]`：该实体的窗口内**不得出现**匹配 `preds` 的事件。

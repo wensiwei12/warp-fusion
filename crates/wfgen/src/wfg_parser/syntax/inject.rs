@@ -128,6 +128,7 @@ fn parse_explicit_injection_case(
 
     let mut groups = Vec::new();
     let mut withouts = Vec::new();
+    let mut joins = Vec::new();
     let mut spread = None;
     loop {
         ws_skip(input)?;
@@ -144,6 +145,51 @@ fn parse_explicit_injection_case(
             let _ = opt(literal(";")).parse_next(input)?;
             continue;
         }
+        // `join <window> as <key> { use … x N }`（设计 §9 跨流注入）。
+        if opt(wf_lang::parse_utils::kw("join"))
+            .parse_next(input)?
+            .is_some()
+        {
+            ws_skip(input)?;
+            let window = cut_err(ident)
+                .context(StrContext::Expected(StrContextValue::Description(
+                    "target window name after `join`",
+                )))
+                .parse_next(input)?
+                .to_string();
+            ws_skip(input)?;
+            cut_err(wf_lang::parse_utils::kw("as"))
+                .context(StrContext::Expected(StrContextValue::Description(
+                    "`as <right_key_field>` after the join target window",
+                )))
+                .parse_next(input)?;
+            ws_skip(input)?;
+            let key_field = cut_err(ident)
+                .context(StrContext::Expected(StrContextValue::Description(
+                    "right-side join key field name after `as`",
+                )))
+                .parse_next(input)?
+                .to_string();
+            ws_skip(input)?;
+            cut_err(literal("{")).parse_next(input)?;
+            let mut join_groups = Vec::new();
+            loop {
+                ws_skip(input)?;
+                if opt(literal("}")).parse_next(input)?.is_some() {
+                    break;
+                }
+                let _ = opt(wf_lang::parse_utils::kw("then")).parse_next(input)?;
+                ws_skip(input)?;
+                join_groups.push(parse_use_group(input)?);
+            }
+            joins.push(JoinStmt {
+                window,
+                key_field,
+                groups: join_groups,
+            });
+            continue;
+        }
+
         // VN20：旧的 `<field> seq { … }` 块（实体字段写在体内）。放在 `use` 之前
         // 接住，否则用户只会看到笼统的"期望某个块/事件组"。
         {
@@ -212,36 +258,7 @@ fn parse_explicit_injection_case(
                 ),
             ));
         }
-        cut_err(wf_lang::parse_utils::kw("use"))
-            .context(StrContext::Expected(StrContextValue::Description(
-                "use(...) / use({...}) / use from <file> event group, or without(...) constraint",
-            )))
-            .parse_next(input)?;
-        let source = parse_value_source(input)?;
-        ws_skip(input)?;
-        // VN20：旧的条数写法 `with(N)`。
-        if opt(wf_lang::parse_utils::kw("with"))
-            .parse_next(input)?
-            .is_some()
-        {
-            return Err(winnow::error::ErrMode::Cut(
-                winnow::error::ContextError::new().add_context(
-                    input,
-                    &input.checkpoint(),
-                    StrContext::Expected(StrContextValue::Description(VN20_LEGACY_WITH)),
-                ),
-            ));
-        }
-        cut_err(wf_lang::parse_utils::kw("x"))
-            .context(StrContext::Expected(StrContextValue::Description(
-                "`x N` (events per entity for this step) after the value source",
-            )))
-            .parse_next(input)?;
-        ws_skip(input)?;
-        let count = cut_err(wf_lang::parse_utils::nonneg_integer).parse_next(input)? as u64;
-        ws_skip(input)?;
-        let _ = opt(literal(";")).parse_next(input)?;
-        groups.push(UseGroup { count, source });
+        groups.push(parse_use_group(input)?);
     }
 
     Ok(InjectCase {
@@ -251,9 +268,44 @@ fn parse_explicit_injection_case(
         target_rule,
         stream,
         groups,
+        joins,
         withouts,
         spread,
     })
+}
+
+/// 一个事件组：`use(...) / use({...}) / use from "file"` + `x N`。
+fn parse_use_group(input: &mut &str) -> ModalResult<UseGroup> {
+    cut_err(wf_lang::parse_utils::kw("use"))
+        .context(StrContext::Expected(StrContextValue::Description(
+            "use(...) / use({...}) / use from <file> event group, or without(...) constraint",
+        )))
+        .parse_next(input)?;
+    let source = parse_value_source(input)?;
+    ws_skip(input)?;
+    // VN20：旧的条数写法 `with(N)`。
+    if opt(wf_lang::parse_utils::kw("with"))
+        .parse_next(input)?
+        .is_some()
+    {
+        return Err(winnow::error::ErrMode::Cut(
+            winnow::error::ContextError::new().add_context(
+                input,
+                &input.checkpoint(),
+                StrContext::Expected(StrContextValue::Description(VN20_LEGACY_WITH)),
+            ),
+        ));
+    }
+    cut_err(wf_lang::parse_utils::kw("x"))
+        .context(StrContext::Expected(StrContextValue::Description(
+            "`x N` (events per entity for this step) after the value source",
+        )))
+        .parse_next(input)?;
+    ws_skip(input)?;
+    let count = cut_err(wf_lang::parse_utils::nonneg_integer).parse_next(input)? as u64;
+    ws_skip(input)?;
+    let _ = opt(literal(";")).parse_next(input)?;
+    Ok(UseGroup { count, source })
 }
 
 /// 事件字段值的来源：`(preds)` / `({json})` / `from "path"`

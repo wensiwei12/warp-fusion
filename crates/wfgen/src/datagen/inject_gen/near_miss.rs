@@ -77,6 +77,7 @@ pub(super) fn generate_near_miss_clusters(
             &near_miss_counts,
             &key_overrides,
             &overrides.use_steps,
+            &overrides.joins,
             cluster_start_secs,
             window_secs,
             schemas,

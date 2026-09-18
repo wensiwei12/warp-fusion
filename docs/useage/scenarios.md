@@ -62,6 +62,7 @@ wfgen gen --scenario crates/wfadm/templates/models/scenarios/ssh_brute_force.wfg
 | `scenario NAME<seed=N>` | 场景名 + 随机种子 |
 | `background { stream S gen R/s }` | 背景流量：只决定"除定向构造外还有多少随机事件"。速率**只支持常量**（`/s` `/m` `/h`） |
 | `inject { … }` | 定向构造：每个用例声明**模式 + 实体个数 + 事件组** |
+| `join <window> as <key> { … }` | 跨流注入：为规则的 join 目标窗造配对事件（键与时间自动推导） |
 
 ## 三种模式 = 硬断言
 
@@ -116,6 +117,29 @@ hit<sip: 20> for sdm_rule sdm_event {
 - `spread D`：把该用例的事件铺开到 `D`，必须 ≤ `#[duration]`（`VN25`）；不给时按
   规则窗口长度铺开。各实体的窗口在场景时长内**等距**排开（首簇贴 `0`、末簇贴到场景末尾，
   覆盖整段），簇内事件按步骤顺序在窗口内均匀落下。
+
+## 跨流注入：`join(...)`
+
+规则的 `join` 是跨流的：驱动侧与目标窗在两条流上。`join` 块声明「为本用例的每条左事件，
+在目标窗造几条」——右行的**连接键**与**时间**由生成器推导，你不用手写：
+
+```wfg
+hit<id: 200> for q8_monitor_new_user person_events {   // 左（驱动）侧
+  use(name="n") x 1
+  join auction_events as seller {                      // 目标窗 + 右行连接键字段
+    use(price=7) x 1
+  }
+}
+```
+
+- **连接键**：`as seller` 的 `seller` 会被写成**左实体键值**——名字要和规则
+  `on p.id == auction_events.seller` 的**右侧字段**一致（VN30 校验能唯一匹配到该 join 子句）。
+- **时间**：取所属左事件的时间（deferred 形态下这正是 `within` 下界的常见形状）。
+- 断言口径不变：仍以**驱动侧实体**为单位（`hit` 必报、`near_miss` / `miss` 必不报）。
+- v1 边界：只支持 **deferred**（规则写了 `emit at`）**且缺省 inner** 形态的 join、只支持单键
+  规则；`snapshot` / `asof` / `anti`、没有 `emit at` 的即时 join、多键规则都会明确报错。
+  若规则的 `within` 下界晚于左事件时间，右事件会落在区间外——生成期 INJ1 会报
+  「hit 实体不会触发」（可见的失败，不会静默出数据）。
 
 ## 带否定步骤的规则：`without(...)`
 
@@ -188,6 +212,7 @@ scenario replay_only<seed=1> {
 | `VN27` | 场景的实体 id 总数达到 2^24 上限（`miss` 按「每个事件一个独立键」计入） |
 | `VN28` | 背景速率用了 `wave(...)` / `burst(...)` / `timeline { ... }`——这三个形态**语法已定但语义未实现**（会按 `base=` 的常量速率生成），先改用常量速率 |
 | `VN29` | 场景注解键不在白名单（`#[...]` 只认 `duration`、`<...>` 只认 `seed`），或值类型不合法（如 `#[duration=10]`、`<seed="abc">`） |
+| `VN30` | `join <window> as <key>` 匹配不到规则的 join 子句（目标窗 / 右侧连接键），形态不是缺省 inner，或规则的 `within` 区间不含左事件时间 |
 | INJ1 / INJ2 | 生成期断言失败：`hit` 实体没报警（INJ1），或 `near_miss` / `miss` 实体报了警（INJ2） |
 
 排查手法：断言失败时输出会点名是哪个用例、哪个实体、实际与期望的告警数；先确认

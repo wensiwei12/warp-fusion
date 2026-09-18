@@ -11,7 +11,7 @@ use crate::error::{self, WfgenReason, WfgenResult};
 use crate::inject_assert::assert_inject_modes;
 use crate::injection_targets::injected_rule_names;
 use crate::loader::load_from_uses;
-use crate::oracle::{OracleTolerances, run_oracle};
+use crate::oracle::{OracleTolerances, run_oracle_events_full};
 use crate::output::arrow_ipc::write_arrow_ipc;
 use crate::output::jsonl::{write_jsonl, write_oracle_jsonl};
 use crate::validate::validate_wfg;
@@ -206,12 +206,16 @@ pub async fn run(args: Args) -> WfgenResult<()> {
         // SC7: only evaluate rules that have inject coverage
         let injected_rules = injected_rule_names(&wfg)?;
 
-        let expected_result = run_oracle(
-            &result.events,
+        // 必须带 schemas：join 家族规则的右窗靠它建立 lookup——不带则右窗恒空、
+        // join 恒 miss（`run_oracle` 就是不带 schemas 的便捷形态）。
+        let expected_result = run_oracle_events_full(
+            result.events.clone(),
             &rule_plans,
+            &schemas,
             &start,
             &duration,
             Some(&injected_rules),
+            true,
         )?;
 
         // 生成期硬断言（INJ1/INJ2，设计 §4.2）：复用上面刚算出的 oracle 结果，
@@ -280,12 +284,14 @@ pub async fn run(args: Args) -> WfgenResult<()> {
 
         let injected_rules = injected_rule_names(&wfg)?;
 
-        let faulted_expected = run_oracle(
-            &output_events,
+        let faulted_expected = run_oracle_events_full(
+            output_events.clone(),
             &rule_plans,
+            &schemas,
             &start,
             &duration,
             Some(&injected_rules),
+            true,
         )?;
 
         let faulted_expected_file = out.join(format!("{}.faulted-except.jsonl", output_case));

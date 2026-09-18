@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use wf_lang::WindowSchema;
-use wf_lang::ast::{Expr, FieldRef, RuleDecl};
+use wf_lang::ast::{Expr, FieldRef, JoinMode, RuleDecl};
 
 use super::ValidationError;
 use crate::datagen::inject_gen::ENTITY_ID_SPACE;
 use crate::datagen::inject_gen::field_ref_field_name;
 use crate::wfg_ast::{
-    AttrValue, FieldPredicate, RateExpr, SyntaxScenario, ValueSource, WfgFile,
+    AttrValue, FieldPredicate, InjectCase, RateExpr, SyntaxScenario, ValueSource, WfgFile,
     json_top_level_entries,
 };
 
@@ -82,6 +82,16 @@ pub(super) fn validate_syntax(
 
         for case in &inj.cases {
             total_entity_ids += entity_ids_consumed(case);
+            // VN30：`join <window> as <key> { … }`（设计 §9 跨流注入）的静态一致性。
+            validate_case_joins(
+                case,
+                all_rules
+                    .iter()
+                    .copied()
+                    .find(|r| r.name == case.target_rule),
+                &schemas_by_name,
+                &mut errors,
+            );
             let stream = case.stream.as_str();
             let case_schema = schemas_by_name.get(stream).copied();
             if !background_streams.contains(stream) {
@@ -322,6 +332,114 @@ fn validate_scenario_annos(syntax: &SyntaxScenario, errors: &mut Vec<ValidationE
                     attr_value_kind(&attr.value)
                 ),
             });
+        }
+    }
+}
+
+/// VN30：`join <target_window> as <right_key_field> { use … x N }` 的静态一致性
+/// （设计 §9 跨流注入）。
+///
+/// 右事件的连接键与时间由生成器推导（键 = 左实体键值、时间 = 左事件时间），所以这里要
+/// 保证推导是**有依据**的：目标窗要能唯一匹配到规则的一个 join 子句、形态是缺省 inner、
+/// 且（界可算时）规则的 `within` 区间确实含左事件时间。造错跨流数据会静默改掉断言口径，
+/// 因此全部按报错处理。
+fn validate_case_joins(
+    case: &InjectCase,
+    rule: Option<&RuleDecl>,
+    schemas_by_name: &HashMap<&str, &WindowSchema>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for join in &case.joins {
+        let Some(right_schema) = schemas_by_name.get(join.window.as_str()).copied() else {
+            errors.push(ValidationError {
+                code: "VN30",
+                message: format!(
+                    "injection case '{}' 的 `join {}` 目标窗不在已加载的 schema 里",
+                    case.stream, join.window
+                ),
+            });
+            continue;
+        };
+
+        let matched = rule.and_then(|r| {
+            r.joins.iter().find(|jc| {
+                jc.target_window == join.window
+                    && jc
+                        .conditions
+                        .iter()
+                        .any(|c| field_ref_field_name(&c.right) == join.key_field)
+            })
+        });
+        let Some(join_clause) = matched else {
+            // 规则本身找不到时由 VN14 报，这里不重复刷屏。
+            if rule.is_some() {
+                errors.push(ValidationError {
+                    code: "VN30",
+                    message: format!(
+                        "injection case '{}' 的 `join {} as {}` 匹配不到规则 '{}' 的 join 子句（目标窗与右侧连接键要和规则的 `join … on … == …` 一致）",
+                        case.stream, join.window, join.key_field, case.target_rule
+                    ),
+                });
+            }
+            continue;
+        };
+
+        // v1 只支持 **deferred**（`emit at`）join：即时 inner join 要求右行在驱动事件被处理
+        // 时就已可见（右事件必须早于左事件），而规则的 `within` 下界常常就是左事件时间
+        // （如 q8 的 `[p.dateTime, …]`）——两者不可兼得，造出来必然时好时坏。
+        if join_clause.emit_at.is_none() {
+            errors.push(ValidationError {
+                code: "VN30",
+                message: format!(
+                    "injection case '{}' 的 `join {}` 指向的规则 join 没有 `emit at`：v1 只支持 deferred join（即时 inner join 要求右行先于驱动事件可见，与 within 区间冲突）",
+                    case.stream, join.window
+                ),
+            });
+        }
+
+        if !matches!(join_clause.mode, JoinMode::Inner) {
+            errors.push(ValidationError {
+                code: "VN30",
+                message: format!(
+                    "injection case '{}' 的 `join {}` 指向的规则 join 是 snapshot/asof/anti 形态，暂不支持（v1 只支持缺省 inner）",
+                    case.stream, join.window
+                ),
+            });
+        }
+
+        if join.groups.is_empty() {
+            errors.push(ValidationError {
+                code: "VN21",
+                message: format!(
+                    "injection case '{}' 的 `join {}` 至少需要一个 `use ... x N` 事件组",
+                    case.stream, join.window
+                ),
+            });
+        }
+        for (idx, group) in join.groups.iter().enumerate() {
+            if group.count == 0 {
+                errors.push(ValidationError {
+                    code: "VN21",
+                    message: format!(
+                        "injection case '{}' 的 `join {}` 第 {} 个事件组 x 0",
+                        case.stream,
+                        join.window,
+                        idx + 1
+                    ),
+                });
+            }
+            // 字段落在**目标窗** schema 里；连接键由生成器写，重复声明按 VN12 报。
+            for record in source_records(&group.source, errors, &join.window, idx) {
+                check_predicate_fields(
+                    errors,
+                    &join.window,
+                    idx,
+                    "join use",
+                    &record,
+                    Some(&join.key_field),
+                    Some(right_schema),
+                );
+            }
         }
     }
 }

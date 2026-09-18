@@ -64,6 +64,182 @@ scenario s<seed=1> {
     assert!(err.contains("VN20"), "unexpected error: {err}");
 }
 
+/// VN30：`join <window> as <key>` 必须能匹配到规则的 join 子句（目标窗 + 右侧连接键），
+/// 且形态是缺省 inner。
+#[test]
+fn test_vn30_join_must_match_rule_join_clause() {
+    // 规则里 join 的右窗是 auction_events、连接键是 seller。
+    let rule = "
+rule person_creates_auction {
+    events { p : person_events }
+    on each p -> score(10)
+    join auction_events within [p.timestamp, <bucket_end(p.timestamp, 5s)]
+        on p.id == auction_events.seller
+        emit at bucket_end(p.timestamp, 5s)
+    entity(digit, p.id)
+    yield alerts(id = p.id)
+}";
+    let schemas = vec![
+        make_schema("person_events", vec![("id", BaseType::Digit)]),
+        make_schema(
+            "auction_events",
+            vec![("seller", BaseType::Digit), ("price", BaseType::Digit)],
+        ),
+    ];
+    let wfl = wf_lang::parse_wfl(rule).unwrap();
+
+    let ok = r#"
+#[duration=10s]
+scenario s<seed=1> {
+    background { stream person_events gen 5/s }
+    inject {
+        hit<id: 2> for person_creates_auction person_events {
+            use(id=1) x 1
+            join auction_events as seller { use(price=1) x 1 }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(ok).unwrap();
+    let errors = validate_wfg(&wfg, &schemas, std::slice::from_ref(&wfl), false);
+    assert!(
+        !errors.iter().any(|e| e.code == "VN30"),
+        "匹配上的 join 不应报 VN30: {errors:?}"
+    );
+
+    for (decl, why) in [
+        (
+            "join auction_events as wrong_key { use(price=1) x 1 }",
+            "连接键字段写错",
+        ),
+        (
+            "join bid_events as seller { use(price=1) x 1 }",
+            "目标窗写错",
+        ),
+    ] {
+        let input = format!(
+            r#"
+#[duration=10s]
+scenario s<seed=1> {{
+    background {{ stream person_events gen 5/s }}
+    inject {{
+        hit<id: 2> for person_creates_auction person_events {{
+            use(id=1) x 1
+            {decl}
+        }}
+    }}
+}}
+"#
+        );
+        let wfg = parse_wfg(&input).unwrap();
+        let errors = validate_wfg(&wfg, &schemas, std::slice::from_ref(&wfl), false);
+        let vn30: Vec<_> = errors.iter().filter(|e| e.code == "VN30").collect();
+        assert!(!vn30.is_empty(), "{why}: 应报 VN30: {errors:?}");
+    }
+}
+
+/// VN30：v1 只支持 **deferred**（`emit at`）join。即时 inner join 要求右行在驱动事件
+/// 被处理时就已可见（右事件必须更早），而 `within` 下界常常就是左事件时间——两者冲突，
+/// 造出来的数据会时好时坏，因此明确拒绝。
+#[test]
+fn test_vn30_join_requires_deferred_emit_at() {
+    let rule = "
+rule p_joins_a {
+    events { p : person_events }
+    on each p -> score(10)
+    join auction_events within [p.timestamp, <bucket_end(p.timestamp, 5s)] on p.id == auction_events.seller
+    entity(digit, p.id)
+    yield alerts(id = p.id)
+}";
+    let schemas = vec![
+        make_schema("person_events", vec![("id", BaseType::Digit)]),
+        make_schema(
+            "auction_events",
+            vec![("seller", BaseType::Digit), ("price", BaseType::Digit)],
+        ),
+    ];
+    let wfl = wf_lang::parse_wfl(rule).unwrap();
+    let input = r#"
+#[duration=10s]
+scenario s<seed=1> {
+    background { stream person_events gen 5/s }
+    inject {
+        hit<id: 2> for p_joins_a person_events {
+            use(id=1) x 1
+            join auction_events as seller { use(price=1) x 1 }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.code == "VN30" && e.message.contains("emit at")),
+        "非 deferred join 应报 VN30: {errors:?}"
+    );
+}
+
+/// VN30 的字段检查落在**目标窗** schema 上；连接键由生成器写，重复声明按 VN12 报。
+#[test]
+fn test_vn30_join_fields_checked_against_target_window() {
+    let rule = "
+rule p_joins_a {
+    events { p : person_events }
+    on each p -> score(10)
+    join auction_events within [p.timestamp, <bucket_end(p.timestamp, 5s)]
+        on p.id == auction_events.seller
+        emit at bucket_end(p.timestamp, 5s)
+    entity(digit, p.id)
+    yield alerts(id = p.id)
+}";
+    let schemas = vec![
+        make_schema("person_events", vec![("id", BaseType::Digit)]),
+        make_schema("auction_events", vec![("seller", BaseType::Digit)]),
+    ];
+    let wfl = wf_lang::parse_wfl(rule).unwrap();
+
+    // 字段不在目标窗 schema → VN11；在 use 里重复连接键 → VN12。
+    let input = r#"
+#[duration=10s]
+scenario s<seed=1> {
+    background { stream person_events gen 5/s }
+    inject {
+        hit<id: 2> for p_joins_a person_events {
+            use(id=1) x 1
+            join auction_events as seller { use(nope=1) x 1 }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let errors = validate_wfg(&wfg, &schemas, std::slice::from_ref(&wfl), false);
+    assert!(
+        errors.iter().any(|e| e.code == "VN11"),
+        "目标窗里没有的字段应报 VN11: {errors:?}"
+    );
+
+    let input = r#"
+#[duration=10s]
+scenario s<seed=1> {
+    background { stream person_events gen 5/s }
+    inject {
+        hit<id: 2> for p_joins_a person_events {
+            use(id=1) x 1
+            join auction_events as seller { use(seller=1) x 1 }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        errors.iter().any(|e| e.code == "VN12"),
+        "在 use 里重复 join 连接键应报 VN12: {errors:?}"
+    );
+}
+
 /// VN29：注解键白名单——`#[...]` 只认 `duration`，`<...>` 只认 `seed`。
 /// 注解列表是泛化解析的，其余键此前被**静默忽略**（文档里声明「未实现」的
 /// `tick` / `rows` / `emit` 正是这一类）。

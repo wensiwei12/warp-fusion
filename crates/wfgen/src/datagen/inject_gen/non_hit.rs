@@ -7,7 +7,7 @@ use wf_lang::WindowSchema;
 
 use super::helpers::{
     build_event_fields_with_predicates, generate_key_values,
-    plan_use_steps_allowing_filter_conflicts, resolve_cluster_count,
+    plan_use_steps_allowing_filter_conflicts, push_join_events, resolve_cluster_count,
 };
 use super::structures::{InjectEntities, InjectOverrides, RuleStructure};
 use crate::datagen::stream_gen::GenEvent;
@@ -166,6 +166,15 @@ fn generate_non_hit_use_step_events(
                     timestamp: ts,
                     fields,
                 });
+                // 设计 §9：为一个左事件补发 `join` 块声明的右事件。
+                push_join_events(
+                    &overrides.joins,
+                    &key_overrides,
+                    &ts,
+                    schemas,
+                    rng,
+                    &mut events,
+                )?;
             }
         }
     }

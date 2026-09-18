@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use wf_lang::ast::Measure;
 
 use crate::datagen::stream_gen::GenEvent;
-use crate::wfg_ast::{InjectCase, InjectCaseMode};
+use crate::wfg_ast::{InjectCase, InjectCaseMode, JoinStmt};
 
 /// Result of inject event generation.
 pub struct InjectGenResult {
@@ -272,6 +272,9 @@ pub(super) struct InjectOverrides {
     pub(super) within: Option<Duration>,
     /// Ordered `use(...)` declarations; each declaration maps to one rule step.
     pub(super) use_steps: Vec<InjectUseStepOverrides>,
+    /// `join <window> as <key> { … }` 块（设计 §9 跨流注入）：为规则的 join 目标窗
+    /// 造配对事件，右行连接键 = 左实体键值、时间 = 所属左事件时间。
+    pub(super) joins: Vec<JoinStmt>,
 }
 
 /// Overrides extracted from one `use …` event group.

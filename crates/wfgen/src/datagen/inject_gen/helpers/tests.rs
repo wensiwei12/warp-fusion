@@ -246,6 +246,7 @@ fn near_miss_counts_are_written_counts_not_clamped() {
                 HashMap::from([("stage".to_string(), serde_json::json!("after"))]),
             ),
         ],
+        joins: Vec::new(),
     };
 
     let counts = compute_near_miss_counts(&steps, &overrides).unwrap();
@@ -265,6 +266,7 @@ fn cluster_count_is_the_written_entity_count() {
         entity_field: Some("sip".to_string()),
         within: None,
         use_steps: Vec::new(),
+        joins: Vec::new(),
     };
     assert_eq!(resolve_cluster_count(&written), 500);
 
@@ -273,6 +275,7 @@ fn cluster_count_is_the_written_entity_count() {
         entity_field: None,
         within: None,
         use_steps: Vec::new(),
+        joins: Vec::new(),
     };
     assert_eq!(
         resolve_cluster_count(&absent),
@@ -297,6 +300,7 @@ fn hit_and_near_miss_share_the_same_counts() {
         entity_field: None,
         within: None,
         use_steps: vec![InjectUseStepOverrides::single(12, HashMap::new())],
+        joins: Vec::new(),
     };
 
     let hit = compute_hit_counts(&steps, &overrides).unwrap();

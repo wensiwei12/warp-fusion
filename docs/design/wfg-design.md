@@ -83,8 +83,9 @@ inject_case      = mode_kw , "<" , [ IDENT , ":" ] , INTEGER , ">" ,
                    "for" , IDENT , IDENT , "{" , inject_body , "}" ;
 mode_kw          = "hit" | "near_miss" | "miss" ;
 inject_body      = { step } , [ "spread" , DURATION ] ;
-step             = event_group | without_step ;
+step             = event_group | without_step | join_block ;
 event_group      = [ "then" ] , "use" , value_source , "x" , INTEGER ;
+join_block       = "join" , IDENT , "as" , IDENT , "{" , { event_group } , "}" ;
 without_step     = [ "then" ] , "without" , "(" , predicate_list , ")" ,
                    [ "within" , DURATION ] ;
 value_source     = "(" , predicate_list , ")"
@@ -420,6 +421,7 @@ stream / 规则绑定 → `VN3` / `VN10` / `VN14`；字段与 schema → `VN11` 
 | VN26 | `replay` 文件为空，或文件里的时间字段口径不齐（部分记录有 / 没有） | `replay 文件 \`raw.ndjson\` 为空` / `… 时间字段 '_timestamp' 只在 1 / 3 条记录上出现（或不是合法时间戳）` |
 | VN27 | 场景的实体 id 总数 ≥ 2^24（用例之间靠分段保证实体值不重叠，而实体值按 24 位地址映射） | `injection 实体 id 总数 16777216 达到上限 16777216（…超出后用例之间的实体会重叠：hit 与 near_miss 会指向同一实体）` |
 | VN29 | 场景注解键不在白名单（`#[...]` 只认 `duration`，`<...>` 只认 `seed`），或值类型不合法 | `注解键 'tick' 不支持：\`#[...]\` 只认 'duration'（tick / rows / emit 从未实现）` / `注解 'duration' 的值必须是时长字面量（如 \`10m\`），实际是数字` |
+| VN30 | `join <window> as <key>` 匹配不到规则的 join 子句（目标窗 / 右侧连接键 / 形态）或 `within` 区间不含左事件时间 | `… 的 \`join auction_events as wrong_key\` 匹配不到规则 'r' 的 join 子句（…）` / `… 的 \`join x\` 指向的规则 join 是 snapshot/asof/anti 形态，暂不支持（v1 只支持缺省 inner）` |
 | VN28 | 背景速率用了未实现的随时间形态 `wave(...)` / `burst(...)` / `timeline { ... }`（会按 `base=` 常量生成，与写法不符） | `stream 'auth_events': \`gen burst(...)\` 的随时间变化尚未实现（当前会按 \`base=\` 的常量速率生成，与写法不符）；请先改用常量速率 \`gen 100/s\`` |
 
 `without(...)` 的谓词与 `use(...)` 共用同一套字段检查：重名 VN9、不在 schema VN11、
@@ -714,3 +716,75 @@ wfg + wfs + wfl
 落地清单（**全部完成**）：语法与 AST（`replay <window> { use from … }`，可写多条）、
 loader 解析（`--no-wfl` 也解析，因为 replay 不依赖规则）、生成路径（平移 / 无时间字段时均匀
 落下 / 写 `time_field` 时间列）、VN26 与跨度检查（VN25）、`without` × replay 冲突检查、文档。
+
+## 9. 跨流注入：`join <window> as <key>`（**已落地**）
+
+§7.3 P2 的「跨流注入」：让 `.wfg` 能造出**跨流配对**的数据。驱动场景是 join 家族
+（nexmark q8/q9 这类 `join … within … on … emit at …` 规则）——此前它们完全不走 `.wfg`：
+规则由 daemon 配置加载、数据由独立生成器 `gen-nexmark` 产出，`.wfg` 只能给背景流量。
+
+### 9.1 事实（代码依据）
+
+| 事实 | 依据 |
+|---|---|
+| 一个用例只覆盖**一个窗口**：窗口与本用例 `stream` 不同的 bind 直接不参与 | `inject_gen/dispatch.rs` `build_alias_map_for_syntax_case` 的 `if bind.window != stream_block.window { return; }` |
+| 注入器**不读 join**：只遍历 `match_plan.event_steps` + `each_plan` | `inject_gen/extract.rs` `extract_rule_structure` |
+| 管道已经是「每步一个窗口」的形状 | `StepInfo` 带 per-step `window_name` / `scenario_alias` |
+| 配对所需信息在计划里齐备 | `JoinPlan { right_window, mode, conds, within, reduce, emit_at }`；`JoinCondPlan::right_field_name()` |
+| oracle 侧 join 已实现 | `run_oracle_events_full` 带 schemas → 右窗 lookup（否则 `EmptyLookup`，join 恒 miss） |
+| **`gen` 的 oracle 调用没带 schemas** | `cmd_gen.rs` 用 `run_oracle`（无 schemas 形态）→ 任何 join 规则的右窗恒空、oracle 一条告警都出不来，INJ1 必然失败。这就是 join 负载从来不经过 `.wfg` 的直接原因；本次一并修掉 |
+| 区间求值器**拿不到** | 引擎的 `eval_interval_bound` 是 `pub(crate)` |
+
+### 9.2 语法
+
+```wfg
+hit<id: 200> for q8_monitor_new_user person_events {
+  use(name="n") x 1                 // 左（驱动）侧：仍是用例头的 stream
+  join auction_events as seller {   // 目标窗 + 右行连接键字段
+    use(price=7) x 1                // 每**条左事件**在目标窗造几条
+  }
+}
+```
+
+`join` 块**不占事件步骤位**（不参与 VN24 的组数口径），可写多个（对应规则里多个 join）。
+
+### 9.3 语义（推导而非手写）
+
+右事件由生成器推导三件事，用户不写键值也不写时间：
+
+1. **连接键**：右行的连接键字段（`as <key>`）写成**左实体键值**——与规则 `on <left> ==
+   <right>` 的右侧字段名对齐（VN30 校验能唯一匹配到该 join 子句）。
+2. **时间**：取**所属左事件的时间**。deferred 形态下这正是 `within` 下界的常见形状
+   （q8 的 `[p.timestamp, …)`），因此落在区间内。
+3. **其余字段**：按目标窗 schema 随机生成，再由 `use(...)` 的谓词覆盖（复用
+   `build_event_fields_with_predicates`，时间字段口径因此与左事件天然一致）。
+
+断言口径不变：仍以**驱动侧实体**为单位（`hit` 必报 / `near_miss`·`miss` 必不报）；右事件
+不产生独立实体。
+
+### 9.4 边界（v1）
+
+- **只支持 deferred（`emit at`）形态**：`snapshot` / `asof` / `anti` 与**没有 `emit at`** 的
+  即时 inner join 都报 VN30。即时 join 要求右行在驱动事件被处理时就已可见（右事件必须更早），
+  而 `within` 下界常常就是左事件时间——两者冲突，造出来的数据会时好时坏，故明确拒绝。
+- **`within` 区间不做静态校验**：引擎要求 deferred join 的上界是**绝对时间表达式**
+  （`bucket_end(...)` / `a.expires`），注入器侧没有求值器（引擎的 `eval_interval_bound` 是
+  `pub(crate)`），算不了。若用户把下界写成晚于左事件时间，右事件会落在区间外——后果是
+  生成期 INJ1 报「hit 实体不会触发」，属于**可见的失败**（不是静默产出）。
+- **只支持单键规则**：多键时右行连接键无法唯一确定 → 生成期报错。
+- **区间界为绝对时间表达式时不做检查**（如 `bucket_end(p.dateTime, 10s)`）：求值器在引擎侧，
+  注入器算不了，按「下界 = 左事件时间」这一常见形状处理（q8/q9 都是）。
+- `spread` 只管左簇；右事件跟随所属左事件的时间，不单独铺开。
+- 目标窗必须已在 schema 里、`use` 的字段必须属于目标窗（VN11）、在 `use` 里重复连接键报 VN12。
+
+### 9.5 落地清单
+
+`wfg_ast.rs`（`JoinStmt` + `InjectCase.joins`）、`wfg_parser/syntax/inject.rs`（`join` 块 +
+抽出共用的 `parse_use_group`）、`validate/syntax.rs`（VN30）、`extract.rs`
+（`InjectOverrides.joins`）、`helpers/generate.rs`（`push_join_events`）、`hit.rs` /
+`near_miss.rs` / `non_hit.rs`（在左事件之后补发右事件）、**`cmd_gen.rs`（oracle 调用改为带
+schemas，否则 join 规则永远出不了期望）**。
+
+测试：解析 1、VN30 3、生成 + oracle 复核 2（`datagen/tests/inject/join.rs`——配对后**真能触发
+规则**，配对错就掉到 0 条）；另有 CLI 端到端实测（q8 形态：`lint` OK、`gen` 断言 4/4 通过、
+8 条右事件的 `seller` = 左实体键值且 `_timestamp` = 左事件时间、期望告警 4 条 `origin=deferred`）。
