@@ -391,9 +391,12 @@ replay conn_events { use from "raw/monday.ndjson" }
 | 族 | 管什么 |
 |---|---|
 | `VN` | `.wfg` 的语法与注入语义（本节的表） |
-| `SC` | stream 与规则 / schema 的绑定关系 |
-| `SV` | 场景基础值、字段类型与 oracle 参数 |
 | `INJ` | **生成期**断言（§4.2，不属校验期） |
+
+旧 `SC` / `SV` 两族**已退役**：它们校验的是 legacy 输入路径，而 `wfg_parser` 只实现
+stream-first 语法、`WfgFile::syntax` 恒为 `Some`，那条路径已不存在（校验对象改由 `VN` 族覆盖：
+stream / 规则绑定 → `VN3` / `VN10` / `VN14`；字段与 schema → `VN11` / `VN22` / `VN23`；
+字段级 generator override 随 `stream ALIAS : WINDOW RATE { FIELD = gen_expr }` 语法一起删除）。
 
 下表为 `VN` 族：
 
@@ -425,10 +428,8 @@ replay conn_events { use from "raw/monday.ndjson" }
 VN27 的计数口径与生成侧一致：`hit` / `near_miss` 每个实体占一个 id；`miss` 是「每个事件
 一个独立键」，故每个用例占 `实体个数 × ΣN`（这是 `miss` 能不成簇的前提，§4.2）。
 
-其他族（不在上表）：`SC2/SC2a/SC3/SC4`（stream 与规则 / schema 的绑定关系）、
-`SV2/SV3/SV4/SV6/SV7/SV8`（场景基础值、字段类型、oracle 参数）。
-
-> 旧号（占比域、`expect` 规则存在性、`seq`/`not(...)` 步骤相关）随旧语法一起删除。
+> 旧号（占比域、`expect` 规则存在性、`seq`/`not(...)` 步骤相关、`SC2/SC2a/SC3/SC4`、
+> `SV2/SV3/SV4/SV6/SV7/SV8`）随旧语法一起删除，不复用。
 
 ### 4.2 生成期断言（已落地）
 

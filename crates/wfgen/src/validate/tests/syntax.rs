@@ -1,4 +1,5 @@
 use super::*;
+use crate::wfg_ast::ValueSource;
 use crate::wfg_parser::parse_wfg;
 
 #[test]

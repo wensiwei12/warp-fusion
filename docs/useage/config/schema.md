@@ -97,4 +97,4 @@ table = "scanner_whitelist"     # knowdb.toml 中的表名
 - 输入窗口（声明了 `stream_tag` 的 window）和 provider window 不允许声明 `object`、`array`、`array/T` 字段。源数据中的 JSON object/array 应先以 `chars` 接入。
 - 输出窗口可以声明结构化字段，规则中用 WFL 的 `object { ... }` 和 `array [ ... ]` 构造后 `yield`。
 - `wfgen` 生成测试数据时，`object` 默认生成 `{}`，未类型化 `array` 默认生成 `[]`，`array/T` 会生成同类型数组。
-- `wfgen` 的 scalar generator override（如字符串、数字、`range()`、`ipv4()`）只适用于 base 类型和 `array/T` 的元素类型；对 `object` / 未类型化 `array` 使用 override 会在 lint 阶段报 `SV7`。
+- 字段级 generator override 的旧写法（`stream ALIAS : WINDOW RATE { FIELD = gen_expr }`）已随旧 `.wfg` 语法删除，结构化字段不再有 override 相关的 `SV7` 报错；`object` / `array` 按上面的默认值生成。

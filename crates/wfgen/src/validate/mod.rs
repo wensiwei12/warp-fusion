@@ -1,7 +1,3 @@
-mod gen_compat;
-mod scenario;
-mod stream_rule;
-mod stream_schema;
 mod syntax;
 
 #[cfg(test)]
@@ -29,6 +25,9 @@ impl std::fmt::Display for ValidationError {
 ///
 /// Returns a list of validation errors (empty if valid).
 ///
+/// 只有 stream-first 语法存在（`wfg_parser` 只实现它，`WfgFile::syntax` 恒为 `Some`），
+/// 所以这里只有一条校验路径；手搓出来、没有 `syntax` 段的 `WfgFile` 没有可校验的内容。
+///
 /// When `skip_wfl` is true, validations that require WFL rules to exist
 /// (injection cases referencing rules) are skipped, so a scenario can be
 /// generated as baseline events without any rule files.
@@ -39,21 +38,5 @@ pub fn validate_wfg(
     skip_wfl: bool,
 ) -> Vec<ValidationError> {
     let all_rules: Vec<_> = wfl_files.iter().flat_map(|f| f.rules.iter()).collect();
-
-    if wfg.syntax.is_some() {
-        return syntax::validate_syntax(wfg, schemas, &all_rules, skip_wfl);
-    }
-
-    let mut errors = Vec::new();
-    let scenario = &wfg.scenario;
-
-    errors.extend(scenario::validate_scenario_basics(scenario));
-    errors.extend(stream_schema::validate_streams_with_schemas(
-        scenario, schemas,
-    ));
-
-    errors.extend(stream_rule::validate_stream_rule_bindings(
-        scenario, &all_rules,
-    ));
-    errors
+    syntax::validate_syntax(wfg, schemas, &all_rules, skip_wfl)
 }

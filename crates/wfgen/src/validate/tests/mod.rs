@@ -1,30 +1,8 @@
-mod field;
-mod stream;
 mod syntax;
 
 use super::*;
-use crate::wfg_ast::*;
 use std::time::Duration;
 use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
-
-/// Helper: build a minimal WfgFile.
-fn minimal_wfg(streams: Vec<StreamBlock>) -> WfgFile {
-    WfgFile {
-        uses: vec![],
-        scenario: ScenarioDecl {
-            name: "test".into(),
-            seed: 1,
-            time_clause: TimeClause {
-                start: "2024-01-01T00:00:00Z".into(),
-                duration: Duration::from_secs(3600),
-            },
-            total: 100,
-            streams,
-            faults: None,
-        },
-        syntax: None,
-    }
-}
 
 /// Helper: build a WindowSchema.
 fn make_schema(name: &str, fields: Vec<(&str, BaseType)>) -> WindowSchema {
@@ -108,31 +86,4 @@ fn make_wfl_each(rule_name: &str, window: &str, entity_field: &str) -> wf_lang::
     );
     wf_lang::parse_wfl(&wfl_src)
         .unwrap_or_else(|e| panic!("make_wfl_each parse failed: {e}\nsource:\n{wfl_src}"))
-}
-
-fn stream(alias: &str, window: &str) -> StreamBlock {
-    StreamBlock {
-        alias: alias.into(),
-        window: window.into(),
-        rate: Rate {
-            count: 10,
-            unit: RateUnit::PerSecond,
-        },
-        overrides: vec![],
-    }
-}
-
-fn stream_with_override(alias: &str, window: &str, field: &str, expr: GenExpr) -> StreamBlock {
-    StreamBlock {
-        alias: alias.into(),
-        window: window.into(),
-        rate: Rate {
-            count: 10,
-            unit: RateUnit::PerSecond,
-        },
-        overrides: vec![FieldOverride {
-            field_name: field.into(),
-            gen_expr: expr,
-        }],
-    }
 }
