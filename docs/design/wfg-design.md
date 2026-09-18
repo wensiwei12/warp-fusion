@@ -388,6 +388,14 @@ wfg + wfs + wfl
 - `use from "file"` 的值文件解析（`loader::resolve_inject_files`）：相对 `.wfg` 目录解析路径，
   支持顶层 object / object 数组 / NDJSON，数组与 NDJSON 按事件序号循环取用；`gen` / `lint` /
   `bench` / `send` / `stream` 都经 `loader::load_from_uses` 走同一条解析。
+- 结构化列与引擎契约对齐：wfgen 写 Arrow 时对 `object` / `array` / `array/<base>` 字段统一用
+  **JSON 文本的 Utf8 列 + `wf.wfl.field_type` metadata**（常量取自 `wf-engine`，不复制字符串）。
+  引擎只在带该 metadata 时把列值解析成 `Value::Object` / `Value::Array`，否则一律 `Value::Str`
+  ——缺了它，读嵌套字段的规则会**静默不产出**，且与直读 `GenEvent` 的 oracle 不一致。
+  有 schema 时按 schema 打标；`.arrow` 文件输出（无 schema）按列内实际值推断（整列同形才打标，
+  混形保持当字符串）。
+  同一条链的 oracle 侧同步收口：`GenEvent` → 引擎 `Value` 的转换**递归保留** object / array
+  （旧实现 `_ => None` 把结构化字段整个丢掉，读嵌套字段的规则在 oracle 侧恒不命中）。
 - 14 个仓内语料在断言下**全部通过**；其中 2 个按断言口径调整过（§5.3）。
 
 ### 7.2 未落地 / 未决
@@ -397,6 +405,7 @@ wfg + wfs + wfl
 | `replay STREAM { use from "f" }` 照单发货 | 未实现 |
 | `without(...)` 步骤（取代旧 `not(...) within(...)`） | 未实现 |
 | 时间**均匀**铺开 | 部分：`spread` 已可写并覆盖窗口长度，铺开策略仍是"随机簇起点 + 窗口内铺开" |
+| `on each` 规则作为注入目标 | 未实现：`extract_rule_structure` 只遍历 `match_plan.event_steps`，对 `on each` 规则报 `inject stream '…' cannot be mapped to any event step bind`（实测） |
 | VN22 / VN23（实体字段存在性与推断一致性）、VN24（事件组数 > 步骤数）、VN26（replay 文件） | 未实现；事件组数超限目前是生成期的 `exceeds rule step count` |
 | 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | 未迁移 |
 | 文档（getting-started / cli / wfadm 模板说明 / CHANGELOG） | 未同步 |

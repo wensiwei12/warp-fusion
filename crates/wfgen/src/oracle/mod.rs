@@ -733,8 +733,8 @@ impl StatsOracleEngine {
     }
 }
 
-/// GenEvent → stats 行（HashMap<String, Value>）; 字段经 json_to_core_value
-/// 转引擎 Value（数字 f64 / 字符串 / 布尔; 复合类型丢弃——stats 度量不读）。
+/// GenEvent → stats 行（HashMap<String, Value>）; 字段经 [`json_to_core_value`]
+/// 转引擎 Value（数字 f64 / 字符串 / 布尔 / 递归保留 object / array）。
 fn gen_event_to_row(event: &GenEvent) -> HashMap<String, Value> {
     let mut row = HashMap::new();
     for (k, v) in &event.fields {
@@ -1006,12 +1006,26 @@ fn gen_event_to_core(event: &GenEvent) -> Event {
     Event { fields }
 }
 
+/// `GenEvent` 的 JSON 字段 → 引擎 [`Value`]。
+///
+/// object / array **递归**转换（对齐引擎 `wf_cep::value_extract::json_to_value` 的口径）：
+/// 旧实现 `_ => None` 会把结构化字段整个丢掉，于是 oracle 看不到嵌套字段——读 object /
+/// array 的规则在 oracle 侧恒不命中，与引擎（arrow 列带 `wf.wfl.field_type` 时能还原
+/// 结构值）不一致。`null` 与引擎一致地丢字段。
 fn json_to_core_value(v: &serde_json::Value) -> Option<Value> {
     match v {
         serde_json::Value::String(s) => Some(Value::Str(s.clone().into())),
         serde_json::Value::Number(n) => n.as_f64().map(Value::Number),
         serde_json::Value::Bool(b) => Some(Value::Bool(*b)),
-        _ => None,
+        serde_json::Value::Array(items) => Some(Value::Array(
+            items.iter().filter_map(json_to_core_value).collect(),
+        )),
+        serde_json::Value::Object(map) => Some(Value::Object(
+            map.iter()
+                .filter_map(|(k, v)| json_to_core_value(v).map(|v| (k.clone().into(), v)))
+                .collect(),
+        )),
+        serde_json::Value::Null => None,
     }
 }
 

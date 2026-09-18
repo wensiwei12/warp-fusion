@@ -1,4 +1,6 @@
 use super::*;
+use crate::oracle::json_to_core_value;
+use wf_engine::match_engine::Value;
 
 #[test]
 fn hop_oracle_closes_every_covered_window() {
@@ -330,4 +332,49 @@ fn sc7_uninjected_rule_skipped() {
         ["some_other_rule".to_string()].into_iter().collect();
     let result = run_oracle(&events, &[plan], &start, &duration, Some(&other)).unwrap();
     assert_eq!(result.alerts.len(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// 结构化字段（object / array）在 GenEvent → 引擎 Value 的转换
+// ---------------------------------------------------------------------------
+
+/// object / array 必须**递归**保留：旧实现把它们整段丢掉，读嵌套字段的规则在
+/// oracle 侧恒不命中（与引擎侧不一致）。
+#[test]
+fn json_to_core_value_keeps_structured_values() {
+    let value = serde_json::json!({
+        "action": "syn",
+        "nested": {"sev": 10, "flag": true, "none": null},
+        "tags": ["a", 22, {"deep": 1}],
+        "empty_array": [],
+        "empty_object": {}
+    });
+
+    let Some(Value::Object(map)) = json_to_core_value(&value) else {
+        panic!("顶层 object 必须保留");
+    };
+    assert_eq!(map.get("action"), Some(&Value::Str("syn".into())));
+
+    let Some(Value::Object(nested)) = map.get("nested") else {
+        panic!("嵌套 object 必须保留");
+    };
+    assert_eq!(nested.get("sev"), Some(&Value::Number(10.0)));
+    assert_eq!(nested.get("flag"), Some(&Value::Bool(true)));
+    assert!(!nested.contains_key("none"), "null 成员与引擎一致地丢弃");
+
+    let Some(Value::Array(tags)) = map.get("tags") else {
+        panic!("array 必须保留");
+    };
+    assert_eq!(tags[0], Value::Str("a".into()));
+    assert_eq!(tags[1], Value::Number(22.0));
+    let Value::Object(deep) = &tags[2] else {
+        panic!("数组里的 object 必须保留");
+    };
+    assert_eq!(deep.get("deep"), Some(&Value::Number(1.0)));
+
+    assert_eq!(map.get("empty_array"), Some(&Value::Array(Vec::new())));
+    assert_eq!(
+        map.get("empty_object"),
+        Some(&Value::Object(Default::default()))
+    );
 }

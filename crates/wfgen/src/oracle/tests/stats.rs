@@ -259,8 +259,12 @@ fn stats_oracle_flush_threshold_loses_no_rows() {
 
 // ---- gen_event_to_row 字段转换 ----
 
+/// 结构化字段**递归保留**（与引擎 `wf_cep::value_extract::json_to_value` 同口径）。
+///
+/// 旧口径是"复合类型整体丢弃（stats 度量不读）"——但 stats 度量可以写嵌套路径
+/// （`FieldRef::Path`），丢了字段就让这类规则在 oracle 侧静默失效。
 #[test]
-fn gen_event_to_row_converts_primitives_and_drops_structured() {
+fn gen_event_to_row_converts_primitives_and_keeps_structured() {
     let mut fields = serde_json::Map::new();
     fields.insert("id".to_string(), serde_json::json!(42));
     fields.insert("name".to_string(), serde_json::json!("alice"));
@@ -276,7 +280,14 @@ fn gen_event_to_row_converts_primitives_and_drops_structured() {
     assert_eq!(r.get("id"), Some(&Value::Number(42.0)));
     assert_eq!(r.get("name"), Some(&Value::Str("alice".into())));
     assert_eq!(r.get("active"), Some(&Value::Bool(true)));
-    assert!(!r.contains_key("extra"), "复合类型丢弃（stats 度量不读）");
+
+    let Some(Value::Object(extra)) = r.get("extra") else {
+        panic!("结构化字段必须保留，实际 {:?}", r.get("extra"));
+    };
+    assert_eq!(
+        extra.get("nested"),
+        Some(&Value::Array(vec![Value::Number(1.0), Value::Number(2.0)]))
+    );
 }
 
 // ---- 绑定窗口过滤（2026-08-27 review: 过度喂入修复） ----
