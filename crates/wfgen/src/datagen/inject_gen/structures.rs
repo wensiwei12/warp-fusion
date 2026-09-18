@@ -105,8 +105,9 @@ impl WithoutGuard {
 
 /// JSON 等值比较：数值按 `f64` 比。
 ///
-/// `use(dport=22)` / `without(dport=22)` 的 `AttrValue::Number` 会归一成浮点，
-/// 而生成器写回的整数字段是整数 —— 直接用 `Value::eq` 会把“22.0 vs 22”判成不等。
+/// `use(dport=22)` 现在的整数字面量保持整数，但 `use from` 的数据文件里
+/// 整数常写成 `22.0` / `3e7`（JSON 合法数字）——直接用 `Value::eq` 会把
+/// “22.0 vs 22”判成不等，因此按数值比。
 fn json_value_matches(actual: &serde_json::Value, expected: &serde_json::Value) -> bool {
     match (actual.as_f64(), expected.as_f64()) {
         (Some(a), Some(b)) => a == b,

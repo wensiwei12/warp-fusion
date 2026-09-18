@@ -385,7 +385,7 @@ impl ColumnBuilder {
                 serde_json::Value::String(s) => s.clone(),
                 other => other.to_string(),
             })),
-            Self::Int64(col) => col.push(value.and_then(|v| v.as_i64())),
+            Self::Int64(col) => col.push(value.and_then(json_as_i64)),
             Self::Float64(col) => col.push(value.and_then(|v| v.as_f64())),
             Self::Bool(col) => col.push(value.and_then(|v| v.as_bool())),
             Self::TimeNanos(col) => {
@@ -413,6 +413,24 @@ impl ColumnBuilder {
             Self::Bool(col) => Arc::new(BooleanArray::from(col)),
             Self::TimeNanos(col) => Arc::new(TimestampNanosecondArray::from(col)),
         }
+    }
+}
+
+/// `digit` 列取值：整数直接用；**整值浮点**（`3e7` / `30000000.0`）也接受。
+///
+/// 原始日志文件里整数常带小数点，而 `as_i64()` 对浮点返回 `None` —— 直接用它会把值
+/// 静默写成 **null**（数据看起来在、数值其实是空，引擎侧 `sum` / 阈值比较恒为 0）。
+/// 整值浮点按整数处理；非整值（`22.5` 给 `digit` 列）仍然拒绝（写 null），
+/// 不猜用户意图。
+fn json_as_i64(value: &serde_json::Value) -> Option<i64> {
+    if let Some(i) = value.as_i64() {
+        return Some(i);
+    }
+    let f = value.as_f64()?;
+    if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+        Some(f as i64)
+    } else {
+        None
     }
 }
 
@@ -823,6 +841,66 @@ rule nested_read {
         );
     }
 
+    /// `digit` 列遇到**整值浮点**（原始日志里整数常写成 `3e7` / `30000000.0`）必须落成
+    /// 整数，不能落成 null。
+    ///
+    /// `as_i64()` 对浮点返回 `None`，早前会把值静默丢成 null：引擎侧 `sum` / 阈值比较
+    /// 恒为 0，规则永不触发，而 oracle 直接读 JSON 能强转、断言说“必报”——
+    /// 数据看起来在、数值其实是空。非整值（`22.5` 给 `digit`）仍然拒绝，不猜用户意图。
+    #[test]
+    fn digit_column_accepts_integral_floats_but_rejects_fractional() {
+        use arrow::array::Array;
+
+        let schema = WindowSchema {
+            name: "conn_events".into(),
+            streams: vec!["conn_events".into()],
+            time_field: Some("event_time".into()),
+            over: Duration::from_secs(60),
+            fields: vec![
+                FieldDef {
+                    name: "bytes".into(),
+                    field_type: FieldType::Base(BaseType::Digit),
+                },
+                FieldDef {
+                    name: "event_time".into(),
+                    field_type: FieldType::Base(BaseType::Time),
+                },
+            ],
+        };
+        let make_event = |bytes: serde_json::Value| {
+            let mut fields = serde_json::Map::new();
+            fields.insert("bytes".into(), bytes);
+            fields.insert("event_time".into(), json!("2026-08-13T00:00:00Z"));
+            GenEvent {
+                stream_name: "conn_events".into(),
+                window_name: "conn_events".into(),
+                timestamp: Utc::now(),
+                fields,
+            }
+        };
+
+        let batches = events_to_typed_batches(
+            &[make_event(json!(30000000.0)), make_event(json!(22.5))],
+            std::slice::from_ref(&schema),
+            DEFAULT_MAX_FRAME_BYTES,
+            DEFAULT_MAX_FRAME_ROWS,
+        )
+        .unwrap();
+        let batch = &batches[0].1;
+        let idx = batch.schema().index_of("bytes").unwrap();
+        let col = batch
+            .column(idx)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("digit 列应为 Int64");
+        assert!(!col.is_null(0), "整值浮点不得落成 null");
+        assert_eq!(col.value(0), 30_000_000);
+        assert!(
+            col.is_null(1),
+            "22.5 给 digit 列应被拒绝（null），而不是硬截断成 22"
+        );
+    }
+
     /// 同列混了 object 与 array：不打标（打任一种都会丢另一种形状的格子）。
     #[test]
     fn mixed_object_and_array_column_is_not_tagged() {
@@ -850,6 +928,63 @@ rule nested_read {
             wfl_structured_field_kind(reader.schema().field_with_name("payload").unwrap())
                 .is_none(),
             "混形列不打标（保持当字符串，不丢数据）"
+        );
+    }
+
+    /// 输出格式无关性：实体分布（设计 §10）是**生成期**语义。同一批事件经
+    /// JSONL 与 Arrow 两条输出路径落盘后，字段值必须逐行一致——输出格式不得
+    /// 改变实体取值（`cmd_gen` 的 jsonl / arrow / send 三条路共用同一
+    /// `output_events`，这里把该不变量钉住）。
+    #[test]
+    fn jsonl_and_arrow_outputs_agree_on_field_values() {
+        use crate::output::jsonl::{read_events_jsonl, write_jsonl};
+        use arrow::array::Array;
+
+        let events: Vec<GenEvent> = (0..25)
+            .map(|i| {
+                let mut fields = serde_json::Map::new();
+                // 模拟实体池取值：少量热点 IP 反复出现。
+                fields.insert("sip".into(), json!(format!("10.0.{}.{}", 1 + i % 3, i % 5)));
+                fields.insert("event_time".into(), json!("2026-08-13T00:00:00Z"));
+                GenEvent {
+                    stream_name: "conn_events".into(),
+                    window_name: "conn_events".into(),
+                    timestamp: Utc::now(),
+                    fields,
+                }
+            })
+            .collect();
+
+        let dir = tempfile::tempdir().unwrap();
+        let jsonl_path = dir.path().join("out.jsonl");
+        let arrow_path = dir.path().join("out.arrow");
+        write_jsonl(&events, &jsonl_path).unwrap();
+        write_arrow_ipc(&events, &arrow_path).unwrap();
+
+        let from_jsonl: Vec<String> = read_events_jsonl(&jsonl_path)
+            .unwrap()
+            .iter()
+            .map(|e| e.fields["sip"].as_str().unwrap().to_owned())
+            .collect();
+
+        let file = File::open(&arrow_path).unwrap();
+        let reader = arrow::ipc::reader::FileReader::try_new(file, None).unwrap();
+        let mut from_arrow: Vec<String> = Vec::new();
+        for batch in reader {
+            let batch = batch.unwrap();
+            let idx = batch.schema().index_of("sip").unwrap();
+            let col = batch
+                .column(idx)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("sip 列应为 Utf8");
+            from_arrow.extend((0..col.len()).map(|row| col.value(row).to_owned()));
+        }
+
+        assert_eq!(from_jsonl.len(), events.len(), "JSONL 不得丢事件");
+        assert_eq!(
+            from_arrow, from_jsonl,
+            "JSONL 与 Arrow 输出必须逐行给出一致的实体字段值"
         );
     }
 }

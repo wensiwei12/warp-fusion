@@ -263,11 +263,25 @@ fn attr_value_to_json(value: &crate::wfg_ast::AttrValue) -> Option<serde_json::V
     match value {
         crate::wfg_ast::AttrValue::Json(v) => Some(v.clone()),
         crate::wfg_ast::AttrValue::String(s) => Some(serde_json::Value::String(s.clone())),
-        crate::wfg_ast::AttrValue::Number(n) => Some(serde_json::json!(*n)),
+        crate::wfg_ast::AttrValue::Number(n) => Some(number_to_json(*n)),
         crate::wfg_ast::AttrValue::Bool(b) => Some(serde_json::Value::Bool(*b)),
         crate::wfg_ast::AttrValue::Duration(d) => {
             Some(serde_json::Value::String(format!("{:?}", d)))
         }
+    }
+}
+
+/// 数值面值 → JSON：**整值保持整数**。
+///
+/// `use(bytes=30000000)` 若落成 `30000000.0`，Arrow 侧 `digit` 列取 `as_i64()`
+/// （对浮点返回 `None`）会把它写成 **null**：引擎侧 `sum(bytes)` 恒为 0、阈值永不满足，
+/// 而 oracle 直接读 JSON 能强转、断言（INJ1）说“必报”——两者静默分叉。
+/// 整数字面量因此必须保持整数形态；非整值（`exponent=1.1` 这类）仍是浮点。
+fn number_to_json(n: f64) -> serde_json::Value {
+    if n.is_finite() && n.fract() == 0.0 && n.abs() <= i64::MAX as f64 {
+        serde_json::Value::from(n as i64)
+    } else {
+        serde_json::Value::from(n)
     }
 }
 
@@ -344,6 +358,7 @@ fn expr_to_json_value(expr: &Expr) -> Option<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wfg_ast::AttrValue;
 
     fn case_of(input: &str) -> InjectCase {
         let wfg = crate::wfg_parser::parse_wfg(input).expect("parse");
@@ -425,6 +440,32 @@ scenario s<seed=1> {
             step.records[0].get("tenant_id"),
             Some(&serde_json::json!("t"))
         );
-        assert_eq!(step.records[0].get("n"), Some(&serde_json::json!(3.0)));
+        // 整数字面量保持整数形态（早期会归一成 `3.0`，经 Arrow 落 `digit` 列时被写成 null）。
+        assert_eq!(step.records[0].get("n"), Some(&serde_json::json!(3)));
+    }
+
+    /// 整值数字必须保持**整数**形态。
+    ///
+    /// 落成浮点（`30000000.0`）时，Arrow 的 `digit` 列取 `as_i64()`（浮点 → `None`）
+    /// 会把它写成 null：引擎侧 `sum(bytes)` 恒为 0、阈值永不满足，而 oracle 直接读 JSON
+    /// 能强转、INJ1 断言说“必报”——oracle 与引擎静默分叉（L3 语料对拍抓到的就是这个）。
+    #[test]
+    fn integral_numbers_stay_integers() {
+        for literal in [30_000_000.0_f64, 22.0, 0.0, -5.0] {
+            let json = attr_value_to_json(&AttrValue::Number(literal)).unwrap();
+            assert!(json.is_i64(), "整值 {literal} 必须落成整数，实际 {json}");
+        }
+        assert_eq!(
+            attr_value_to_json(&AttrValue::Number(30_000_000.0)),
+            Some(serde_json::json!(30_000_000))
+        );
+    }
+
+    /// 非整值（`exponent=1.1`、`fresh=0.2` 这类）仍是浮点，不能被截断成整数。
+    #[test]
+    fn fractional_numbers_stay_floats() {
+        let json = attr_value_to_json(&AttrValue::Number(1.1)).unwrap();
+        assert!(json.is_f64(), "非整值应保持浮点，实际 {json}");
+        assert_eq!(json.as_f64(), Some(1.1));
     }
 }
