@@ -9,10 +9,11 @@
 | [intro.md](./intro.md) | 面向市场的产品介绍（定位、核心能力、与 Flink / 检测 DSL 对比） |
 | [getting-started.md](./getting-started.md) | 快速开始、示例项目结构、文档索引 |
 | [integration.md](./integration.md) | 开发者集成指南：事件接入 / 告警输出 / 规则交付 / Admin API 管理 |
-| [configuration.md](./configuration.md) | `wfusion.toml`、source / sink / runtime 配置入口 |
-| [schema.md](./schema.md) | `.wfs` window 和字段类型 |
+| [configuration.md](./config/configuration.md) | `wfusion.toml`、source / sink / runtime 配置入口 |
+| [schema.md](./config/schema.md) | `.wfs` window 和字段类型 |
 | [rules.md](./rules.md) | `.wfl` 规则编写、yield 时间变量、稳定统计上下文 |
-| [wparse-window-routing.md](./wparse-window-routing.md) | warp-parse 输出如何分发到 WarpFusion window |
+| [scenarios.md](./scenarios.md) | `.wfg` 场景：背景/注入、三种模式=硬断言、数量口径、值与值来源 |
+| [wparse-window-routing.md](./config/wparse-window-routing.md) | warp-parse 输出如何分发到 WarpFusion window |
 | [cli/cli.md](./cli/cli.md) | CLI 命令参考 |
 | [cli/admin_api.md](./cli/admin_api.md) | Admin API、状态查询、在线 reload / 发布 |
 
@@ -31,8 +32,9 @@
 ## 推荐阅读顺序
 
 1. 先读 [getting-started.md](./getting-started.md)，跑通一个最小示例。
-2. 读 [schema.md](./schema.md) 和 [rules.md](./rules.md)，理解 `.wfs` / `.wfl` 的职责边界。
+2. 读 [schema.md](./config/schema.md) 和 [rules.md](./rules.md)，理解 `.wfs` / `.wfl` 的职责边界。
 3. **把引擎接入自有系统时读 [integration.md](./integration.md)**（事件源接入、告警 sink、规则集交付、Admin API 管理）。
-4. 接入真实数据源时读 [configuration.md](./configuration.md)、[config/source.md](./config/source.md) 和 [config/sink.md](./config/sink.md)。
-5. 与 warp-parse 联动时读 [wparse-window-routing.md](./wparse-window-routing.md)。
-6. 需要在线 reload 或发布时读 [cli/admin_api.md](./cli/admin_api.md)。
+4. 需要造测试数据、或让"命中/未命中"可断言时读 [scenarios.md](./scenarios.md) 与 [cli/cli.md](./cli/cli.md)。
+5. 接入真实数据源时读 [configuration.md](./config/configuration.md)、[config/source.md](./config/source.md) 和 [config/sink.md](./config/sink.md)。
+6. 与 warp-parse 联动时读 [wparse-window-routing.md](./config/wparse-window-routing.md)。
+7. 需要在线 reload 或发布时读 [cli/admin_api.md](./cli/admin_api.md)。

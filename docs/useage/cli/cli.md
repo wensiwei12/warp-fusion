@@ -40,25 +40,6 @@ wfusion config vars -c wfusion.toml [--var-prefix WORK_]
 wfusion config diff -c wfusion.toml --to-config other.toml [--expanded]
 ```
 
-## `wfgen` — 场景生成（独立工具）
-
-```bash
-# 从 .wfg 场景文件生成测试数据
-wfgen gen --scenario test.wfg --out /tmp/out
-
-# 校验场景文件
-wfgen lint test.wfg
-
-# 对比实际告警与 Oracle 期望
-wfgen verify --expected oracle.jsonl --actual alerts.jsonl
-
-# 发送生成事件到引擎（TCP + Arrow IPC）
-wfgen send --scenario test.wfg --input events.jsonl
-
-# 压测生成吞吐
-wfgen bench --scenario test.wfg
-```
-
 ### `wfusion rule` — 规则工具
 
 ```bash
@@ -112,19 +93,38 @@ wfl test rules/test.wfl --schemas "schemas/*.wfs" [--runs 100]
 
 ## `wfgen` — 场景生成（独立工具）
 
+从 `.wfg` 场景文件生成"带标签"的测试数据（背景流量 + 定向构造的 hit / near_miss / miss
+实体），并在写期望文件之前用硬断言校验标签。场景语法见 [`../scenarios.md`](../scenarios.md)。
+
 ```bash
-# 从 .wfg 生成测试数据
-wfgen gen --scenario test.wfg --out /tmp/out
+# 校验场景（语法 / 字段 / VN 系列错误）
+wfgen lint models/scenarios/port_scan.wfg
 
-# 校验场景
-wfgen lint --scenario test.wfg
+# 生成事件 + 期望告警（*.except.jsonl / *.except.meta.jsonl）
+wfgen gen --scenario models/scenarios/port_scan.wfg --out out/gen
+wfgen gen --scenario s.wfg --format arrow --out out/gen      # 列式 .arrow 输出
+wfgen gen --scenario s.wfg --no-oracle --out out/gen         # 只出事件，不写期望文件（仍编译 WFL，注入 use() 生效）
+wfgen gen --scenario s.wfg --no-wfl --out out/gen            # 跳过整个 WFL 管线（纯背景随机事件）
+wfgen gen --scenario s.wfg --send --addr 127.0.0.1:9800      # 直接发给引擎
 
-# 验证告警
-wfgen verify --expected oracle.jsonl --actual alerts.jsonl
+# 对拍：实际告警 vs 期望告警
+wfgen verify --expected out/gen/port_scan.except.jsonl --actual out/alerts.ndjson
+#   [--meta out/gen/port_scan.except.meta.json] [--score-tolerance 0.1] [--format markdown]
 
-# 发送到引擎
-wfgen send --scenario test.wfg --input events.jsonl
+# 发送已生成的事件 JSONL（TCP + Arrow IPC）
+wfgen send --scenario s.wfg --input out/gen/port_scan.jsonl [--chunk 5000] [--rate-ms 10]
 
-# 压测
-wfgen bench --scenario test.wfg [--duration 30s]
+# 压测生成吞吐（可选 --send）
+wfgen bench --scenario s.wfg [--duration 30s] [--send]
+
+# daemon：循环生成多个场景（--wfl 必给，注入要按规则构造）
+wfgen stream --scenario-dir models/scenarios --wfl "rules/*.wfl" [--rate 100000] [--interval 60]
 ```
+
+| 附加参数 | 说明 |
+|---|---|
+| `--ws <file>` | 额外的 `.wfs`（`use` 声明之外） |
+| `--wfl <file>` | 额外的 `.wfl`（`use` 声明之外） |
+
+其它子命令（性能 / 联调工具，参数见 `wfgen <cmd> --help`）：`gen-nexmark` ·
+`verify-nexmark` · `diff` · `dump-frames` · `send-arrow` · `shard-frames` · `perf-diag`。

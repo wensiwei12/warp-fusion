@@ -428,7 +428,7 @@ wfg + wfs + wfl
 | 时间**均匀**铺开 | 部分：`spread` 已可写并覆盖窗口长度，铺开策略仍是"随机簇起点 + 窗口内铺开" |
 | VN22 / VN23（实体字段存在性与推断一致性）、VN24（事件组数 > 步骤数）、VN26（replay 文件） | 未实现；事件组数超限目前是生成期的 `exceeds rule step count` |
 | 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | **已落地**（§7.1；16/16 `lint` + `gen` 断言通过） |
-| 文档（getting-started / cli / wfadm 模板说明 / CHANGELOG） | 未同步 |
+| 文档：CHANGELOG | 未写；按本仓惯例随 `chore(release)` 提交一起写（`git log -- CHANGELOG.md` 全是 release 提交） |
 
 未决（不阻塞实现）：
 

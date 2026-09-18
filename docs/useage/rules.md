@@ -1,7 +1,8 @@
 # WFL 规则
 
 `.wfl` 文件用于声明检测规则、规则输出以及规则内联测试。运行时通过
-`wfusion.toml` 的 `[runtime].rules` glob 加载规则文件。
+`wfusion.toml` 的 `[runtime].rules` glob 加载规则文件。规则要"造数据 + 断言命中
+行为"时配套用 `.wfg` 场景（[`scenarios.md`](scenarios.md)）。
 
 ## case 模式匹配表达式
 

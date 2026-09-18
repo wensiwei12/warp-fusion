@@ -26,7 +26,7 @@
 
 `tree-sitter-wfl` grammar 中的 `seq_block` / `seq_use_step` / `seq_not_step`
 （`use(...) with(count, within)` / `not(...) within(...)`）**已经是完整的序列语法**，
-但目前只用在 wfgen 的场景注入（`injection` 块）里，未进入运行时。本设计把这套序列概念
+但目前只用在 wfgen 的场景注入（`inject` 块）里，未进入运行时。本设计把这套序列概念
 提升为运行时规则语言的一等构造，并落地 within/not/consec。
 
 ### 1.2 目标：三级演进
