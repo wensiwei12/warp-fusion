@@ -13,6 +13,12 @@ const VN20_LEGACY_TRAFFIC_KEYWORD: &str = "VN20 旧注入语法已移除：块�
 /// VN20：旧的关键字 `injection` 已改名为 `inject`（设计 §1.1 P7 / §5.1）。
 const VN20_LEGACY_INJECTION_KEYWORD: &str = "VN20 旧注入语法已移除：块关键字 `injection` 已改名为 `inject`（`background` / `inject` 两个块名成对）。请把 `injection { … }` 改写为 `inject { … }`。";
 
+/// VN32：`background` 是单例块。
+const VN32_DUPLICATE_BACKGROUND: &str = "VN32 `background` 块重复：一个场景只允许一个 `background`（两个块不会合并，此前是静默丢掉前一个块）。请把两个块的内容合并到同一个 `background { … }` 里。";
+
+/// VN32：`inject` 是单例块。
+const VN32_DUPLICATE_INJECT: &str = "VN32 `inject` 块重复：一个场景只允许一个 `inject`（两个块不会合并，此前是静默丢掉前一个块）。请把两个块的内容合并到同一个 `inject { … }` 里。";
+
 pub(super) fn parse_syntax_body(
     input: &mut &str,
     name: String,
@@ -40,6 +46,11 @@ pub(super) fn parse_syntax_body(
             .parse_next(input)?
             .is_some()
         {
+            // VN32：`background` 是单例块。此前重复书写会静默覆盖前一个块，
+            // 里面的 `stream` / `entity` 声明直接消失（连 VN3 都不会报），故直接报错。
+            if background.is_some() {
+                return Err(cut_with(input, VN32_DUPLICATE_BACKGROUND));
+            }
             background = Some(parse_background_block(input)?);
             continue;
         }
@@ -47,6 +58,10 @@ pub(super) fn parse_syntax_body(
             .parse_next(input)?
             .is_some()
         {
+            // VN32：`inject` 同为单例块（重复书写丢前一个块里的全部用例）。
+            if injection.is_some() {
+                return Err(cut_with(input, VN32_DUPLICATE_INJECT));
+            }
             injection = Some(parse_injection_block(input)?);
             continue;
         }
@@ -137,6 +152,18 @@ pub(super) fn parse_syntax_body(
     Ok((scenario, syntax))
 }
 
+/// 报一个**不可回溯**的解析错误，文案里带错误码（与 `replay.rs` 的 `cut_with` 同形）。
+fn cut_with(
+    input: &mut &str,
+    message: &'static str,
+) -> winnow::error::ErrMode<winnow::error::ContextError> {
+    winnow::error::ErrMode::Cut(winnow::error::ContextError::new().add_context(
+        input,
+        &input.checkpoint(),
+        StrContext::Expected(StrContextValue::Description(message)),
+    ))
+}
+
 fn extract_seed(inline_annos: &[ScenarioAttr]) -> Option<u64> {
     inline_annos
         .iter()
@@ -181,6 +208,7 @@ fn rate_from_expr(rate_expr: &RateExpr) -> Rate {
     }
 }
 
+/// 背景条数的推导基数：`Σ stream 速率 × duration`（`--duration` 覆盖后要重算）。
 fn derive_total(background: &BackgroundBlock, duration: Duration) -> u64 {
     let eps_sum: f64 = background.streams.iter().map(|s| s.rate.approx_eps()).sum();
     if eps_sum <= 0.0 {

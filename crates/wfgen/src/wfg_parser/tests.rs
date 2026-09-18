@@ -832,6 +832,64 @@ scenario replay_count<seed=1> {
     assert!(err.contains("条数"), "错误信息应说明条数：{err}");
 }
 
+/// VN32：`background` 是单例块，重复书写必须报错（旧行为是静默覆盖前一个块，
+/// 连里面的 stream 不存在都不会被 VN3 抓到）。
+#[test]
+fn test_vn32_duplicate_background_block_rejected() {
+    let input = r#"
+#[duration=1s]
+scenario dup_bg<seed=1> {
+  background { stream nonexistent_window gen 100/s }
+  background { stream auth_events gen 10/s }
+}
+"#;
+    let err = parse_wfg(input).unwrap_err().to_string();
+    assert!(err.contains("VN32"), "unexpected parse error: {err}");
+    assert!(
+        err.contains("background") && err.contains("重复"),
+        "错误信息应点名重复的块：{err}"
+    );
+}
+
+/// VN32：`inject` 同为单例块，重复书写必须报错（否则前一个块的用例全部消失）。
+#[test]
+fn test_vn32_duplicate_inject_block_rejected() {
+    let input = r#"
+#[duration=1s]
+scenario dup_inject<seed=1> {
+  background { stream auth_events gen 10/s }
+  inject { hit<5> for first_rule auth_events { use(result="failed") x 2 } }
+  inject { hit<5> for second_rule auth_events { use(result="failed") x 2 } }
+}
+"#;
+    let err = parse_wfg(input).unwrap_err().to_string();
+    assert!(err.contains("VN32"), "unexpected parse error: {err}");
+    assert!(
+        err.contains("inject") && err.contains("重复"),
+        "错误信息应点名重复的块：{err}"
+    );
+}
+
+/// 正面对照：`background` / `inject` / `replay` **各一个**（顺序任意）仍然合法；
+/// 且 `replay` 可写多条——VN32 只管前两个单例块。
+#[test]
+fn test_single_blocks_and_multiple_replays_still_parse() {
+    let input = r#"
+#[duration=10m]
+scenario ok<seed=1> {
+  replay auth_events { use from "raw/a.ndjson" }
+  inject { hit<sip: 5> for rule_a auth_events { use(action="failed") x 1 } }
+  background { stream auth_events gen 100/s }
+  replay auth_events { use from "raw/b.ndjson" }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let syntax = wfg.syntax.as_ref().unwrap();
+    assert_eq!(syntax.replays.len(), 2, "replay 不受单例限制");
+    assert_eq!(syntax.injection.as_ref().unwrap().cases.len(), 1);
+    assert_eq!(syntax.background.streams.len(), 1);
+}
+
 /// `replay` 的值来源只能是文件：内联值报 VN20 并指向 `inject`。
 #[test]
 fn test_replay_inline_value_is_rejected_with_vn20() {
