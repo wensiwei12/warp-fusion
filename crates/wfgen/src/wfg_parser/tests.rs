@@ -108,9 +108,30 @@ scenario brute_force_detect<seed=7> {
     assert_eq!(hit.spread, None);
 }
 
-/// `then` 后面必须跟一个 `use ... x N` 事件组（旧的 `then not(...) within(...)` 已删除）。
+/// `then` 后面必须跟一个 `use ... x N` 事件组（或 `without(...)` 约束），
+/// 不能是任意 token。
 #[test]
-fn test_parse_then_requires_use_event_group() {
+fn test_parse_then_requires_event_group() {
+    let input = r#"
+#[duration=10m]
+scenario invalid_then<seed=1> {
+  background { stream auth_events gen 100/s }
+  inject {
+    near_miss<user: 10> for rule_a auth_events {
+      use(login="failed") x 1
+      then 42
+    }
+  }
+}
+"#;
+
+    let err = parse_wfg(input).unwrap_err().to_string();
+    assert!(err.contains("event group"), "unexpected parse error: {err}");
+}
+
+/// VN20：旧的否定步骤 `not(...) within(...)` 报错并指名 `without(...)`。
+#[test]
+fn test_legacy_not_step_is_rejected_with_without_hint() {
     let input = r#"
 #[duration=10m]
 scenario invalid_then_not<seed=1> {
@@ -125,7 +146,11 @@ scenario invalid_then_not<seed=1> {
 "#;
 
     let err = parse_wfg(input).unwrap_err().to_string();
-    assert!(err.contains("event group"), "unexpected parse error: {err}");
+    assert!(err.contains("VN20"), "unexpected parse error: {err}");
+    assert!(
+        err.contains("without"),
+        "错误信息应指明新写法 `without(...)`: {err}"
+    );
 }
 
 #[test]
@@ -480,4 +505,134 @@ scenario legacy_{mode}<seed=1> {{
         let err = parse_wfg(&input).unwrap_err().to_string();
         assert!(err.contains("VN20"), "[{mode}] unexpected error: {err}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// `without(...)`：构造约束（设计 §3.8）
+// ---------------------------------------------------------------------------
+
+/// `without(...)` 进 AST：谓词与 `within` 都保留，且**不占** `groups` 的位。
+#[test]
+fn test_parse_without_step_into_ast() {
+    let input = r#"
+#[duration=10m]
+scenario has_not_step<seed=1> {
+  background { stream auth_events gen 100/s }
+  inject {
+    hit<sip: 20> for scan_then_xfer auth_events {
+      use(action="scan") x 3
+      without(action="login") within 30s
+    }
+  }
+}
+"#;
+    let case = &wfg_case(input);
+    assert_eq!(case.groups.len(), 1, "`without` 不应占 use 步骤位");
+    assert_eq!(case.withouts.len(), 1);
+    let wa = &case.withouts[0];
+    assert_eq!(wa.predicates.len(), 1);
+    assert_eq!(wa.predicates[0].field, "action");
+    assert_eq!(
+        wa.predicates[0].value,
+        AttrValue::String("login".to_string())
+    );
+    assert_eq!(wa.within, Some(std::time::Duration::from_secs(30)));
+}
+
+/// `within` 省略 → 判定窗取目标规则 `match` 的窗口（此处只验证解析为 `None`）。
+#[test]
+fn test_parse_without_within_defaults_to_none() {
+    let input = r#"
+#[duration=10m]
+scenario has_not_step<seed=1> {
+  background { stream auth_events gen 100/s }
+  inject {
+    hit<sip: 20> for scan_then_xfer auth_events {
+      use(action="scan") x 3
+      without(action="login")
+    }
+  }
+}
+"#;
+    let case = &wfg_case(input);
+    assert_eq!(case.withouts.len(), 1);
+    assert_eq!(case.withouts[0].within, None);
+}
+
+/// 可带可选 `then`；且 `without` 与 `use` 的相对位置无语义（两者都收进各自的列表）。
+#[test]
+fn test_parse_without_accepts_optional_then_and_any_position() {
+    let input = r#"
+#[duration=10m]
+scenario has_not_step<seed=1> {
+  background { stream auth_events gen 100/s }
+  inject {
+    hit<sip: 20> for scan_then_xfer auth_events {
+      without(action="login") within 1m
+      use(action="scan") x 3
+      then use(action="xfer") x 1
+      then without(action="logout")
+    }
+  }
+}
+"#;
+    let case = &wfg_case(input);
+    assert_eq!(case.groups.len(), 2);
+    assert_eq!(case.withouts.len(), 2);
+    assert_eq!(case.withouts[0].predicates[0].field, "action");
+    assert_eq!(case.withouts[1].predicates[0].field, "action");
+    assert_eq!(case.withouts[1].within, None);
+}
+
+/// VN20：旧的 `<field> seq { … }` 块必须被指名拒绝。
+#[test]
+fn test_legacy_field_seq_block_is_rejected_with_vn20() {
+    let input = r#"
+#[duration=10m]
+scenario legacy_seq<seed=1> {
+  background { stream auth_events gen 100/s }
+  inject {
+    hit<sip: 5> for rule_a auth_events {
+      user seq {
+        use(login="failed") x 3
+      }
+    }
+  }
+}
+"#;
+    let err = parse_wfg(input).unwrap_err().to_string();
+    assert!(err.contains("VN20"), "unexpected parse error: {err}");
+    assert!(err.contains("seq"), "错误信息应指明旧的 `seq` 块: {err}");
+}
+
+/// VN20：旧的条数写法 `with(N)` 必须被指名拒绝（新写法是 `x N`）。
+#[test]
+fn test_legacy_with_count_is_rejected_with_vn20() {
+    let input = r#"
+#[duration=10m]
+scenario legacy_with<seed=1> {
+  background { stream auth_events gen 100/s }
+  inject {
+    hit<sip: 5> for rule_a auth_events {
+      use(login="failed") with(3)
+    }
+  }
+}
+"#;
+    let err = parse_wfg(input).unwrap_err().to_string();
+    assert!(err.contains("VN20"), "unexpected parse error: {err}");
+    assert!(err.contains("x N"), "错误信息应指明新写法 `x N`: {err}");
+}
+
+/// 取第一个 injection case 的便捷函数。
+fn wfg_case(input: &str) -> InjectCase {
+    parse_wfg(input)
+        .expect("scenario should parse")
+        .syntax
+        .and_then(|syntax| syntax.injection)
+        .expect("inject block")
+        .cases
+        .into_iter()
+        .next()
+        .expect("at least one inject case")
 }

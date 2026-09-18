@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use wf_lang::ast::Measure;
 
 use crate::datagen::stream_gen::GenEvent;
@@ -14,6 +15,89 @@ pub struct InjectGenResult {
     /// 实体标识无法与 oracle 的 `entity_id` 口径对齐、因而**未**纳入断言的
     /// 实体个数（复合 `entity(...)`、stats 桶键、实体字段不在 schema）。
     pub unasserted_entities: u64,
+    /// `without(...)` 约束的执行清单（设计 §3.8）；由背景生成阶段消费。
+    pub without_guards: Vec<WithoutGuard>,
+}
+
+/// `without(...)` 约束的执行清单（生成期）。
+///
+/// 每条记录一个**受约束实体**：某个 `field = value` 的实体在其窗口
+/// `[start, start + window]` 内不得出现匹配 `predicates` 的事件。
+///
+/// 口径与引擎对齐：`not has <alias>` 由 `wf-cep` 的 `SeqRuntime` 按**窗口实例**
+/// （即实体）扫描（`scan_negations` 只看传到该实例的事件），所以只有“实体键撞上了
+/// 注入值”的事件才可能被规则看到。生成期因此按 `(stream, 实体键, 窗口, 谓词)` 四个
+/// 条件同时成立才认定违反：
+///
+/// - 注入事件命中谓词 → **排不掉**（改成不命中就得改 `use(...)` 的值），报生成期错误；
+/// - 背景事件命中谓词 → 直接剔除（维持注入条数不变，只拿掉噪声）。
+///
+/// 不同时命中谓词的背景噪声不剔：它不会违反否定步骤，且剔除会无故偏离背景配额。
+#[derive(Debug, Clone, PartialEq)]
+pub struct WithoutGuard {
+    /// 约束生效的 stream（窗口名，与 [`GenEvent::window_name`] 对齐）。
+    pub window_name: String,
+    /// 实体键字段（事件按此字段认领归属）。
+    pub field: String,
+    /// 受约束实体的键值。
+    pub value: serde_json::Value,
+    /// 窗口起点：该实体**首条注入事件**的时间。
+    pub start: DateTime<Utc>,
+    /// 窗口长度：`without ... within D` 的 D，省略则取目标规则 `match` 的窗口长度。
+    pub window: Duration,
+    /// `without(...)` 声明的谓词（字段 → 期望值，已按与 `use(...)` 同一套规则
+    /// 从 `AttrValue` 归一化）。
+    pub predicates: Vec<(String, serde_json::Value)>,
+}
+
+impl WithoutGuard {
+    /// 事件是否属于本 guard 的实体、且落在窗口内（闭区间）。
+    pub fn covers(&self, event: &GenEvent) -> bool {
+        if self.window_name != event.window_name {
+            return false;
+        }
+        if event.fields.get(&self.field) != Some(&self.value) {
+            return false;
+        }
+
+        let Some(start_ns) = self.start.timestamp_nanos_opt() else {
+            return false;
+        };
+        let window_ns = self.window.as_nanos().min(i64::MAX as u128) as i64;
+        let end_ns = start_ns.saturating_add(window_ns);
+        let Some(ts_ns) = event.timestamp.timestamp_nanos_opt() else {
+            return false;
+        };
+
+        ts_ns >= start_ns && ts_ns <= end_ns
+    }
+
+    /// 事件是否命中全部 `without(...)` 谓词。字段缺失视为不命中（与引擎把缺失
+    /// 字段读成 null / false 一致）。
+    pub fn matches_predicates(&self, event: &GenEvent) -> bool {
+        self.predicates.iter().all(|(field, expected)| {
+            event
+                .fields
+                .get(field)
+                .is_some_and(|actual| json_value_matches(actual, expected))
+        })
+    }
+
+    /// 违反构造约束：既属于该实体、又落在窗内、还命中谓词。
+    pub fn is_violation(&self, event: &GenEvent) -> bool {
+        self.covers(event) && self.matches_predicates(event)
+    }
+}
+
+/// JSON 等值比较：数值按 `f64` 比。
+///
+/// `use(dport=22)` / `without(dport=22)` 的 `AttrValue::Number` 会归一成浮点，
+/// 而生成器写回的整数字段是整数 —— 直接用 `Value::eq` 会把“22.0 vs 22”判成不等。
+fn json_value_matches(actual: &serde_json::Value, expected: &serde_json::Value) -> bool {
+    match (actual.as_f64(), expected.as_f64()) {
+        (Some(a), Some(b)) => a == b,
+        _ => actual == expected,
+    }
 }
 
 /// 一个注入实体：断言以实体为单位，需要把生成期的实体值与 oracle 告警的

@@ -85,6 +85,8 @@ pub(super) fn validate_syntax(
                     ),
                 });
             }
+            // VN25：`spread` 与 `without ... within` 的时间窗不能超过场景 duration——
+            // 超出部分会被截断，窗口内“不得出现匹配事件”的保证会静默失效。
             if let Some(spread) = case.spread
                 && spread > duration
             {
@@ -95,6 +97,22 @@ pub(super) fn validate_syntax(
                         stream, spread, duration
                     ),
                 });
+            }
+            for (idx, without) in case.withouts.iter().enumerate() {
+                if let Some(within) = without.within
+                    && within > duration
+                {
+                    errors.push(ValidationError {
+                        code: "VN25",
+                        message: format!(
+                            "injection case '{}' 第 {} 个 without 的 within {:?} 超过场景 duration {:?}",
+                            stream,
+                            idx + 1,
+                            within,
+                            duration
+                        ),
+                    });
+                }
             }
 
             // VN22 / VN23：显式实体字段（`hit<sip: 500>`）的静态一致性。
@@ -178,6 +196,20 @@ pub(super) fn validate_syntax(
                         case_schema,
                     );
                 }
+            }
+
+            // `without(...)` 的谓词做同款字段检查：写错的字段名会静默变成“删不掉该事件”，
+            // 窗口保证失效又不报错（设计 §3.8）。
+            for (idx, without) in case.withouts.iter().enumerate() {
+                check_predicate_fields(
+                    &mut errors,
+                    stream,
+                    idx,
+                    "without",
+                    &without.predicates,
+                    case.entity_field.as_deref(),
+                    case_schema,
+                );
             }
         }
     }

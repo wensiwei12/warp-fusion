@@ -792,3 +792,112 @@ fn test_use_records_shape_errors_are_vn17() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// `without(...)` 构造约束的校验（设计 §3.8）
+// ---------------------------------------------------------------------------
+
+/// 造一个「1 个 `use` 组 + 指定条 `without` 子句」的场景，返回校验错误。
+fn without_probe(
+    schemas: &[wf_lang::WindowSchema],
+    rules: &[wf_lang::ast::WflFile],
+    withouts: &str,
+) -> Vec<String> {
+    let src = format!(
+        "#[duration=10m]\nscenario s<seed=1> {{\n    background {{ stream auth_events gen 100/s }}\n    inject {{\n        hit<user: 5> for probe_rule auth_events {{\n            use(login=\"failed\") x 1\n{withouts}        }}\n    }}\n}}\n"
+    );
+    let wfg = parse_wfg(&src).unwrap();
+    validate_wfg(&wfg, schemas, rules, false)
+        .into_iter()
+        .map(|e| format!("{}: {}", e.code, e.message))
+        .collect()
+}
+
+/// VN25：`without ... within` 不得超过场景 `#[duration]`。
+#[test]
+fn test_syntax_without_within_over_duration_rejected() {
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![("user", BaseType::Chars), ("action", BaseType::Chars)],
+    )];
+    for (within, expect_vn25) in [("20m", true), ("10m", false)] {
+        let errors = without_probe(
+            &schemas,
+            &[],
+            &format!("            without(action=\"scan\") within {within}\n"),
+        );
+        assert_eq!(
+            errors.iter().any(|e| e.starts_with("VN25")),
+            expect_vn25,
+            "without within {within} 的 VN25 判定不符，errors: {errors:?}"
+        );
+    }
+}
+
+/// `without` 的谓词写错字段名 → VN11（否则会静默变成“删不掉该事件”）。
+#[test]
+fn test_syntax_without_field_outside_schema_is_vn11() {
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![("user", BaseType::Chars), ("action", BaseType::Chars)],
+    )];
+    let errors = without_probe(&schemas, &[], "            without(nope=\"x\")\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.starts_with("VN11") && e.contains("nope")),
+        "errors: {errors:?}"
+    );
+}
+
+/// `without` 的谓词重复同一字段 → VN9；重复实体键 → VN12。
+#[test]
+fn test_syntax_without_duplicate_and_entity_field_rejected() {
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![("user", BaseType::Chars), ("action", BaseType::Chars)],
+    )];
+    let errors = without_probe(
+        &schemas,
+        &[],
+        "            without(action=\"a\", action=\"b\", user=\"u\")\n",
+    );
+    assert!(
+        errors.iter().any(|e| e.starts_with("VN9")),
+        "重复字段应报 VN9: {errors:?}"
+    );
+    assert!(
+        errors.iter().any(|e| e.starts_with("VN12")),
+        "重复实体键应报 VN12: {errors:?}"
+    );
+}
+
+/// `without` 不占 use 步骤位：组数在步数内、但 `without` 写多条也不报 VN24。
+#[test]
+fn test_syntax_without_not_counted_toward_rule_steps() {
+    let schemas = vec![
+        make_schema(
+            "auth_events",
+            vec![("sip", BaseType::Ip), ("login", BaseType::Chars)],
+        ),
+        make_schema("alerts", vec![]),
+    ];
+    let wfl = wf_lang::parse_wfl(
+        r#"rule probe_rule {
+    events { a : auth_events }
+    match<sip : 1m> { on event { a | count >= 1; } }
+    -> score(1)
+    entity(ip, a.sip)
+    yield alerts()
+}"#,
+    )
+    .unwrap();
+    let src = "#[duration=10m]\nscenario s<seed=1> {\n    background { stream auth_events gen 100/s }\n    inject {\n        hit<sip: 5> for probe_rule auth_events {\n            use(login=\"failed\") x 1\n            without(login=\"ok\")\n            without(login=\"ok2\")\n            without(login=\"ok3\")\n        }\n    }\n}\n";
+    let wfg = parse_wfg(src).unwrap();
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        !errors.iter().any(|e| e.code == "VN24"),
+        "`without` 不得计入 VN24 的步骤数: {:?}",
+        errors
+    );
+}

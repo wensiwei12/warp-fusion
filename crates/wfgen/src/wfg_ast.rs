@@ -169,8 +169,26 @@ pub struct InjectCase {
     pub stream: String,
     /// 按步骤顺序的事件组；每组给出「每实体几条」与「值从哪来」。
     pub groups: Vec<UseGroup>,
+    /// `without(...)` 构造约束（设计 §3.8）：该实体在其事件跨度内不得出现匹配的事件。
+    ///
+    /// 与 `groups` **解耦**（位置无语义）：它不是"一个步骤"、不参与 VN24 的组数口径、
+    /// 也不注入事件，故单独存放而不混进有序步骤列表。
+    pub withouts: Vec<WithoutStep>,
     /// 时间铺开窗口；`None` = 均匀铺满场景 duration。
     pub spread: Option<Duration>,
+}
+
+/// `without(preds) [within D]`：该实体的窗口内**不得出现**匹配 `preds` 的事件。
+///
+/// 用途：给带否定步骤（`on event seq { … not has x … }`）的规则造"该触发"的数据——
+/// 只注入正向事件不够，窗口里一旦落进一条匹配的背景噪声，规则就不会触发。
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct WithoutStep {
+    /// 禁止出现的字段等值约束（与 `use(...)` 同形式）。
+    pub predicates: Vec<FieldPredicate>,
+    /// 判定窗口（自该实体首条注入事件起算）；`None` = 目标规则的 `match` 窗口长度。
+    pub within: Option<Duration>,
 }
 
 /// 一个事件组（对应规则的一个步骤）。

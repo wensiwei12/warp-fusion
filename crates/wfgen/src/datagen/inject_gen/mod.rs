@@ -12,6 +12,8 @@ use std::time::Duration;
 use wf_lang::WindowSchema;
 use wf_lang::plan::RulePlan;
 
+use crate::datagen::stream_gen::GenEvent;
+
 use crate::error::{self, WfgenReason, WfgenResult};
 use crate::injection_targets::injected_rule_names;
 use crate::wfg_ast::WfgFile;
@@ -22,7 +24,7 @@ use extract::extract_rule_structure;
 /// 字段名」规则，避免两边对「实体字段是什么」的判断漂移。
 pub(crate) use extract::field_ref_field_name;
 use structures::InjectEntities;
-pub use structures::{InjectEntityKey, InjectGenResult, InjectStepCount};
+pub use structures::{InjectEntityKey, InjectGenResult, InjectStepCount, WithoutGuard};
 
 /// Generate inject events driven by rule plans.
 ///
@@ -40,6 +42,7 @@ pub fn generate_inject_events(
 
     let mut all_events = Vec::new();
     let mut entities = InjectEntities::default();
+    let mut without_guards = Vec::new();
 
     if let Some(injection) = wfg
         .syntax
@@ -55,6 +58,8 @@ pub fn generate_inject_events(
             // 每个用例独占一段实体 id：不同的用例（尤其 hit 与 near_miss）不能
             // 指向同一个实体，否则两个模式的口径互相污染。
             let entity_base = entities.next_entity_base();
+            let keys_before = entities.keys.len();
+            let unasserted_before = entities.unasserted;
             let events = dispatch::generate_for_syntax_case(
                 case,
                 &rule_struct,
@@ -66,6 +71,15 @@ pub fn generate_inject_events(
                 rng,
                 &mut entities,
             )?;
+            if !case.withouts.is_empty() {
+                without_guards.extend(build_without_guards(
+                    case,
+                    &rule_struct,
+                    &events,
+                    &entities.keys[keys_before..],
+                    entities.unasserted - unasserted_before,
+                )?);
+            }
             all_events.extend(events);
         }
     }
@@ -74,7 +88,100 @@ pub fn generate_inject_events(
         events: all_events,
         entity_keys: entities.keys,
         unasserted_entities: entities.unasserted,
+        without_guards,
     })
+}
+
+/// 把一个用例的 `without(...)` 子句展开成逐实体的执行清单（设计 §3.8）。
+///
+/// 窗口起点取该实体**首条注入事件**的时间；窗长取 `without ... within D` 的 D，
+/// 省略则取目标规则 `match` 的窗口长度（与规则 `not` 步骤的判定窗同口径）。
+///
+/// 清单建立时就地检查该实体窗内的**注入事件**：命中谓词的注入事件是“排不掉”的
+/// ——窗口内确实会出现匹配事件，规则不会触发，这里直接报错（并给出实体与谓词）。
+///
+/// 实体标识无法定位（复合 `entity(...)` 等）时同样报生成期错误：`without` 的保证
+/// 以实体为单位，定位不到实体就无法把保证落到具体窗口上。
+fn build_without_guards(
+    case: &crate::wfg_ast::InjectCase,
+    rule_struct: &structures::RuleStructure,
+    events: &[GenEvent],
+    case_keys: &[InjectEntityKey],
+    unasserted: u64,
+) -> WfgenResult<Vec<WithoutGuard>> {
+    if unasserted > 0 {
+        return error::fail(
+            WfgenReason::Generation,
+            format!(
+                "injection case '{}' 使用了 without(...)，但规则 '{}' 的实体标识无法定位（复合 entity(...) 表达式）：\
+                 without 的保证以实体为单位，需要 `entity(<type>, <单字段>)` 才能确定窗口",
+                case.stream, case.target_rule
+            ),
+        );
+    }
+
+    let mut guards = Vec::new();
+    for without in &case.withouts {
+        let window = without.within.unwrap_or(rule_struct.window_dur);
+        let predicates = extract::predicates_to_entries(&without.predicates);
+        for key in case_keys {
+            let first_ts = first_inject_ts(events, &key.field, &key.value).ok_or_else(|| {
+                error::error(
+                    WfgenReason::Generation,
+                    format!(
+                        "injection case '{}' 的实体（{}={}）没有任何注入事件，无法确定 without 窗口起点",
+                        case.stream, key.field, key.value
+                    ),
+                )
+            })?;
+            let guard = WithoutGuard {
+                window_name: case.stream.clone(),
+                field: key.field.clone(),
+                value: key.value.clone(),
+                start: first_ts,
+                window,
+                predicates: predicates.clone(),
+            };
+            if let Some(offender) = events.iter().find(|event| guard.is_violation(event)) {
+                return error::fail(
+                    WfgenReason::Generation,
+                    format!(
+                        "injection case '{}' 的实体（{}={}）在 without 窗口内注入了命中谓词的事件（{}，时间 {}）：\
+                         该实体窗口内不得出现匹配事件，请调整 `use(...)` 的值，或改写 `without(...)` 的谓词",
+                        case.stream,
+                        key.field,
+                        key.value,
+                        describe_predicates(&guard.predicates),
+                        offender.timestamp,
+                    ),
+                );
+            }
+            guards.push(guard);
+        }
+    }
+    Ok(guards)
+}
+
+/// 谓词的可读渲染：`a=1, b="x"`（错误信息用）。
+fn describe_predicates(predicates: &[(String, serde_json::Value)]) -> String {
+    predicates
+        .iter()
+        .map(|(field, value)| format!("{field}={value}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// 该实体在这一批注入事件里的首条时间。
+fn first_inject_ts(
+    events: &[GenEvent],
+    field: &str,
+    value: &serde_json::Value,
+) -> Option<DateTime<Utc>> {
+    events
+        .iter()
+        .filter(|event| event.fields.get(field) == Some(value))
+        .map(|event| event.timestamp)
+        .min()
 }
 
 fn resolve_rule_plan(

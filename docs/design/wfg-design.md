@@ -78,8 +78,11 @@ inject_block     = "inject" , "{" , { inject_case } , "}" ;
 inject_case      = mode_kw , "<" , [ IDENT , ":" ] , INTEGER , ">" ,
                    "for" , IDENT , IDENT , "{" , inject_body , "}" ;
 mode_kw          = "hit" | "near_miss" | "miss" ;
-inject_body      = { event_group } , [ "spread" , DURATION ] ;
+inject_body      = { step } , [ "spread" , DURATION ] ;
+step             = event_group | without_step ;
 event_group      = [ "then" ] , "use" , value_source , "x" , INTEGER ;
+without_step     = [ "then" ] , "without" , "(" , predicate_list , ")" ,
+                   [ "within" , DURATION ] ;
 value_source     = "(" , predicate_list , ")"
                  | "{" , json_object , "}"
                  | "from" , STRING ;
@@ -100,6 +103,9 @@ value            = STRING | NUMBER | DURATION | "true" | "false"
 - 实体键可省：`hit<500>` 从规则推断；`hit<sip: 500>` 用于多 key / 消歧（见 §3.7）。
 - `spread D` 可选，必须 ≤ `#[duration]`（VN25）。
 - `use` 的值来源三种：`use(preds)`、`use({json})`、`use from "file"`。
+- `without(preds) [within D]` 是**构造约束**（不是步骤）：声明“该实体的窗口内不得出现
+  匹配 `preds` 的事件”。**不写条数**、不注入事件、不占步骤位（不参与 VN24）。
+  `within` 省略时取目标规则 `match` 的窗口长度。见 §3.8。
 - 期望块 `expect {…}` 已删除，断言由模式承担（§3.2）。
 
 ### 2.2 完整示例
@@ -154,6 +160,25 @@ hit<event_id: 200> for object_on_each sdm_event {
 hit<sip: 20> for sdm_rule sdm_event {
   use from "raw/big.ndjson" x 3                    // 值来自文件
   spread 5m
+}
+```
+
+带否定步骤的规则（`not has …`）要造“该触发”的数据，用 `without(...)` 声明窗口内不得
+出现什么（§3.8）：
+
+```wfg
+#[duration=10m]
+scenario no_login_then_xfer<seed=7> {
+  background { stream conn_events gen 50/s }
+
+  inject {
+    // 20 个 IP × (scan + xfer)；声明这些 IP 的窗口内不得出现成功登录
+    hit<sip: 20> for scan_then_xfer conn_events {
+      use(action="scan") x 3
+      then use(action="xfer") x 1
+      without(action="login_ok") within 5m
+    }
+  }
 }
 ```
 
@@ -250,6 +275,61 @@ hit<sip: 20> for sdm_rule sdm_event {
 - 显式与推断不一致 → `VN23`；字段不在该 stream 的 schema → `VN22`（都是**校验期**错误，
   §4.1）。注意多 key 规则的实体是 key 元组，显式写字段属于**消歧**用法，不算不一致。
 
+### 3.8 `without(...)`：否定步骤的构造约束
+
+**问题**。带否定步骤的规则无法只靠注入正向事件来可靠触发：
+
+```wfl
+match<sip : 5m> { on event seq { has scan; not has login; has xfer; } }
+```
+
+`not has login` 由 `wf-cep` 的 `SeqRuntime` 在**该实体的窗口实例**上扫描（`scan_negations`
+只看传到该实例的事件），所以只要窗口内出现一条**属于该实体、且命中 `login` 条件**的事件，
+规则就不会触发。这类事件可能来自两处：
+
+1. 背景噪声恰好撞上该实体的键值（随机 IP / 随机数字）；
+2. **注入事件自己**命中否定条件（例如 `xfer` 步骤的某个随机字段恰好落在 `login` 的过滤条件里）。
+
+**声明**。`without(preds) [within D]` 把“该实体窗口内不得出现匹配 `preds` 的事件”写成
+构造约束（`preds` 与 `use(...)` 同形式）：
+
+```wfg
+hit<sip: 20> for scan_then_xfer conn_events {
+  use(action="scan") x 3
+  then use(action="xfer") x 1
+  without(action="login_ok") within 5m
+}
+```
+
+**口径**。
+
+| 项 | 口径 |
+|---|---|
+| 条数 | **不写**。否定步骤没有“N 条”语义 |
+| 判定窗 | `within D`；省略 = 目标规则 `match` 的窗口长度 |
+| 窗口起点 | 该实体**首条注入事件**的时间 |
+| 作用范围 | 该实体（`field = value`）在该 stream 上的窗口 |
+| 与规则对位 | **不要求**对位。规则有没有 `not` 步骤都可以写（纯构造约束） |
+| 位置 | 与 `use` 步骤**解耦**（写在前后无语义）；`[then]` 可省 |
+
+**严格性**。窗口内“无匹配事件”对**注入 + 背景噪声**都要成立：
+
+- 注入事件命中 `preds` → **报生成期错误**（排不掉：要改就得改 `use(...)` 的值）；
+- 背景事件命中 `preds` → 直接剔除（`datagen::suppress_without_guards`）；
+- 不命中 `preds` 的背景噪声**不剔**：它不会违反否定步骤，剔除只会无故偏离背景配额。
+
+实体键与 `preds` 的交集为空是**前提**：VN12 禁止 `without(...)` 写实体字段，否则“该实体
+窗口内不得出现该实体自己的事件”自相矛盾。`without(...)` 的谓词同样过 VN9 / VN11 / VN12 与
+VN25（`within` ≤ `#[duration]`）。
+
+**与旧 `not(...) within(...)` 的区别**：旧写法与 `use` 混在同一个 step 列表里、带条数，
+容易被读成“否定上一步”；新写法是独立的构造约束声明。旧写法在**解析期**报 VN20（§5.1）。
+
+**实现落点**。`inject_gen::WithoutGuard`（清单）+ `datagen::suppress_without_guards`
+（背景剔除），两侧共用同一个 `WithoutGuard::is_violation` 判定（stream + 实体键 +
+窗口闭区间 + 命中谓词）。实体标识定位不到（复合 `entity(...)`）时直接报生成期错误——
+`without` 的保证以实体为单位，定位不到实体就无法把保证落到窗口上。
+
 ## 4. 校验与错误码
 
 ### 4.1 校验期（`wfgen lint` / `gen` 加载阶段）
@@ -270,7 +350,10 @@ hit<sip: 20> for sdm_rule sdm_event {
 | VN22 | 显式实体字段不在该 stream 的 schema | `… 实体字段 '<f>' 不在 stream '<s>' 的 schema '<w>' 里` |
 | VN23 | 显式实体字段与规则推断不一致（单 key `match` = 该 key；`on each` = `entity(...)` 的单字段） | `… 显式实体字段 '<f>' 与规则 '<r>' 推断的实体字段 '<g>' 不一致（去掉显式字段即用推断值；多 key 规则才需要显式消歧）` |
 | VN24 | `use` 事件组数 > 规则的事件步骤数（每个 `use ... x N` 对应一个步骤） | `… use 事件组数 2 超过规则 '<r>' 的事件步骤数 1（每个 `use ... x N` 对应一个步骤）` |
-| VN25 | `spread` 超过 `#[duration]` | `spread 20m` 超过场景 duration `10m` |
+| VN25 | `spread` 或 `without ... within` 超过 `#[duration]` | `spread 20m` / `第 1 个 without 的 within 20m` 超过场景 duration `10m` |
+
+`without(...)` 的谓词与 `use(...)` 共用同一套字段检查：重名 VN9、不在 schema VN11、
+重复实体键 VN12（VN12 在这条路径上尤其重要——见 §3.8）。
 
 其他层级的校验：`SC2/SC2a/SC3/SC4`（stream 与规则的绑定关系）、`SV2/SV3/SV4/SV6/SV7/SV8`
 （场景基础值、字段类型、oracle 参数）。
@@ -285,6 +368,10 @@ hit<sip: 20> for sdm_rule sdm_event {
 | INJ2 | `near_miss`/`miss` 实体产出了告警 | `%s 用例第 %d 个实体（%s=%s）会触发规则 <r>：命中 %s 路径（emit_time=%s）` |
 
 把"最后由 `wfgen verify` 红一行百分比"提前到**生成期 + 精确定位到实体**。
+
+`without(...)` 的“排不掉”同样在生成期报（`WfgenReason::Generation`，不进 INJ 表）：
+注入事件命中 `without` 谓词、或实体标识定位不到（复合 `entity(...)`）时报错并给出实体、
+谓词与时间戳（§3.8）。
 
 实现（`wfgen/src/inject_assert/`，由 `cmd_gen` 在 `run_oracle` 之后、写
 `.except.jsonl` 之前调用，与期望文件同一门控）：
@@ -314,6 +401,15 @@ VN20 旧注入语法已移除：`hit<N%>` 里的 N 是 stream 配额的百分比
 旧语法清单：`hit<20%>` / `near_miss<10%>` / `miss<60%>`、`<field> seq { … }`、
 `use(...) with(N)`、`not(...) within(...)`、`expect { … }`、`traffic` 关键字（→ `background`）、
 `injection` 关键字（→ `inject`）、`oracle { … }`。
+
+本条（与其他 VN20 一样）在**解析期**被单独接住并给出改写方向：
+
+| 旧写法 | 改写方向 |
+|---|---|
+| `hit<20%>` | 显式实体个数 + 每实体条数（见上方文案） |
+| `<field> seq { … }` | 实体字段写在用例头（`hit<sip: 500>`），步骤直接列在体内 |
+| `use(...) with(N)` | `use(...) x N` |
+| `not(...) within(...)` | `without(...) [within D]`（**不写条数**）——它声明的是构造约束：该实体窗口内不得出现匹配的事件。要造“违反”的样本，把那条事件当普通 `use(...) x N` 步骤注入 |
 
 `traffic` / `injection` 在**解析期**各自被单独接住并给出改写方向（各一条静态文案），
 避免用户只看到笼统的"期望某个块"。
@@ -410,6 +506,11 @@ wfg + wfs + wfl
   （`on event seq` 链只数非 `neg` 步骤、`on each` = 1、stats = 0；由一条「以编译产物为
   oracle」的边界测试锁定）。数错组数会静默少注入某个步骤的事件；生成期 `plan_use_steps`
   仍保留同一检查（纵深防御）。
+- `without(...)` 构造约束（§3.8）：`without(preds) [within D]` 解析进 `InjectCase::withouts`
+  （与 `groups` 解耦，不参与 VN24），谓词过 VN9/VN11/VN12、`within` 过 VN25；生成期展开成
+  `WithoutGuard` 清单——注入事件命中谓词即报错，背景噪声命中谓词则剔除。
+- 旧 `not(...) within(...)` / `<field> seq { … }` / `use(...) with(N)` 在解析期各报一条
+  带改写方向的 VN20 文案（§5.1）。
 - 背景与注入完全分离：背景保留自己的配额（`rate × duration`），注入在其上叠加
   （旧口径 `背景 = 配额 − 注入` 及其 `inject_counts` 链路已删除）。
 - `use from "file"` 的值文件解析（`loader::resolve_inject_files`）：相对 `.wfg` 目录解析路径，
@@ -436,8 +537,7 @@ wfg + wfs + wfl
 | 项 | 状态 |
 |---|---|
 | `replay STREAM { use from "f" }` 照单发货 | 未实现 |
-| `without(...)` 步骤（取代旧 `not(...) within(...)`） | 未实现 |
-| 时间**均匀**铺开 | 部分：`spread` 已可写并覆盖窗口长度，铺开策略仍是"随机簇起点 + 窗口内铺开" |
+| 时间**均匀**铺开 | 部分：`spread` 已可写并覆盖窗口长度，铺开策略仍是“随机簇起点 + 窗口内铺开” |
 | VN26（replay 文件） | 未实现；**依赖 `replay STREAM { use from }` 先落地**（该语法尚不存在，无物可校验） |
 | 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | **已落地**（§7.1；16/16 `lint` + `gen` 断言通过） |
 | 文档：CHANGELOG | 未写；按本仓惯例随 `chore(release)` 提交一起写（`git log -- CHANGELOG.md` 全是 release 提交） |
@@ -454,7 +554,6 @@ wfg + wfs + wfl
 
 **P1（优先）**
 
-- `without(...)` 的生成支持与严格约束定义。
 - 实体分布扩展：热点（Zipf）与新老实体比例。
 
 **P2（增强真实性）**

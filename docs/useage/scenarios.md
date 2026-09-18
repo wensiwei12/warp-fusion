@@ -116,18 +116,46 @@ hit<sip: 20> for sdm_rule sdm_event {
 - `spread D`：把该用例的事件铺开到 `D`，必须 ≤ `#[duration]`（`VN25`）；不给时按
   规则窗口长度铺开。
 
+## 带否定步骤的规则：`without(...)`
+
+规则里有 `not has …` 步骤时，光注入正向事件不够——该实体的窗口里只要出现一条
+**属于它、且命中否定条件**的事件，规则就不会触发。用 `without(...)` 声明这条约束：
+
+```wfg
+#[duration=10m]
+scenario no_login_then_xfer<seed=7> {
+  background { stream conn_events gen 50/s }
+  inject {
+    // 20 个 IP：scan → xfer；声明这些 IP 的窗口内不得出现成功登录
+    hit<sip: 20> for scan_then_xfer conn_events {
+      use(action="scan") x 3
+      then use(action="xfer") x 1
+      without(action="login_ok") within 5m
+    }
+  }
+}
+```
+
+- **不写条数**（否定步骤没有“N 条”语义），也不占 `use` 步骤位（不影响 `VN24`）。
+- `within D` 可省，默认取目标规则 `match` 的窗口长度；必须 ≤ `#[duration]`（`VN25`）。
+- 窗口起点 = 该实体**首条注入事件**的时间。
+- 与规则的 `not` 步骤**不要求对位**：它是纯构造约束，规则有没有 `not` 都能写。
+- 严格性：注入事件命中谓词 → 生成期直接报错（要就得改 `use(...)` 的值）；背景噪声
+  命中谓词 → 直接剔除。要造“违反”的样本，把那条事件当普通 `use(...) x N` 步骤注入。
+- 谓词与 `use(...)` 同形式，同样过 `VN9` / `VN11` / `VN12`。
+
 ## 常见错误码
 
 | 码 | 含义 |
 |---|---|
-| `VN20` | 用了旧注入语法（`hit<N%>` / `with(N)` / `injection` / `traffic` / `expect` / `<field> seq`），文案里给出改写方向 |
+| `VN20` | 用了旧注入语法（`hit<N%>` / `with(N)` / `not(...) within(...)` / `injection` / `traffic` / `expect` / `<field> seq`），文案里给出改写方向 |
 | `VN10` | 用例的 stream 没在 `background` 里声明 |
 | `VN17` | `use({...})` / `use from` 的形态非法（非 object / object 数组，或空数组） |
-| `VN11` | `use(...)` 的字段不在 schema 里 |
+| `VN11` | `use(...)` / `without(...)` 的字段不在 schema 里 |
 | `VN22` | 显式实体字段不在该 stream 的 schema 里 |
 | `VN23` | 显式实体字段与规则推断的实体字段不一致（多 key 规则的显式字段属消歧用法，放行） |
 | `VN24` | `use` 事件组数超过规则的事件步骤数（每个 `use ... x N` 对应一个步骤） |
-| `VN25` | `spread` 超过 `#[duration]` |
+| `VN25` | `spread` 或 `without ... within` 超过 `#[duration]` |
 | INJ1 / INJ2 | 生成期断言失败：`hit` 实体没报警（INJ1），或 `near_miss` / `miss` 实体报了警（INJ2） |
 
 排查手法：断言失败时输出会点名是哪个用例、哪个实体、实际与期望的告警数；先确认
@@ -141,6 +169,7 @@ hit<sip: 20> for sdm_rule sdm_event {
 
 逐项改写：`traffic` → `background`、`injection` → `inject`、`hit<N%>` → `hit<实体数>`、
 `use(...) with(N)` → `use(...) x N`、`<field> seq { … }` 去掉（实体字段改由规则推断）、
+`not(...) within(...)` → `without(...) [within D]`、
 `expect { … }` 删除（改由 INJ1/INJ2 承担）。背景速率是否折算可选（不折则总条数 ≈ 旧总量
 两倍）。完整对照表见设计文档 §5.2 / §5.3。
 

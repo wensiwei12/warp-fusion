@@ -18,6 +18,7 @@ use crate::error::{self, WfgenReason, WfgenResult};
 use crate::wfg_ast::WfgFile;
 use inject_gen::InjectEntityKey;
 use inject_gen::generate_inject_events;
+use inject_gen::{InjectGenResult, WithoutGuard};
 use stream_gen::{GenEvent, generate_stream_events};
 
 /// Result of data generation.
@@ -60,6 +61,7 @@ pub fn generate(
     let mut sorted_chunks: Vec<Vec<GenEvent>> = Vec::new();
     let mut inject_entities: Vec<InjectEntityKey> = Vec::new();
     let mut unasserted_inject_entities = 0_u64;
+    let mut without_guards: Vec<WithoutGuard> = Vec::new();
 
     let has_syntax_inject = wfg
         .syntax
@@ -68,11 +70,15 @@ pub fn generate(
         .is_some_and(|injection| !injection.cases.is_empty());
     let has_inject = has_syntax_inject && !rule_plans.is_empty();
     if has_inject {
-        let inject_result =
-            generate_inject_events(wfg, rule_plans, schemas, &start, &duration, &mut rng)?;
-        inject_entities = inject_result.entity_keys;
-        unasserted_inject_entities = inject_result.unasserted_entities;
-        let mut inject_events = inject_result.events;
+        let InjectGenResult {
+            events: mut inject_events,
+            entity_keys,
+            unasserted_entities,
+            without_guards: guards,
+        } = generate_inject_events(wfg, rule_plans, schemas, &start, &duration, &mut rng)?;
+        inject_entities = entity_keys;
+        unasserted_inject_entities = unasserted_entities;
+        without_guards = guards;
         inject_events.sort_by_key(|a| a.timestamp);
         if !inject_events.is_empty() {
             sorted_chunks.push(inject_events);
@@ -126,6 +132,7 @@ pub fn generate(
             })?;
 
         let events = generate_stream_events(stream, schema, bg_count, &start, &duration, &mut rng);
+        let events = suppress_without_guards(events, &without_guards);
         if !events.is_empty() {
             sorted_chunks.push(events);
         }
@@ -178,6 +185,26 @@ impl Ord for HeapItem {
             .cmp(&other.ts_nanos)
             .then_with(|| self.chunk_idx.cmp(&other.chunk_idx))
     }
+}
+
+/// 剔除「属于受约束实体、落在约束窗内、且命中 `without(...)` 谓词」的背景事件
+/// （设计 §3.8）。
+///
+/// 背景是随机流量，不认领任何实体；但随机 IP / 随机数字很容易恰好撞上注入实体的键值
+/// ——一旦撞上，这条噪声就会被规则当成**该实体**的事件看到（`wf-cep` 的否定扫描按
+/// 窗口实例进行）。带否定步骤的规则对“窗口内不得出现匹配事件”敏感，撞上就静默不触发。
+///
+/// 只剔命中谓词的那些：不命中谓词的背景噪声不会违反否定步骤，剔除它只会无故偏离
+/// 背景配额。判定口径全部收在 [`WithoutGuard::is_violation`]，与注入侧冲突检查同源。
+fn suppress_without_guards(events: Vec<GenEvent>, guards: &[WithoutGuard]) -> Vec<GenEvent> {
+    if guards.is_empty() {
+        return events;
+    }
+
+    events
+        .into_iter()
+        .filter(|event| !guards.iter().any(|guard| guard.is_violation(event)))
+        .collect()
 }
 
 fn merge_sorted_chunks(chunks: Vec<Vec<GenEvent>>) -> Vec<GenEvent> {

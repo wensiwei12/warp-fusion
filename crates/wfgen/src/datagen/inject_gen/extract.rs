@@ -164,12 +164,9 @@ pub(super) fn extract_syntax_case_overrides(case: &InjectCase) -> WfgenResult<In
 /// `loader::load_from_uses`）；残留的 `File` 会**报错**而不是静默生成空字段。
 fn source_to_records(source: &ValueSource) -> WfgenResult<Vec<HashMap<String, serde_json::Value>>> {
     let records = match source {
-        ValueSource::Predicates(predicates) => vec![
-            predicates
-                .iter()
-                .filter_map(|p| attr_value_to_json(&p.value).map(|v| (p.field.clone(), v)))
-                .collect(),
-        ],
+        ValueSource::Predicates(predicates) => {
+            vec![predicates_to_entries(predicates).into_iter().collect()]
+        }
         ValueSource::Json(json) => json_records(json)?,
         ValueSource::File(path) => {
             return error::fail(
@@ -232,6 +229,17 @@ fn attr_value_to_json(value: &crate::wfg_ast::AttrValue) -> Option<serde_json::V
             Some(serde_json::Value::String(format!("{:?}", d)))
         }
     }
+}
+
+/// 谓词列表 → `(字段, 期望值)` 列表，与 `use(...)` 共用同一套 `AttrValue` 归一化
+/// （避免 `use` 与 `without` 对同一个值产生两种 JSON 形态）。
+pub(super) fn predicates_to_entries(
+    predicates: &[crate::wfg_ast::FieldPredicate],
+) -> Vec<(String, serde_json::Value)> {
+    predicates
+        .iter()
+        .filter_map(|p| attr_value_to_json(&p.value).map(|v| (p.field.clone(), v)))
+        .collect()
 }
 
 fn extract_entity_id_field(expr: &Expr) -> Option<String> {
