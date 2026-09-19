@@ -1,0 +1,19 @@
+// L3 夹具（without）：与 `datagen/tests/inject/without.rs` 的
+// `make_login_schema` / `make_alerts_schema` 同构。
+
+window LoginWindow {
+    stream_tag = "login_events"
+    time = timestamp
+    over = 5m
+    fields {
+        timestamp: time
+        src_ip: ip
+        username: chars
+        success: bool
+    }
+}
+
+window alerts {
+    fields { }
+    over = 0
+}

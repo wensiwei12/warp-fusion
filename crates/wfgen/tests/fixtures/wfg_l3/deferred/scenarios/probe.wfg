@@ -1,0 +1,25 @@
+use "../schemas/nx.wfs"
+use "../rules/deferred.wfl"
+
+#[duration=1m]
+scenario deferred_probe<seed=3> {
+    // 背景速率取 1/s：不是为了噪声，而是让**驱动事件延续到场景末尾**——deferred 的到期评估
+    // 由驱动事件推进的水位触发，簇若落在**最后一个桶**里（`emit at` 超出最后一个驱动事件时间），
+    // 引擎永远不会到期，而 oracle 在 EOS 会 flush（见设计 §9.4「尾部边界」）。
+    // 1/s × 60s = 60 条，最后一条 ≈59s，足够覆盖簇的到期点（≤15s，见下面的 `spread`）。
+    background {
+        stream person_events gen 1/s
+    }
+
+    inject {
+        hit<id: 200> for person_creates_auction person_events {
+            use(name="p") x 1
+            join auction_events as seller {
+                use(price=7) x 1
+            }
+            // 簇只铺到 50s：`emit at` = bucket_end(ts, 5s) 必须**早于**最后一个驱动事件，
+            // 否则引擎的 deferred 收尾推进不到该到期点，尾部挂起项不会触发（见设计 §9.4 尾部边界）。
+            spread 50s
+        }
+    }
+}

@@ -1,0 +1,32 @@
+// 探针夹具（deferred join）：右事件与左事件**同刻**形态。
+// 同刻是有意为之：右行正好落在 `within` 闭区间的下界（`p.timestamp`）上，
+// 把这个边界压在 L3 对拍护栏下（历史上这里因 f64 界取整丢过一半配对，
+// 详见设计文档 §9.4「deferred 右事件取同刻」）。
+window person_events {
+    stream_tag = "person_events"
+    time = timestamp
+    over = 5m
+    fields {
+        timestamp: time
+        id: digit
+        name: chars
+    }
+}
+
+window auction_events {
+    stream_tag = "auction_events"
+    time = timestamp
+    over = 5m
+    fields {
+        timestamp: time
+        seller: digit
+        price: digit
+    }
+}
+
+window alerts {
+    over = 0
+    fields {
+        id: digit
+    }
+}

@@ -1,0 +1,32 @@
+// L3 夹具（join）：驱动窗 / 目标窗 / 产出窗。
+//
+// 与 `datagen/tests/inject/join.rs` 的 snapshot 夹具同构（那边已锁定规则可编译、
+// 注入配对后真能触发规则）。
+window bid_events {
+    stream_tag = "bid_events"
+    time = timestamp
+    over = 5m
+    fields {
+        timestamp: time
+        auction: digit
+        price: digit
+    }
+}
+
+window auction_events {
+    stream_tag = "auction_events"
+    time = timestamp
+    over = 5m
+    fields {
+        timestamp: time
+        id: digit
+        category: digit
+    }
+}
+
+window alerts {
+    over = 0
+    fields {
+        id: digit
+    }
+}

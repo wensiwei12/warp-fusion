@@ -1,0 +1,21 @@
+// L3 夹具（zipf）：背景热点实体分布。
+window conn_events {
+    stream_tag = "netflow"
+    time = event_time
+    over = 5s
+    fields {
+        sip: ip
+        dport: digit
+        action: chars
+        event_time: time
+    }
+}
+
+window network_alerts {
+    over = 0
+    fields {
+        sip: ip
+        alert_type: chars
+        detail: chars
+    }
+}

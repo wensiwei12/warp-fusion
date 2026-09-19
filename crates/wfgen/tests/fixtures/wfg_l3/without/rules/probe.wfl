@@ -1,0 +1,17 @@
+// 带否定步骤的规则：`scan → (不含 login) → scan`。
+// `not has login` 让"窗口里混进一条成功登录"变成"不触发"，这正是 `without(...)` 要守住的。
+rule probe_rule {
+    events {
+        scan  : LoginWindow && success == false
+        login : LoginWindow && success == true
+    }
+    match<src_ip : 5s> {
+        on event seq {
+            has scan;
+            not has login;
+            has scan;
+        }
+    } -> score(1)
+    entity(ip, scan.src_ip)
+    yield alerts()
+}

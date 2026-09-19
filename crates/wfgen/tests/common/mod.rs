@@ -33,34 +33,40 @@ pub struct EngineRun {
     pub artifact_dir: PathBuf,
 }
 
-/// 跑一条场景的 L3 闭环：`scenario_rel` 相对 `crates/wfgen/examples`。
+/// 跑一条场景的 L3 闭环。`case_rel` 形如 `<case>/scenarios/<file>.wfg`，其中 `<case>` 目录下
+/// 需有 `schemas/` 与 `rules/`——引擎配置的 `schemas` / `rules` glob 都相对 `fixture_root`
+/// （示例场景用 `examples/`，测试专用夹具用 `tests/fixtures/wfg_l3/`）。
 ///
 /// `override_duration` 覆盖场景时长以控制耗时（背景条数按比例缩、注入条数不变）。
-pub async fn engine_verify(
-    scenario_rel: &str,
+pub async fn engine_verify_in(
+    fixture_root: &Path,
+    case_rel: &str,
     override_duration: Duration,
     vars: &[(&str, &str)],
 ) -> EngineRun {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let examples_dir = manifest_dir.join("examples");
-    let wfg_path = examples_dir.join(scenario_rel);
+    let wfg_path = fixture_root.join(case_rel);
     assert!(
         wfg_path.is_file(),
         "scenario not found: {}",
         wfg_path.display()
     );
 
-    let example = scenario_rel
+    let example = case_rel
         .split('/')
         .next()
-        .expect("scenario_rel must start with the example directory");
+        .expect("case_rel must start with the case directory");
     let stem = wfg_path
         .file_stem()
         .and_then(|s| s.to_str())
         .expect("scenario file stem");
+    let root_label = fixture_root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("fixtures");
     let artifact_dir = manifest_dir
         .join("../../target/test-artifacts/wfg_l3")
-        .join(format!("{example}_{stem}"));
+        .join(format!("{root_label}_{example}_{stem}"));
 
     // 上一轮产物（尤其 sink 的 alerts/*.jsonl）会污染对拍：先清干净。
     let alert_dir = artifact_dir.join("alerts");
@@ -100,12 +106,16 @@ pub async fn engine_verify(
     let duration = loaded.wfg.scenario.time_clause.duration;
     let injected_rules =
         wfgen::injection_targets::injected_rule_names(&loaded.wfg).expect("injected rules");
-    let oracle = wfgen::oracle::run_oracle(
-        &events,
+    // 用**带 schemas** 的变体（与 `cmd_gen` 同口径）：`run_oracle` 无 schema 时 join 一律不评估，
+    // 跨流注入的期望告警会整片缺失，verify 必然报 missing。
+    let oracle = wfgen::oracle::run_oracle_events_full(
+        events.iter().cloned(),
         &loaded.rule_plans,
+        &loaded.schemas,
         &start,
         &duration,
         Some(&injected_rules),
+        true,
     )
     .expect("oracle evaluation failed");
     assert!(
@@ -123,10 +133,13 @@ pub async fn engine_verify(
         .iter()
         .map(|(k, v)| format!("{k} = \"{v}\"\n"))
         .collect();
+    // sink 配置复用 `examples/sinks`（按 window 名路由的通用配置：`windows = ["*"]` 的
+    // catch_all 会把任何场景的告警落到 `<work_root>/alerts/`），夹具根目录因此不必自带 sinks。
+    let sinks_dir = manifest_dir.join("examples/sinks");
     let toml_str = format!(
         r#"
 mode = "batch"
-sinks = "sinks"
+sinks = "{sinks}"
 windows = "{windows}"
 work_root = "{work_root}"
 
@@ -146,6 +159,7 @@ rules   = "{example}/rules/*.wfl"
 [vars]
 {vars_toml}
 "#,
+        sinks = sinks_dir.display(),
         windows = windows_path.display(),
         work_root = artifact_dir.display(),
         source = source_path.display(),
@@ -161,13 +175,12 @@ rules   = "{example}/rules/*.wfl"
     )
     .load()
     .expect("failed to parse config TOML");
-    let raw =
-        RawFusionConfigTree::from_toml_str(&toml_str, &examples_dir).expect("raw config tree");
+    let raw = RawFusionConfigTree::from_toml_str(&toml_str, fixture_root).expect("raw config tree");
 
     write_arrow_framed(&events, &loaded.schemas, &source_path);
 
     // ---- 起引擎 → batch 模式自动退出 ----
-    let reactor = Reactor::start(config, raw, &examples_dir)
+    let reactor = Reactor::start(config, raw, fixture_root)
         .await
         .expect("Reactor::start failed");
     tokio::time::timeout(Duration::from_secs(60), reactor.wait())
@@ -203,10 +216,15 @@ rules   = "{example}/rules/*.wfl"
     }
 }
 
-/// 初始化 tracing（进程内只成功一次；重复调用静默跳过）。
+/// 初始化 tracing（进程内**只装一次**：subscriber 是全局的，日志写到第一次调用的产物目录）。
 ///
 /// 引擎的告警路由 / 规则编译失败只出现在日志里，因此产物必须留下日志才能排障。
 fn init_tracing(artifact_dir: &Path, log_name: &str) {
+    static INSTALLED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    if INSTALLED.set(artifact_dir.to_path_buf()).is_err() {
+        return; // 已有订阅者：日志在第一次调用的产物目录里（含本次运行）
+    }
+
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::{EnvFilter, Layer, fmt};

@@ -130,8 +130,12 @@ wfgen stream --scenario-dir models/scenarios --wfl "rules/*.wfl" [--rate 100000]
 
 ### 仓内语料回归
 
-仓内 `.wfg`（`crates/wfgen/examples/*`、`crates/wfadm/templates/*`、`docker/default_setting/*`）
-有两条自动化的对拍测试，随 `cargo test` 一起跑：
+仓内 `.wfg` 有两条自动化的对拍测试，随 `cargo test` 一起跑：
+
+- **L0–L2**（`wfg_corpus`）：18 个场景 = `crates/wfgen/examples/*`（6）+ `crates/wfadm/templates/*`（4）
+  + `docker/default_setting/*`（4）+ 测试夹具 `tests/fixtures/wfg_l3/*`（4：跨流注入 / deferred /
+  `without` / 实体分布）；
+- **L3**（`wfg_corpus_l3`）：7 个场景走完整闭环（3 个示例 + 上面 4 个特性夹具）。
 
 ```bash
 cargo test -p wfgen --test wfg_corpus      # L0–L2：VN 校验 + INJ1/INJ2 断言 + 期望文件 + 条数守恒

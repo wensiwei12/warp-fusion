@@ -1,0 +1,11 @@
+rule person_creates_auction {
+    events {
+        p : person_events
+    }
+    on each p -> score(10)
+    join auction_events within [p.timestamp, <bucket_end(p.timestamp, 5s)]
+        on p.id == auction_events.seller
+        emit at bucket_end(p.timestamp, 5s)
+    entity(digit, p.id)
+    yield alerts(id = p.id)
+}

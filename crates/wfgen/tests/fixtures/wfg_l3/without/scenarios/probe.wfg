@@ -1,0 +1,18 @@
+// L3 夹具（without）：10 个实体各注入 2 条 scan，并声明其窗口内不得出现成功登录。
+use "../schemas/login.wfs"
+use "../rules/probe.wfl"
+
+#[duration=1m]
+scenario without_guard<seed=7> {
+    background {
+        stream LoginWindow gen 20/s
+    }
+
+    inject {
+        hit<src_ip: 10> for probe_rule LoginWindow {
+            use(success=false) x 1
+            then use(success=false) x 1
+            without(success=true) within 4s
+        }
+    }
+}

@@ -1,0 +1,19 @@
+// L3 夹具（join）：每条左事件在目标窗造一条配对右事件（键 = 左实体键值，时间由规则形态决定）。
+use "../schemas/nx.wfs"
+use "../rules/pair.wfl"
+
+#[duration=1m]
+scenario cross_stream_snapshot<seed=3> {
+    background {
+        stream bid_events gen 50/s
+    }
+
+    inject {
+        hit<auction: 200> for bid_expands_auction bid_events {
+            use(price=5) x 1
+            join auction_events as id {
+                use(category=10) x 1
+            }
+        }
+    }
+}

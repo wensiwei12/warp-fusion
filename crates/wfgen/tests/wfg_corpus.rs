@@ -42,6 +42,11 @@ const CORPUS: &[&str] = &[
     "crates/wfadm/templates/models/scenarios/port_scan_quick.wfg",
     "crates/wfadm/templates/models/scenarios/ssh_brute_force.wfg",
     "crates/wfadm/templates/models/scenarios/ssh_brute_quick.wfg",
+    // 测试专用夹具：新特性（跨流注入 / without / 实体分布）的 VN + INJ1/INJ2 覆盖。
+    "crates/wfgen/tests/fixtures/wfg_l3/join/scenarios/pair.wfg",
+    "crates/wfgen/tests/fixtures/wfg_l3/without/scenarios/probe.wfg",
+    "crates/wfgen/tests/fixtures/wfg_l3/zipf/scenarios/hot.wfg",
+    "crates/wfgen/tests/fixtures/wfg_l3/deferred/scenarios/probe.wfg",
     // docker 示例里的同构副本（4 个）——与模板内容应保持一致，漂移即失败。
     "docker/default_setting/models/scenarios/port_scan.wfg",
     "docker/default_setting/models/scenarios/port_scan_quick.wfg",

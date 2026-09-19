@@ -1,0 +1,11 @@
+// 跨流注入的规则形态：snapshot（无 `within`）——点查发生在驱动事件被处理时，
+// 因此 wfgen 把右事件放在左事件**提前 1ms**（设计 §9.4），这个形态不依赖同刻可见性。
+rule bid_expands_auction {
+    events {
+        b : bid_events
+    }
+    on each b -> score(10)
+    join auction_events snapshot on b.auction == auction_events.id
+    entity(digit, b.auction)
+    yield alerts(id = b.auction)
+}

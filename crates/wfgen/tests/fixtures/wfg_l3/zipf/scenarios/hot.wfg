@@ -1,0 +1,17 @@
+// L3 夹具（zipf）：背景里 50 个实体按 Zipf 抽取（热点反复出现），另加 20 个"不该报警"的实体。
+use "../schemas/conn.wfs"
+use "../rules/hot_sip.wfl"
+
+#[duration=1m]
+scenario hot_entities<seed=11> {
+    background {
+        stream conn_events gen 200/s
+        entity conn_events.sip zipf(pool=50, exponent=2.0)
+    }
+
+    inject {
+        miss<sip: 20> for hot_sip conn_events {
+            use(action="normal") x 1
+        }
+    }
+}

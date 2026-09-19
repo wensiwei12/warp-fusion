@@ -1,0 +1,15 @@
+// 热点实体规则：单个 sip 在 5s 窗口内事件数 >= 20 即告警。
+// 背景用 `entity … zipf(pool=50, exponent=2.0)` 造热点，只有热点实体能过阈值——
+// 这条路径完全由**背景**驱动（无注入），因此 L3 对拍的是"背景分布 → 引擎告警"。
+rule hot_sip {
+    events {
+        c : conn_events
+    }
+    match<sip : 5s> {
+        on event {
+            c | count >= 20;
+        }
+    } -> score(30)
+    entity(ip, c.sip)
+    yield network_alerts(sip = c.sip, alert_type = "hot_sip", detail = "hot entity")
+}
