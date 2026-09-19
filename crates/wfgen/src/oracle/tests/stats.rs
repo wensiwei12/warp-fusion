@@ -213,7 +213,7 @@ fn stats_oracle_top_emits_n_records_per_bucket() {
     for (i, price) in [5.0, 1.0, 9.0, 3.0, 7.0].into_iter().enumerate() {
         let t = secs(1 + i as u64);
         assert!(
-            se.feed(t, &row(&[("price", Value::Number(price))]))
+            se.feed(t, &row(&[("price", Value::Float(price))]))
                 .is_empty()
         );
     }
@@ -277,7 +277,7 @@ fn gen_event_to_row_converts_primitives_and_keeps_structured() {
         fields,
     };
     let r = gen_event_to_row(&ev);
-    assert_eq!(r.get("id"), Some(&Value::Number(42.0)));
+    assert_eq!(r.get("id"), Some(&Value::Float(42.0)));
     assert_eq!(r.get("name"), Some(&Value::Str("alice".into())));
     assert_eq!(r.get("active"), Some(&Value::Bool(true)));
 
@@ -286,7 +286,7 @@ fn gen_event_to_row_converts_primitives_and_keeps_structured() {
     };
     assert_eq!(
         extra.get("nested"),
-        Some(&Value::Array(vec![Value::Number(1.0), Value::Number(2.0)]))
+        Some(&Value::Array(vec![Value::Float(1.0), Value::Float(2.0)]))
     );
 }
 

@@ -154,9 +154,15 @@ scenario cross_stream<seed=3> {
             .iter()
             .find(|event| event.fields.get("id") == Some(seller))
             .unwrap_or_else(|| panic!("右事件的 seller={seller} 必须配对到左实体"));
-        assert_eq!(
-            auction.timestamp, paired.timestamp,
-            "右事件时间 = 所属左事件时间"
+        // deferred 的右行与左行**同刻**（`DEFERRED_OFFSET_NANOS` = 0）：正好压在 `within`
+        // 闭区间的下界上，靠两侧的精确整数口径支撑（见
+        // `deferred_same_instant_right_event_fires_all_entities`）。
+        let delta = auction.timestamp - paired.timestamp;
+        assert!(
+            delta.is_zero(),
+            "右事件应与左事件同刻（deferred 形态）：right={} left={} delta={delta}",
+            auction.timestamp,
+            paired.timestamp
         );
         assert_eq!(
             auction.fields.get("price").and_then(|v| v.as_f64()),
@@ -215,6 +221,90 @@ scenario cross_stream_oracle<seed=5> {
         entity_ids.len(),
         3,
         "每个 hit 实体都应因配对成功而产出告警：{:?}",
+        alerts.alerts
+    );
+}
+
+/// 回归（2026-09-18 建，2026-09-19 改向）：deferred 的右事件与左事件**同刻**，
+/// 且 50 个 hit 实体**一个不少**。
+///
+/// 历史：此处曾在同刻下只出约一半实体（50 个出 26 个；200 个丢 98 个）——
+/// `within` 的下界（`p.timestamp`）当时经 f64 求值，而 epoch-ns（≈1.77e18）超出 f64
+/// 精确整数范围（2^53≈9e15），往返取整粒度约 256ns；同刻时右行正压在下界上，约一半的
+/// 下界被向上取整 → `row_ts >= lo` 不成立 → 右行被区间过滤掉 → join miss。
+///
+/// 该缺陷已由两侧的精确整数口径修好：引擎侧 `eval_interval_bound` 走 `Value::Int`；
+/// wfgen/oracle 侧时间列字段也按列式口径落 `Value::Int`（否则 oracle 仍算错，
+/// 本用例第二半就会挂）。夹具因此改成**故意同刻**：把 `row_ts == lo` 这个闭区间边界
+/// 持续压在护栏下，而不是用 1µs 余量绕过它。
+#[test]
+fn deferred_same_instant_right_event_fires_all_entities() {
+    let input = r#"
+#[duration=10s]
+scenario deferred_lag<seed=13> {
+    background { stream person_events gen 5/s }
+    inject {
+        hit<id: 50> for person_creates_auction person_events {
+            use(name="p") x 1
+            join auction_events as seller {
+                use(price=7) x 1
+            }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = schemas();
+    let plans = vec![compile_join_rule(&schemas)];
+    let start: DateTime<Utc> = "2024-01-01T00:00:00Z".parse().unwrap();
+    let duration = wfg.scenario.time_clause.duration;
+    let mut rng = StdRng::seed_from_u64(wfg.scenario.seed);
+    let result =
+        generate_inject_events(&wfg, &plans, &schemas, &start, &duration, &mut rng).unwrap();
+
+    let left: Vec<_> = result
+        .events
+        .iter()
+        .filter(|e| e.window_name == "person_events")
+        .collect();
+    let right: Vec<_> = result
+        .events
+        .iter()
+        .filter(|e| e.window_name == "auction_events")
+        .collect();
+    assert_eq!(left.len(), 50);
+    assert_eq!(right.len(), 50);
+    for r in &right {
+        let seller = r.fields.get("seller").expect("右行连接键");
+        let l = left
+            .iter()
+            .find(|e| e.fields.get("id") == Some(seller))
+            .unwrap_or_else(|| panic!("右事件 seller={seller} 必须配对到左实体"));
+        assert!(
+            r.timestamp == l.timestamp,
+            "deferred 右行应与左行**同刻**（下界边界用例）：right={} left={}",
+            r.timestamp,
+            l.timestamp
+        );
+    }
+
+    // 配对必须真能触发：50 个 hit 实体一个不少（历史上同刻只能出 26 个）。
+    let alerts = run_oracle_events_full(
+        result.events.clone(),
+        &plans,
+        &schemas,
+        &start,
+        &duration,
+        None,
+        true,
+    )
+    .unwrap();
+    let entity_ids: std::collections::BTreeSet<&str> =
+        alerts.alerts.iter().map(|a| a.entity_id.as_str()).collect();
+    assert_eq!(
+        entity_ids.len(),
+        50,
+        "每个 hit 实体都应产出告警（deferred 右行若与左行同刻，会因 f64 界取整丢掉约一半）：{:?}",
         alerts.alerts
     );
 }

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use wf_engine::match_engine::{Event, FieldSource, JoinRow, Value, WindowLookup};
+use wf_engine::match_engine::{Event, FieldSource, JoinKey, JoinRow, Value, WindowLookup};
 use wf_lang::WindowSchema;
 use wf_lang::plan::RulePlan;
 
@@ -239,13 +239,16 @@ impl WindowLookup for OracleLookup {
 }
 
 /// Stable string repr of a scalar join key value (insert and lookup sides go
-/// through the same conversion, so they always agree). Float keys are excluded
-/// by the checker for join index keys, so bit-exact f64 is fine here.
+/// through the same conversion, so they always agree).
+///
+/// 直接复用引擎的 [`JoinKey::from_value`]——它就是 join 索引键的**定义**，
+/// 因此 oracle 侧的键归一不可能与引擎漂移：`JoinKey::Int(i64)` 同时承接
+/// [`Value::Int`]（精确）与 [`Value::Float`]（`as i64`），所以 `Int(42)` 与
+/// `Float(42.0)` 落同一 repr；结构化值 → `None`（checker 已在编译期拒绝其作
+/// join 键，与引擎一致）。
+///
+/// 此前这里是手写的 `n:{f64 bits}`：`Value` 拆出 `Int` 后，同一个键会因来源
+/// 变体不同产生两种 repr，lookup 侧静默漏配（无任何报错）。
 fn value_key_repr(v: &Value) -> Option<String> {
-    match v {
-        Value::Number(n) => Some(format!("n:{}", n.to_bits())),
-        Value::Str(s) => Some(format!("s:{}", s)),
-        Value::Bool(b) => Some(format!("b:{}", b)),
-        _ => None,
-    }
+    JoinKey::from_value(v).map(|key| format!("{key:?}"))
 }

@@ -772,7 +772,7 @@ hit<id: 200> for q8_monitor_new_user person_events {
 
 | 规则 join 形态 | 判据 | 右事件时间 | 理由 |
 |---|---|---|---|
-| **deferred** | inner + `within` + `emit at` | 与左事件**同刻** | 到期评估时右行必已在窗内（q4/q8/q9） |
+| **deferred** | inner + `within` + `emit at` | **与左事件同刻（`0`）** | 到期评估时右行必已在窗内（q4/q8/q9）；同刻正好把 `within` 闭区间的**下界边界**（`row_ts == lo`）压进回归护栏（历史上这里因 f64 界取整丢过一半——见下方「deferred 右事件取同刻」那条） |
 | **snapshot** | `snapshot` 且**无** `within` | 左事件**提前 1ms** | snapshot 在驱动事件被处理时查右窗，同刻右行还没进去（q3/q20）；取 1ms 而非 1ns 是为了让**毫秒精度**的下游（JSONL 的 `_timestamp`）也看得出先后 |
 
 其余形态都报 VN30：`asof` / `anti`、**没有 `emit at` 的即时 inner join**（它要求右行更早、而
@@ -785,6 +785,38 @@ hit<id: 200> for q8_monitor_new_user person_events {
   `pub(crate)`），算不了。若用户把下界写成晚于左事件时间，右事件会落在区间外——后果是生成期
   INJ1 报「hit 实体不会触发」，属于**可见的失败**（不是静默产出）。
 - `spread` 只管左簇；右事件跟随所属左事件的时间，不单独铺开。
+
+- **尾部边界（引擎侧）：`emit at` 必须落在最后一个驱动事件之前**。deferred 的到期评估由
+  **驱动事件**推进的水位触发；若某个簇的 `emit at`（`bucket_end(左事件时间, 桶长)`）晚于流中
+  最后一个驱动事件，引擎永远不会到期 → 该实体的告警**不产出**；而 oracle 在 EOS 会 flush 全部
+  剩余挂起项 → 对拍多出 missing。实测（200 个 hit 实体、簇铺到场景末尾）：最后一个 5s 桶的
+  **14 个实体**全部不触发；簇只铺到前段（10s）而后无驱动事件时，同样整桶丢失。
+  规避：让驱动事件延续到场景末尾（背景保持一个非零速率），并把注入簇留在前段（`spread`）。
+  L3 夹具 `tests/fixtures/wfg_l3/deferred/` 即按此布置（背景 `gen 1/s` + `spread`）。
+  是否让 oracle 也镜像该语义（不 flush 到期未到的挂起项）待定——nexmark q8/q9 的现有对拍
+  依赖 EOS flush，改动需单独评估。
+- **deferred 右事件取同刻（`DEFERRED_OFFSET_NANOS = 0`；2026-09-18 发现，2026-09-19 修好并改回同刻）**：
+  `within` 的界（如 `p.timestamp`）曾经由 f64 求值，而纳秒时间戳（≈1.77e18）**超出 f64 的精确整数
+  范围**（2^53≈9e15），往返取整粒度约 **256ns**。同刻时右行正好压在下界上：约一半时间戳的下界会被
+  **向上**取整，`row_ts >= lo` 随之不成立 → 右行被区间过滤掉 → join miss → 该 `hit` 实体不产出告警。
+  当时的实测（`on each` 驱动 + deferred，200 个实体各 1 左 1 右、键与纳秒时间**逐条严格相等**）：
+  oracle 只出 **102** 条、真引擎 **95** 条；且“命中与否”与 `(ts as f64) as i64 > ts` **逐条吻合
+  （200/200）**，与事件顺序、时长均无关。（定位期曾用 **+1µs** 规避，现已删除。）
+  **缺陷在两侧，只修一边不够**：
+  - **引擎侧**：界求值改走精确整数通道（`eval_interval_bound` 的 `Value::Int → i64`）；
+  - **wfgen/oracle 侧**：oracle 的时间列字段也要按**列式口径**落 `Value::Int`
+    （`oracle::time_columns` / `json_to_time_value`）—— oracle 只有 JSON 来源，若时间字段
+    仍按 JSON 口径落 `Float`，**同刻下 oracle 仍只出 26/50**，对拍会把 oracle 自己的口径差
+    误报成引擎的问题（本页原版就是这样误判为「根因在引擎侧」的）。
+  两侧对齐后同刻 **50/50** 全命中，夹具因此改成**故意同刻**：右行正好落在 `within` 闭区间的下界上，
+  把这个边界持续压在护栏下，而不是用 1µs 余量绕过它。
+  回归用例：`datagen/tests/inject/join.rs::deferred_same_instant_right_event_fires_all_entities`；
+  oracle 侧口径单测：`oracle/tests/basic.rs::time_typed_fields_are_exact_int_columns_in_oracle_events`。
+  ⚠️ **仍存的同类口径差**（本页不掩盖）：`Digit`（箭头 `Int64`）列在引擎里同样是 `Value::Int`，
+  oracle 仍按 JSON 口径落 `Float`。`|i| < 2^53`（id / price 等）时各消费点（`JoinKey` / `ValueKey`
+  归一、`format_f64` 输出、`numeric_cmp`）恰好一致，所以当前无害；若 `Digit` 装进超过 2^53 的
+  值（雪花 ID / 纳秒 / 大计数）会以**同一类方式**静默咬人。是否全面对齐待定。
+
 - 目标窗必须已在 schema 里、`use` 的字段必须属于目标窗（VN11）、在 `use` 里重复连接键报 VN12。
 
 - **引擎侧边界（驱动形态）**：deferred（`emit at`）join 目前**只支持 `on each <alias>` 驱动**；

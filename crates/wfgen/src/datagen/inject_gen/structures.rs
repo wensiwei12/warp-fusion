@@ -227,10 +227,15 @@ pub(super) struct RuleJoinInfo {
     /// 驱动侧的连接键字段（规则 `on <left> == <right>` 的 left，如 `b.auction`）——
     /// 右行的连接键取它的值，两侧因此指向同一个实体。
     pub(super) left_field: String,
-    /// 右事件相对左事件的时间偏移（纳秒）：
-    /// - `0` = deferred（`emit at` + `within`）：到期评估时右行已在窗内；
-    /// - `-1` = snapshot（无 `within`）：右行必须在驱动事件被处理时**已可见**，
-    ///   故前挪 1ns（最小让位，仍落在窗口内）。
+    /// 右事件相对左事件的时间偏移（纳秒），取值见 [`extract_rule_structure`] 的两个常量：
+    /// - `DEFERRED_OFFSET_NANOS` = `0`：deferred（`emit at` + `within`）——右行与左行**同刻**，
+    ///   正好落在 `within` 闭区间的下界上，把该边界持续压在回归护栏下
+    ///   （历史上这里因 f64 界取整丢过一半配对，详见设计文档 §9.4）；
+    /// - `SNAPSHOT_LEAD_NANOS` = `-1ms`：snapshot（无 `within`）——右行必须在驱动事件
+    ///   被处理时**已可见**；取 1ms（而非 1ns）是为了让毫秒精度的下游（JSONL 的
+    ///   `_timestamp`）也看得出先后。
+    ///
+    /// [`extract_rule_structure`]: super::extract::extract_rule_structure
     pub(super) offset_nanos: i64,
 }
 

@@ -575,7 +575,8 @@ fn output_record_to_event(record: &OutputRecord) -> Event {
     let mut fields = EngineHashMap::default();
     fields.insert(
         SmolStr::from(PIPE_EVENT_TIME_FIELD),
-        Value::Number(record.event_time_nanos as f64),
+        // epoch-ns（≈1.77e18 > 2^53）：必须精确整数，经 f64 会被量化到 ~256ns。
+        Value::Int(record.event_time_nanos),
     );
     for (name, value) in &record.yield_fields {
         fields.insert(SmolStr::from(&**name), value.clone());
@@ -598,14 +599,17 @@ fn json_to_event_with_time_fields(
             if time_fields.contains(key)
                 && let Some(nanos) = parse_json_timestamp_nanos(val)
             {
-                fields.insert(SmolStr::from(key.as_str()), Value::Number(nanos as f64));
+                // 该字段是**时间来源**，解析成 epoch-ns 后已是精确整数（口径同箭头
+                // Timestamp(Ns) 列 → `Value::Int`），不得再经 f64。
+                fields.insert(SmolStr::from(key.as_str()), Value::Int(nanos));
                 continue;
             }
 
             let v = match val {
                 serde_json::Value::Number(n) => {
                     if let Some(f) = n.as_f64() {
-                        Value::Number(f)
+                        // JSON 数字不猜整型（与引擎 `json_to_value` 同口径）。
+                        Value::Float(f)
                     } else {
                         continue;
                     }

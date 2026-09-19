@@ -683,18 +683,15 @@ mod tests {
         let EngineValue::Object(conn_info) = &fields["conn_info"] else {
             panic!("conn_info 应为 Object，实际 {:?}", fields["conn_info"]);
         };
-        assert_eq!(
-            conn_info.get("bytes_out"),
-            Some(&EngineValue::Number(500.0))
-        );
+        assert_eq!(conn_info.get("bytes_out"), Some(&EngineValue::Float(500.0)));
         let Some(EngineValue::Object(nested)) = conn_info.get("nested") else {
             panic!("嵌套 object 应保留，实际 {:?}", conn_info.get("nested"));
         };
-        assert_eq!(nested.get("sev"), Some(&EngineValue::Number(10.0)));
+        assert_eq!(nested.get("sev"), Some(&EngineValue::Float(10.0)));
 
         assert_eq!(
             fields["ports"],
-            EngineValue::Array(vec![EngineValue::Number(22.0), EngineValue::Number(80.0)]),
+            EngineValue::Array(vec![EngineValue::Float(22.0), EngineValue::Float(80.0)]),
             "array/digit 必须还原成数组，而不是标量或字符串"
         );
         assert_eq!(fields["sip"], EngineValue::Str("10.0.0.1".into()));

@@ -35,7 +35,7 @@ pub struct OracleResult {
 /// for deterministic window expiry.
 ///
 /// SC7: when `injected_rules` is `Some`, only the rules whose names appear
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -44,8 +44,8 @@ use wf_engine::match_engine::{
     CepStateMachine, CloseOutput, CloseReason, DeferredLeft, DeferredPending, EngineHashMap, Event,
     RuleExecutor, StatsExecutor, StepResult, Value, WindowLookup,
 };
-use wf_lang::WindowSchema;
 use wf_lang::plan::{ConvPlan, RulePlan, WindowSpec};
+use wf_lang::{BaseType, FieldType, WindowSchema};
 
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::WfgenResult;
@@ -209,6 +209,10 @@ where
         ));
     }
 
+    // 时间列字段（`BaseType::Time`）在 oracle 侧也要落 `Value::Int`——见
+    // [`time_columns`] 的说明。
+    let time_columns = time_columns(schemas);
+
     // P2 (Path A): 预加载 join 目标窗口的全部行。引擎 replay 的窗口 actor
     // append 超前于规则任务消费（pull/push 解耦），join_lookup 因此能看到
     // "已 append 但尚未被本事件消费"的行——oracle 同步流式看不到（bid 随机
@@ -221,7 +225,7 @@ where
     // 无 join 规则的引擎组跳过预加载遍（避免全流双遍历）。
     if engines.iter().any(|e| e.lookup.is_some()) {
         for ev in events.clone() {
-            let core = gen_event_to_core(&ev);
+            let core = gen_event_to_core(&ev, &time_columns);
             let ns = ev.timestamp.timestamp_nanos_opt().unwrap_or(0);
             for engine in &mut engines {
                 if let Some(lookup) = &mut engine.lookup {
@@ -267,7 +271,7 @@ where
         let event_nanos = event.timestamp.timestamp_nanos_opt().unwrap_or(0);
         last_event_nanos = last_event_nanos.max(event_nanos);
 
-        let core_event = gen_event_to_core(&event);
+        let core_event = gen_event_to_core(&event, &time_columns);
 
         // 本事件的中间输出：既 push_alert（计数）又入队 feed 下游。
         let mut feed_queue: Vec<(String, Event, i64)> = Vec::new();
@@ -873,8 +877,9 @@ fn record_to_event(record: &OutputRecord) -> Event {
 }
 
 /// OutputRecord.yield_fields → (名, 格式化值) 列表（字段级明细对拍用；顺序 =
-/// yield 定义序）。Value → 字符串与引擎 file_json_sink 的模型值输出同构：
-/// Number 原样（f64 → 尽量整数打印）、Str 原样、Bool true/false。
+/// yield 定义序）。Value → 字符串与引擎 JSON 输出（`rule_exec` / `alert::types`
+/// 的 `Value → serde_json::Value`）同构：`Int` 十进制原样、`Float` 整值不带
+/// `.0`（对齐对拍侧 `json_value_to_str`）、Str 原样、Bool true/false。
 fn yield_fields(
     fields: &[(std::sync::Arc<str>, wf_engine::match_engine::Value)],
 ) -> Vec<(String, String)> {
@@ -884,10 +889,13 @@ fn yield_fields(
         .collect()
 }
 
-/// Value → 对拍用字符串（引擎 JSON 输出的模型值同构）。
+/// Value → 对拍字符串（引擎 JSON 输出的模型值同构）。
 pub fn format_yield_value(v: &wf_engine::match_engine::Value) -> String {
     match v {
-        wf_engine::match_engine::Value::Number(n) => format_f64(*n),
+        // 引擎 JSON 侧 `serde_json::Value::from(i64)` → `as_i64()` 命中 → 同一文本。
+        // 不得转 f64：epoch-ns（≈1.77e18 > 2^53）会被量化，对拍假失败。
+        wf_engine::match_engine::Value::Int(i) => i.to_string(),
+        wf_engine::match_engine::Value::Float(n) => format_f64(*n),
         wf_engine::match_engine::Value::Str(s) => s.to_string(),
         wf_engine::match_engine::Value::Bool(b) => b.to_string(),
         wf_engine::match_engine::Value::Array(items) => {
@@ -902,6 +910,9 @@ pub fn format_yield_value(v: &wf_engine::match_engine::Value) -> String {
             parts.sort();
             format!("{{{}}}", parts.join(","))
         }
+        // `Value` 是 `#[non_exhaustive]`（引擎侧可再加变体）。用 `Debug` 文本兜底：
+        // 与引擎输出必然不等 → 对拍报差异，而不是静默通过。
+        other => format!("{other:?}"),
     }
 }
 
@@ -1017,10 +1028,60 @@ fn build_window_alias_map(plan: &RulePlan) -> HashMap<String, Vec<String>> {
 }
 
 /// Convert a GenEvent to a wf_core Event.
-fn gen_event_to_core(event: &GenEvent) -> Event {
+/// 窗口名 → 「时间列」字段名集合（schema 声明为 `BaseType::Time` 的标量字段）。
+///
+/// **为什么需要它**：引擎的数据面是**列式**的，值域由列类型决定——wfgen 写盘时
+/// `BaseType::Time` → 箭头 `Timestamp(Nanosecond)` 列，引擎
+/// `extract_field_value` 读该列即落 `Value::Int(i64)`（逐位精确）。而 oracle 只有
+/// JSON 来源，若一律按 [`json_to_core_value`] 「JSON 数字不猜整型」落 `Value::Float`，
+/// 两侧对**同一份数据**的值域口径就不同。差异只在时间戳上露怯：epoch-ns
+/// （≈1.77e18）超出 f64 精确整数范围（2^53≈9.0e15），量化粒度 ~256ns；
+/// `within` 的下界（如 `p.timestamp`）经 `eval_interval_bound` 的 `Float` 通道被
+/// 取整，同刻时右行正好压在下界上 → 约一半的 `row_ts >= lo` 翻转 → join 静默漏配。
+///
+/// 与引擎一致的做法是**看列类型**：时间字段走 `as_i64()` 精确落 `Int`（见
+/// [`json_to_time_value`]），其余字段保持 JSON 口径（`Float`），结构化
+/// object/array（JSON 文本列）内部同样保持 `Float`。
+fn time_columns(schemas: &[WindowSchema]) -> HashMap<String, HashSet<String>> {
+    schemas
+        .iter()
+        .map(|schema| {
+            let names = schema
+                .fields
+                .iter()
+                .filter(|field| matches!(field.field_type, FieldType::Base(BaseType::Time)))
+                .map(|field| field.name.clone())
+                .collect();
+            (schema.name.clone(), names)
+        })
+        .collect()
+}
+
+/// 时间列字段的 JSON → [`Value`]：整数用 `as_i64()` **不经 f64** 落 [`Value::Int`]。
+///
+/// 必须在 JSON 解析处就分路：`f64` 一旦往返已经把 epoch-ns 量化到 ~256ns，
+/// 事后把 `Float` 转回 `i64` 无法恢复原始值。
+fn json_to_time_value(v: &serde_json::Value) -> Option<Value> {
+    match v {
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(Value::Int)
+            .or_else(|| n.as_f64().map(Value::Float)),
+        other => json_to_core_value(other),
+    }
+}
+
+fn gen_event_to_core(event: &GenEvent, time_columns: &HashMap<String, HashSet<String>>) -> Event {
+    let empty = HashSet::new();
+    let time_fields = time_columns.get(&event.window_name).unwrap_or(&empty);
     let mut fields: EngineHashMap<_, Value> = EngineHashMap::default();
     for (k, v) in &event.fields {
-        if let Some(core_v) = json_to_core_value(v) {
+        let convert = if time_fields.contains(k.as_str()) {
+            json_to_time_value
+        } else {
+            json_to_core_value
+        };
+        if let Some(core_v) = convert(v) {
             fields.insert(k.clone().into(), core_v);
         }
     }
@@ -1033,10 +1094,16 @@ fn gen_event_to_core(event: &GenEvent) -> Event {
 /// 旧实现 `_ => None` 会把结构化字段整个丢掉，于是 oracle 看不到嵌套字段——读 object /
 /// array 的规则在 oracle 侧恒不命中，与引擎（arrow 列带 `wf.wfl.field_type` 时能还原
 /// 结构值）不一致。`null` 与引擎一致地丢字段。
+///
+/// 数值：**JSON 数字一律落 [`Value::Float`]，不猜整型**——`serde_json` 的整/浮形态
+/// 取决于文本写法（`1` vs `1.0`），不是可靠信号；引擎
+/// `json_to_value` 已是同一口径，只有 arrow Int64 / Timestamp(Ns) **列类型**这种可靠
+/// 信号才产出 [`Value::Int`]。猜成 `Int` 会让两侧对同一个 JSON 事件得出不同的 `Value`
+/// （`Int(1)` 与 `Float(1.0)` 不是同一变体），distinct / 比较随之漂移。
 fn json_to_core_value(v: &serde_json::Value) -> Option<Value> {
     match v {
         serde_json::Value::String(s) => Some(Value::Str(s.clone().into())),
-        serde_json::Value::Number(n) => n.as_f64().map(Value::Number),
+        serde_json::Value::Number(n) => n.as_f64().map(Value::Float),
         serde_json::Value::Bool(b) => Some(Value::Bool(*b)),
         serde_json::Value::Array(items) => Some(Value::Array(
             items.iter().filter_map(json_to_core_value).collect(),

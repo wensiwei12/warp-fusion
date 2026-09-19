@@ -249,7 +249,7 @@ rule sev_map {
     assert_eq!(result.alerts.len(), 1);
     assert_eq!(
         result.alerts[0].yield_fields[1].1,
-        Value::Number(5.0),
+        Value::Float(5.0),
         "failed → 5"
     );
 
@@ -264,7 +264,7 @@ rule sev_map {
         assert_eq!(result.alerts.len(), 1);
         assert_eq!(
             result.alerts[0].yield_fields[1].1,
-            Value::Number(expected),
+            Value::Float(expected),
             "{action} → {expected}"
         );
     }

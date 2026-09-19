@@ -422,7 +422,7 @@ fn json_to_core_value_keeps_structured_values() {
     let Some(Value::Object(nested)) = map.get("nested") else {
         panic!("嵌套 object 必须保留");
     };
-    assert_eq!(nested.get("sev"), Some(&Value::Number(10.0)));
+    assert_eq!(nested.get("sev"), Some(&Value::Float(10.0)));
     assert_eq!(nested.get("flag"), Some(&Value::Bool(true)));
     assert!(!nested.contains_key("none"), "null 成员与引擎一致地丢弃");
 
@@ -430,15 +430,78 @@ fn json_to_core_value_keeps_structured_values() {
         panic!("array 必须保留");
     };
     assert_eq!(tags[0], Value::Str("a".into()));
-    assert_eq!(tags[1], Value::Number(22.0));
+    assert_eq!(tags[1], Value::Float(22.0));
     let Value::Object(deep) = &tags[2] else {
         panic!("数组里的 object 必须保留");
     };
-    assert_eq!(deep.get("deep"), Some(&Value::Number(1.0)));
+    assert_eq!(deep.get("deep"), Some(&Value::Float(1.0)));
 
     assert_eq!(map.get("empty_array"), Some(&Value::Array(Vec::new())));
     assert_eq!(
         map.get("empty_object"),
         Some(&Value::Object(Default::default()))
     );
+}
+
+// ---------------------------------------------------------------------------
+// 时间列字段的值域口径（oracle ↔ 引擎列式读取）
+// ---------------------------------------------------------------------------
+
+/// 回归（2026-09-19）：**时间列字段**必须落 [`Value::Int`]，与引擎的列式口径一致。
+///
+/// 引擎的数据面是**列式**的：wfgen 把 `BaseType::Time` 写成箭头 `Timestamp(Nanosecond)`
+/// 列，引擎 `extract_field_value` 读列即 `Value::Int(i64)`（逐位精确）。oracle 只有
+/// JSON 来源，若时间字段也跟着 [`json_to_core_value`] 的「JSON 数字不猜整型」落
+/// `Float`，两侧对同一份数据就不同口径；`within` 的下界（`p.timestamp`）经 f64 把
+/// epoch-ns（≈1.77e18 > 2^53）量化到 ~256ns，同刻时右行正压在下界上，约一半的
+/// `row_ts >= lo` 翻转 → deferred join 静默漏配（实测：50 个实体只命中 26 个，
+/// 时间字段改走 `Int` 后 50/50）。
+#[test]
+fn time_typed_fields_are_exact_int_columns_in_oracle_events() {
+    use super::super::{gen_event_to_core, time_columns};
+    use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
+
+    // ulp=256 → 非对齐，经 f64 往返必变（对齐值恰好可精确表示，测不出差异）。
+    let ns: i64 = 1_767_225_600_000_000_001;
+    assert_ne!(ns as f64 as i64, ns, "前提：该值经 f64 必丢精度");
+
+    let schema = WindowSchema {
+        name: "conn_events".into(),
+        streams: vec!["conn_events".into()],
+        time_field: Some("ts".into()),
+        over: Duration::from_secs(300),
+        fields: vec![
+            FieldDef {
+                name: "ts".into(),
+                field_type: FieldType::Base(BaseType::Time),
+            },
+            FieldDef {
+                name: "id".into(),
+                field_type: FieldType::Base(BaseType::Digit),
+            },
+        ],
+    };
+    let cols = time_columns(&[schema]);
+
+    let mut fields = serde_json::Map::new();
+    fields.insert("ts".into(), serde_json::json!(ns));
+    fields.insert("id".into(), serde_json::json!(7));
+    let ev = GenEvent {
+        stream_name: "conn_events".into(),
+        window_name: "conn_events".into(),
+        timestamp: Utc::now(),
+        fields,
+    };
+
+    let core = gen_event_to_core(&ev, &cols);
+    assert_eq!(
+        core.fields["ts"],
+        Value::Int(ns),
+        "时间列必须逐位精确（不得经 f64）"
+    );
+    // 已知边界（**本片未对齐**）：`Digit`/`Int64` 列在引擎里同样是 `Value::Int`，
+    // 但 oracle 仍按 JSON 口径落 `Float`。对 `|i| < 2^53`（id / price 等）两者在
+    // 比较、同一性键、`format_f64` 输出上恰好一致，所以暂时无害；若将来要全面对齐
+    // 列式口径，本断言会失败——那是**故意**的提醒点，不是需保的契约。
+    assert_eq!(core.fields["id"], Value::Float(7.0));
 }

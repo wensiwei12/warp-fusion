@@ -18,6 +18,23 @@ use crate::wfg_ast::{InjectCase, ValueSource};
 /// 没有任何副作用。
 const SNAPSHOT_LEAD_NANOS: i64 = -1_000_000;
 
+/// deferred 形态右事件相对左事件的偏移量：**0（同刻）**。
+///
+/// 历史：此处曾是 **+1µs**，用来规避「`within` 下界经 f64 取整把同刻右行挤出区间」
+/// （epoch-ns ≈1.77e18 超出 f64 精确整数范围 2^53，往返粒度 ~256ns；同刻时右行正压在下界
+/// 上，约一半的 `row_ts >= lo` 翻转 → join miss，实测 200 个实体丢 98 个）。
+///
+/// 该缺陷已于 2026-09-19 两侧先后修好：
+/// - 引擎侧：`within` 的界走 `Value::Int` 精确通道
+///   （`wf-engine …/executor/context.rs::eval_interval_bound`）；
+/// - wfgen/oracle 侧：时间列字段也按**列式口径**落 `Value::Int`
+///   （`oracle::time_columns` / `json_to_time_value`）；
+///
+/// 因此现在故意产**同刻**数据：右行正好落在 `within` 闭区间的下界上，
+/// 把这个边界（而不是靠 1µs 余量绕过它）持续压在回归护栏下。
+/// 实测同刻 50/50 全命中（见 `deferred_same_instant_right_event_fires_all_entities`）。
+pub(super) const DEFERRED_OFFSET_NANOS: i64 = 0;
+
 pub(super) fn extract_rule_structure(
     rule_plan: &RulePlan,
     alias_map: &AliasMap,
@@ -132,10 +149,11 @@ pub(super) fn extract_rule_structure(
         };
         let left_field = field_ref_field_name(&first_cond.left).to_string();
         // 只登记生成器支持的两种形态（其余由 VN30 在校验期拦下）：
-        //  - deferred：`emit at` + `within` → 右事件与左事件同刻（到期评估时右行已在窗内）；
+        //  - deferred：`emit at` + `within` → 右事件与左事件**同刻**（见 DEFERRED_OFFSET_NANOS：
+        //    正好压在区间下界上，该边界已被两侧的精确整数口径支撑）；
         //  - snapshot：无 `within` 的点查 → 右事件提前（驱动事件处理时必须已可见）。
         let offset_nanos = if join.emit_at.is_some() && join.within.is_some() {
-            0
+            DEFERRED_OFFSET_NANOS
         } else if matches!(join.mode, wf_lang::ast::JoinMode::Snapshot) && join.within.is_none() {
             SNAPSHOT_LEAD_NANOS
         } else {
