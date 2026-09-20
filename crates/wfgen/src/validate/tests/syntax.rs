@@ -1132,6 +1132,15 @@ fn vn24_step_count_matches_compiled_event_steps() {
     yield alerts()
 }"#,
         ),
+        (
+            "stats（生成器为绑定源窗合成 1 步）",
+            r#"rule probe_rule {
+    events { a : auth_events }
+    stats<1m:fixed> { a | count as n; }
+    entity(ip, a.sip)
+    yield alerts()
+}"#,
+        ),
     ];
 
     for (name, rule_src) in cases {
@@ -1149,12 +1158,12 @@ fn vn24_step_count_matches_compiled_event_steps() {
         let wfl = wf_lang::parse_wfl(rule_src).unwrap_or_else(|e| panic!("{name}: {e}"));
         let plans = wf_lang::compile_wfl(&wfl, &schemas)
             .unwrap_or_else(|e| panic!("{name} 编译失败: {e:?}"));
-        // oracle：编译器的事件步骤数；`on each` 的步骤由生成器合成，故为 1。
+        // oracle：编译器的事件步骤数；`on each` / stats 的步骤由生成器合成，故为 1。
         let step_count = plans
             .iter()
             .find(|plan| plan.name == "probe_rule")
             .map(|plan| {
-                if plan.each_plan.is_some() {
+                if plan.each_plan.is_some() || plan.stats_plan.is_some() {
                     1
                 } else {
                     plan.match_plan.event_steps.len()

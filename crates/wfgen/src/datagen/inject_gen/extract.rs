@@ -125,6 +125,36 @@ pub(super) fn extract_rule_structure(
         });
     }
 
+    // stats 规则：没有 match/each 事件步骤，注入的"步骤"就是该规则的**绑定源窗**本身
+    // （合成 1 步，与 `validate::syntax::injectable_step_count` 的 stats 口径一致）。
+    // 没有阈值可言——注 1 条事件即成桶、窗口收口时必然产出告警，故 threshold = 1
+    // （INJ1 的"必报"由桶存在性保证；stats 没有"不命中"的负样本，语料只写 hit）。
+    if steps.is_empty()
+        && let Some(stats) = &rule_plan.stats_plan
+        && let Some(source_alias) = stats
+            .measures
+            .first()
+            .map(|m| m.source_alias.as_str())
+            .or_else(|| rule_plan.binds.first().map(|b| b.alias.as_str()))
+        && let Some((scenario_alias, window_name)) = alias_map.bind_to_scenario.get(source_alias)
+    {
+        let filter_overrides = rule_plan
+            .binds
+            .iter()
+            .find(|b| b.alias == source_alias)
+            .and_then(|b| b.filter.as_ref())
+            .map(extract_filter_constraints)
+            .unwrap_or_default();
+        steps.push(StepInfo {
+            bind_alias: source_alias.to_string(),
+            scenario_alias: scenario_alias.clone(),
+            window_name: window_name.clone(),
+            measure: Measure::Count,
+            threshold: 1,
+            filter_overrides,
+        });
+    }
+
     if steps.is_empty() {
         return error::fail(
             WfgenReason::Validation,

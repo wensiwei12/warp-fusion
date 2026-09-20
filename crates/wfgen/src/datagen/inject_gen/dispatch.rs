@@ -55,6 +55,15 @@ pub(super) fn build_alias_map_for_syntax_case(
         map_bind(&each.alias, &mut bind_to_scenario);
     }
 
+    // stats 规则同样没有 match/each 事件步骤（`match_plan.event_steps` 为空）：可注入的
+    // 绑定是 stats 度量的 **source_alias**（`events { b : … }` + `b | count …` 里的 b）
+    // ——生成器为它合成一个步骤（见 `extract_rule_structure`）。
+    if let Some(stats) = &rule_plan.stats_plan {
+        for measure in &stats.measures {
+            map_bind(&measure.source_alias, &mut bind_to_scenario);
+        }
+    }
+
     if bind_to_scenario.is_empty() {
         return error::fail(
             WfgenReason::Validation,

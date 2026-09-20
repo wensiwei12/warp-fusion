@@ -725,13 +725,15 @@ fn validate_replays(
 /// - `match` 链形态（`on event seq`）= 链步骤数，**negation 步骤不计**（编译器把它们
 ///   交给 L2 的 `SeqPlan` 强制执行，不产出 use-step）；
 /// - `on each` = 1（生成器为该绑定合成一个步骤）；
-/// - stats 形态 = 0（不走 CEP 路径，没有可注入的事件步骤）。
+/// - stats 形态 = 1（`match_plan.event_steps` 为空，但生成器为 stats 的**绑定源窗**
+///   合成一个步骤——`inject_gen::extract_rule_structure` 与 `build_alias_map_for_syntax_case`
+///   的 stats 分支同口径：注 N 条事件即落入该规则的统计桶）。
 fn injectable_step_count(rule: &RuleDecl) -> usize {
     if rule.each_clause.is_some() {
         return 1;
     }
     if rule.stats_clause.is_some() {
-        return 0;
+        return 1;
     }
     match &rule.match_clause.seq {
         Some(chain) => chain.steps.iter().filter(|step| !step.neg).count(),

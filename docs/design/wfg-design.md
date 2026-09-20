@@ -591,9 +591,14 @@ wfg + wfs + wfl
   多 key 规则的显式字段按消歧用法放行）。缺了它，注入会静默指向错实体——生成器对拿不到
   类型的字段只会用字符串兜底。
 - 校验期 `use` 组数检查 VN24：`use` 事件组数不得超过规则的事件步骤数，口径与编译产物一致
-  （`on event seq` 链只数非 `neg` 步骤、`on each` = 1、stats = 0；由一条「以编译产物为
+  （`on event seq` 链只数非 `neg` 步骤、`on each` = 1、stats = 1；由一条「以编译产物为
   期望」的边界测试锁定）。数错组数会静默少注入某个步骤的事件；生成期 `plan_use_steps`
   仍保留同一检查（纵深防御）。
+
+  stats 规则的 `match_plan.event_steps` 为空，但生成器为它的**绑定源窗**（stats 度量的
+  `source_alias`）合成一个步骤（`inject_gen::extract_rule_structure` /
+  `build_alias_map_for_syntax_case` 的 stats 分支），故 stats 的可注入步骤数为 **1**：
+  注 N 条事件即落入该规则的统计桶（没有阈值可言，`hit` 的“必报”由桶存在性保证）。
 - `without(...)` 构造约束（§3.8）：`without(preds) [within D]` 解析进 `InjectCase::withouts`
   （与 `groups` 解耦，不参与 VN24），谓词过 VN9/VN11/VN12、`within` 过 VN25；生成期展开成
   `WithoutGuard` 清单——注入事件命中谓词即报错，背景噪声命中谓词则剔除。

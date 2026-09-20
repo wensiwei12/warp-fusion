@@ -12,8 +12,8 @@ use wf_lang::ast::{
     Bound, BoundVal, Expr, FieldRef, JoinMode, ReduceClause, ReduceMeasure, WithinSpec,
 };
 use wf_lang::plan::{
-    BindPlan, EachPlan, JoinCondPlan, JoinPlan, RulePlan, StatsAggPlan, StatsMeasurePlan,
-    StatsOutputShapePlan, StatsPlan, WindowSpec, YieldField, YieldPlan,
+    BindPlan, EachPlan, EntityPlan, JoinCondPlan, JoinPlan, RulePlan, StatsAggPlan,
+    StatsMeasurePlan, StatsOutputShapePlan, StatsPlan, WindowSpec, YieldField, YieldPlan,
 };
 
 use crate::datagen::stream_gen::GenEvent;
@@ -78,6 +78,16 @@ fn stats_rule(
         measures,
         tracked_bind_fields: HashMap::new(),
     });
+    // 实体口径（q17/q18/q19 同形）：有分组键时用该键当字段实体，空键桶用常量实体。
+    // oracle 的 `entity_id` 由 `entity(...)` 表达式求值（字段 → 桶键对应列；常量 → 字面量），
+    // 与引擎 `eval_entity_id` 同口径——不是桶键的 Debug 文本。
+    plan.entity_plan = EntityPlan {
+        entity_type: plan.entity_plan.entity_type.clone(),
+        entity_id_expr: match key {
+            Some(k) => Expr::Field(FieldRef::Simple(k.to_string())),
+            None => Expr::Number(1.0),
+        },
+    };
     plan
 }
 
@@ -172,21 +182,38 @@ fn stats_oracle_advances_windows_and_closes_at_boundary() {
         assert_eq!(a.rule_name, "s1");
         assert_eq!(a.score, 85.0, "score 取 score_plan 数字");
         assert_eq!(a.entity_type, "ip", "entity_type 取 entity_plan");
-        assert_eq!(a.origin, "close");
+        assert_eq!(a.origin, "close:timeout", "引擎 stats close 是 close:timeout");
         assert!(
             chrono::DateTime::parse_from_rfc3339(&a.emit_time).is_ok(),
             "emit_time 须为 RFC3339, got {}",
             a.emit_time
         );
     }
-    // 桶键 → entity_id（ScopeKey Debug 形状含键值）
+    // entity_id = 规则 `entity(...)` 表达式的值（字段实体 → 桶键对应列的值），
+    // 不再是 ScopeKey 的 Debug 文本。
     for a in tail.iter().chain(closed.iter()) {
         assert!(
-            a.entity_id.contains("A") || a.entity_id.contains("B"),
-            "entity_id 应含桶键值, got {}",
+            a.entity_id == "A" || a.entity_id == "B",
+            "entity_id 应为实体字段的桶键值, got {}",
             a.entity_id
         );
     }
+}
+
+/// 常量实体（`entity(digit, 1)`，q15/q16 同形）：`entity_id` 是字面量文本，不是桶键 Debug。
+#[test]
+fn stats_oracle_constant_entity_renders_literal() {
+    // key = None → 空键全局单桶，`stats_rule` 把实体设成 `entity(<type>, 1)`。
+    let plan = stats_rule("s_const", "bid_events", 10, None, vec![count_measure("n")]);
+    let mut se = StatsOracleEngine::new(&plan);
+    assert!(
+        se.feed(secs(1), &row(&[("price", Value::Float(5.0))]))
+            .is_empty()
+    );
+    let closed = se.close_tail();
+    assert_eq!(closed.len(), 1, "空键单桶 → 1 alert");
+    assert_eq!(closed[0].entity_id, "1", "常量实体渲染成字面量 `1`");
+    assert_eq!(closed[0].origin, "close:timeout");
 }
 
 // ---- 空流 ----

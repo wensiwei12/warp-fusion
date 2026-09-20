@@ -42,9 +42,9 @@ use chrono::{DateTime, Utc};
 use wf_engine::alert::OutputRecord;
 use wf_engine::match_engine::{
     CepStateMachine, CloseOutput, CloseReason, DeferredLeft, DeferredPending, EngineHashMap, Event,
-    RuleExecutor, StatsExecutor, StepResult, Value, WindowLookup,
+    RuleExecutor, ScopeKey, StatsExecutor, StepResult, Value, WindowLookup, field_ref_name,
 };
-use wf_lang::plan::{ConvPlan, RulePlan, WindowSpec};
+use wf_lang::plan::{ConvPlan, RulePlan, StatsPlan, WindowSpec};
 use wf_lang::{BaseType, FieldType, WindowSchema};
 
 use crate::datagen::stream_gen::GenEvent;
@@ -648,9 +648,68 @@ where
 /// pending 里 → OOM（2026-08-27 实测 Killed: 9）。
 const FLUSH_PENDING_ROWS: usize = 100_000;
 
+/// stats 桶的 `entity_id` 求值口径（与引擎侧对齐）。
+///
+/// 引擎不看桶键本身，而是**求值规则的 `entity(...)` 表达式**
+/// （行式 close：`eval_entity_id`；stats 列式：常量走 `entity_const`、字段走
+/// `resolve_stats_bucket_field`）：常量实体渲染成字面量文本（`entity(digit, 1)` → `"1"`），
+/// 字段实体取该字段的值（`entity(digit, b.auction)` → `"0"`）。oracle 只有桶键
+/// （`ScopeKey`）而没有整行，所以字段实体按**分组键列序**从桶键取值——本仓五条 stats
+/// 规则（q15–q19）的实体字段恰是 "常量" 或 "分组键之一"，两者口径一致；字段既不在
+/// 分组键上又非常量时退化为空串（对齐引擎在无行字段标量桶上的缺失字段兜底）。
+enum StatsEntity {
+    /// 常量实体（`entity(digit, 1)`）：渲染后的字面量文本。
+    Const(String),
+    /// 字段实体：该字段在 `stats_plan.keys` 中的列序号。
+    KeyColumn(usize),
+    /// 无法对齐（字段不在分组键上）→ 空串。
+    Unresolved,
+}
+
+/// 由 `entity(...)` 表达式 + stats 分组键推导 [`StatsEntity`]。
+fn stats_entity(entity_expr: &wf_lang::ast::Expr, stats_plan: &StatsPlan) -> StatsEntity {
+    match entity_expr {
+        // `entity(digit, 1)`：引擎 `eval_entity_id` 把数字字面量渲染成整值文本（`"1"`）。
+        wf_lang::ast::Expr::Number(n) => StatsEntity::Const(format_f64(*n)),
+        wf_lang::ast::Expr::StringLit(s) => StatsEntity::Const(s.clone()),
+        wf_lang::ast::Expr::Field(fr) => {
+            let name = field_ref_name(fr);
+            let mut found = None;
+            for (i, key) in stats_plan.keys.iter().enumerate() {
+                if let wf_lang::ast::Expr::Field(kf) = key
+                    && field_ref_name(kf) == name
+                {
+                    found = Some(i);
+                    break;
+                }
+            }
+            found.map_or(StatsEntity::Unresolved, StatsEntity::KeyColumn)
+        }
+        _ => StatsEntity::Unresolved,
+    }
+}
+
+/// 桶键（`ScopeKey`）拆成值列表（`Pair` 先序展开，顺序与 `stats_plan.keys` 一致）——
+/// 与引擎 `stats_scope_key_to_values` 同口径。
+fn scope_key_values(key: &ScopeKey) -> Vec<Value> {
+    match key {
+        ScopeKey::Empty => Vec::new(),
+        ScopeKey::Int(i) => vec![Value::Int(*i)],
+        ScopeKey::Float(bits) => vec![Value::Float(f64::from_bits(*bits))],
+        ScopeKey::Str(s) => vec![Value::Str(s.clone())],
+        ScopeKey::Pair(a, b) => {
+            let mut values = scope_key_values(a);
+            values.extend(scope_key_values(b));
+            values
+        }
+    }
+}
+
 struct StatsOracleEngine {
     name: String,
     stats: StatsExecutor,
+    /// 实体求值口径（`entity(...)` 表达式；见 [`StatsEntity`]）。
+    entity: StatsEntity,
     /// 绑定源窗口（= plan.binds; 引擎 StatsTask 的 window_sources 同源）——
     /// oracle 只喂这些窗口的行（含中间窗口事件）, 对齐引擎不喂非绑定流。
     bound_windows: std::collections::HashSet<String>,
@@ -675,9 +734,11 @@ impl StatsOracleEngine {
             .iter()
             .map(|b| b.window.clone())
             .collect::<std::collections::HashSet<_>>();
+        let entity = stats_entity(&plan.entity_plan.entity_id_expr, &stats_plan);
         Self {
             name: plan.name.clone(),
             stats: StatsExecutor::with_row_fields(stats_plan, None),
+            entity,
             bound_windows,
             window_end: None,
             entity_type: plan.entity_plan.entity_type.clone(),
@@ -740,13 +801,26 @@ impl StatsOracleEngine {
         let emit_time = chrono::DateTime::from_timestamp_nanos(window_end).to_rfc3339();
         for b in &buckets {
             let n_records = b.measures.iter().map(Vec::len).max().unwrap_or(1);
+            // entity_id = 规则 `entity(...)` 表达式的值（见 [`StatsEntity`]）——不再用
+            // 桶键的 Debug 文本：那是 `ScopeKey` 的内部形状（`Int(0)` / `Pair(…)` / `Empty`），
+            // 与引擎的 `"0"` / `"56561"` / `"1"` 口径不同，会让 L3 分组全部错配。
+            let entity_id = match &self.entity {
+                StatsEntity::Const(value) => value.clone(),
+                StatsEntity::KeyColumn(idx) => scope_key_values(&b.key)
+                    .get(*idx)
+                    .map(format_yield_value)
+                    .unwrap_or_default(),
+                StatsEntity::Unresolved => String::new(),
+            };
             for _ in 0..n_records {
                 alerts.push(OracleAlert {
                     rule_name: self.name.clone(),
                     score: self.score,
                     entity_type: self.entity_type.clone(),
-                    entity_id: format!("{:?}", b.key),
-                    origin: "close".to_string(),
+                    entity_id: entity_id.clone(),
+                    // 引擎 stats close 的 origin 是 `CloseReason::Timeout` → `close:timeout`
+                    // （stats_task.rs 的 `build_stats_close_output`），不是 CEP close 的 `close`。
+                    origin: "close:timeout".to_string(),
                     emit_time: emit_time.clone(),
                     // 2026-08-30: stats 路径的 yield 字段求值待接入
                     // （AlertColumnBuilder 复用 execute_stats_close_batch_columnar）——
