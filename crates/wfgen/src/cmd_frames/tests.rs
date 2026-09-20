@@ -248,8 +248,15 @@ async fn offline_frame_bytes_match_tcp_sink_encoder() {
         );
         // 帧格式自检：`<len> <payload>`，payload 前 4 字节 = tag 长度（大端）。
         let sep = offline.iter().position(|&b| b == b' ').unwrap();
-        let len: usize = std::str::from_utf8(&offline[..sep]).unwrap().parse().unwrap();
-        assert_eq!(len, offline.len() - sep - 1, "RFC6587 长度前缀 = payload 长度");
+        let len: usize = std::str::from_utf8(&offline[..sep])
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            len,
+            offline.len() - sep - 1,
+            "RFC6587 长度前缀 = payload 长度"
+        );
         let tag_len = u32::from_be_bytes(offline[sep + 1..sep + 5].try_into().unwrap());
         assert_eq!(tag_len as usize, tag.len(), "wp_arrow 帧头 tag 长度");
     }

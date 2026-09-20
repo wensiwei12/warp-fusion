@@ -142,8 +142,8 @@ where
         return Ok(OracleResult { alerts: vec![] });
     }
 
-// Build per-rule engines over **所有已加载规则**（不按 injected_rules 过滤）：
-// 与引擎 `collect_intermediate_targets` / 整个 .wfl 都在跑的语义对齐。
+    // Build per-rule engines over **所有已加载规则**（不按 injected_rules 过滤）：
+    // 与引擎 `collect_intermediate_targets` / 整个 .wfl 都在跑的语义对齐。
     // Stats（`stats<...>`）规则 oracle 用 StatsExecutor 逐事件驱动（2026-08-27 接入）
     // ——fixed 窗口 bucket 对齐推进（同 StatsTask::advance_window）, 跨边界 close
     // 计数, 流末 close 全部尾部（对齐引擎 shutdown flush 的确定性收口）。

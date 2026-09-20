@@ -182,7 +182,10 @@ fn stats_oracle_advances_windows_and_closes_at_boundary() {
         assert_eq!(a.rule_name, "s1");
         assert_eq!(a.score, 85.0, "score 取 score_plan 数字");
         assert_eq!(a.entity_type, "ip", "entity_type 取 entity_plan");
-        assert_eq!(a.origin, "close:timeout", "引擎 stats close 是 close:timeout");
+        assert_eq!(
+            a.origin, "close:timeout",
+            "引擎 stats close 是 close:timeout"
+        );
         assert!(
             chrono::DateTime::parse_from_rfc3339(&a.emit_time).is_ok(),
             "emit_time 须为 RFC3339, got {}",
