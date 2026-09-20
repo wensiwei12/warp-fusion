@@ -25,15 +25,15 @@
 ### 新增
 
 - **生成期硬断言 INJ1 / INJ2**：`hit` 的每个实体必须报警、`near_miss` / `miss` 的每个实体必须不报警；失败点名实体（不再只看 `verify` 的一行百分比）。
-- `on each` 规则可作注入目标。
+- `on each` 规则可作注入目标（验证这类规则不再需要另建测试专用 WFL/WFS，issue #72）。
 - **背景实体分布 `entity <window>.<field> zipf(pool=N, exponent=S, fresh=R)`**：背景流量此前每个字段逐条现随机（同一实体永不重复、造不出热点），现可按 Zipf 权重从实体池抽取并保留新实体比例；值域与注入实体分区，校验期检查预算（`VN31`）。
-- **跨流注入 `join <window> as <key> { … }`**：为规则的 join 目标窗造配对事件（连接键 = 左实体键值、时间取左事件时间，均由生成器推导），补上 join 家族规则在 `.wfg` 里造可断言数据的能力。v1 只支持缺省 inner 形态与单键规则，其余明确报 `VN30`。
-- 跨流注入补齐 **snapshot 形态**（`join … snapshot on …`，无 `within`）：右事件提前 1ms，覆盖 q3/q20 这类点查富化规则；并登记「join-then-key」（键在 join 侧，如 q6）为已知缺口。
+- **跨流注入 `join <window> as <key> { … }`**：为规则的 join 目标窗造配对事件（连接键 = 左实体键值、时间取左事件时间，均由生成器推导），补上 join 家族规则在 `.wfg` 里造可断言数据的能力；目标窗 / 连接键匹配不上或形态不支持时报 `VN30`。
+- 跨流注入补齐 **snapshot 形态**（`join … snapshot on …`，无 `within`）：右事件提前 1ms，覆盖 q3/q20 这类点查富化规则。
 - 跨流注入支持 **join-then-key**（`match<seller:…>` 而 `seller` 在 join 目标窗上，如 nexmark q6）：连接键两侧同源、join 侧键自动写到右行且与背景噪声的值域分开，实体仍取驱动侧字段。
 - 修复：`gen` 的期望评估此前不加载窗口 schema，join 家族规则因此永远产不出期望（INJ1 必然失败、`.except.jsonl` 为空）——现带 schema 评估，join 规则可用。
 - **新增 `replay <window> { use from "file" }` 照单发货通道**：把现成数据原样灌进去（不写条数、不做实体数学、不参与断言），时间以文件最早一条为锚平移到场景起点；为空 / 时间字段口径不齐 / 跨度超 `#[duration]` 都在加载与校验期报错。
 - 注入时间在场景 `#[duration]` 内**等距铺开**（此前每簇随机起点，实体之间会重叠）。
-- `use({...})` / `use from` 的 object / array 字段在引擎侧按结构值解析（此前当字符串，读嵌套字段的规则不命中）。
+- **`use(...)` 的值可以直接写结构化值**（`use(<field>={…})` / 数组 / `null`，多层嵌套与 UTF-8 都行），`use({…})` 则是整份 JSON 一次写（顶层键 = 字段名，值需严格 JSON）；`use from` 文件里的 object / array 同样按结构值落盘（此前当字符串，读嵌套字段的规则不命中）。规则里可以直接用 `s.source_finding_obj.title` 这类**嵌套路径**读（issue #72）。
 - 新增使用指南 `docs/useage/scenarios.md`（含错误码按 `VN` / `SC` / `SV` / `INJ` 分族的说明）；`wfadm init` 模板与示例场景已迁到新语法。
 
 校验期新增错误码（`lint` / `gen` 加载阶段报出）：
