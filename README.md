@@ -1,8 +1,10 @@
 # warp-fusion
 
 [![CI: build & test](https://github.com/wp-labs/warp-fusion/actions/workflows/build-and-test.yml/badge.svg?branch=alpha)](https://github.com/wp-labs/warp-fusion/actions/workflows/build-and-test.yml)
+[![test matrix](https://img.shields.io/badge/test%20matrix-linux%20%C2%B7%20macOS%20%C2%B7%20stable-informational)](https://github.com/wp-labs/warp-fusion/blob/alpha/.github/workflows/build-and-test.yml)
 [![release](https://img.shields.io/github/v/tag/wp-labs/warp-fusion?include_prereleases&label=release&color=orange)](https://github.com/wp-labs/warp-fusion/releases)
-![license: ELv2](https://img.shields.io/badge/license-ELv2-blue.svg)
+[![license: ELv2](https://img.shields.io/badge/license-ELv2-blue.svg)](./LICENSE)
+[![rust: edition 2024](https://img.shields.io/badge/rust-edition%202024-dea584.svg?logo=rust&logoColor=white)](https://doc.rust-lang.org/edition-guide/rust-2024/)
 ![lang: Rust](https://img.shields.io/badge/lang-Rust-000000.svg)
 ![status: active](https://img.shields.io/badge/status-active-brightgreen.svg)
 
