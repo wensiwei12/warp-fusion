@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use wf_lang::WindowSchema;
-use wf_lang::ast::{Expr, FieldRef, JoinMode, RuleDecl};
+use wf_lang::ast::{Expr, FieldRef, JoinClause, JoinMode, RuleDecl};
 
 use super::ValidationError;
 use crate::datagen::inject_gen::ENTITY_ID_SPACE;
@@ -32,7 +32,22 @@ pub(super) fn validate_syntax(
         });
     }
 
+    // VN34 用的已见窗口集合（重复声明检测）。
+    let mut seen_streams: HashSet<&str> = HashSet::new();
+
     for s in &syntax.background.streams {
+        // VN34：同一个 `background` 里对**同一窗口**重复声明 `stream`。生成器会各造一份：
+        // 流量按速率的**和**叠加、`derive_total` 也按多条流算，而且两条流各有自己的 RNG 与
+        // 实体值带（不等于一条合并后的声明）——此前只有 VN3（窗口存在）会过，重复静默生效。
+        if !seen_streams.insert(s.stream.as_str()) {
+            errors.push(ValidationError {
+                code: "VN34",
+                message: format!(
+                    "background 里重复声明了 stream '{}'：同一窗口只能声明一次（重复会让生成的流量按速率之和叠加，且两条流各有独立的取值带）；请合并成一条 `gen <rate>`",
+                    s.stream
+                ),
+            });
+        }
         if s.rate.approx_eps() <= 0.0 {
             errors.push(ValidationError {
                 code: "VN2",
@@ -83,7 +98,13 @@ pub(super) fn validate_syntax(
             .collect();
 
         for case in &inj.cases {
-            total_entity_ids += entity_ids_consumed(case);
+            // 生成器会写进事件的实体键字段（VN12 与 join 块的保护集）——算一次，两处共用。
+            let entity_key_fields = case_entity_key_fields(case, all_rules, skip_wfl);
+            // VN27 口径 = 生成器实际消耗的实体 id：**每个实体、每个键字段各占一个**
+            // （`generate_key_values` 取 `entity_counter + i`，i 走 `names` 的每一位）。
+            // 少算这一因子（历史实现只算实体个数），键多的规则会把 id 空间算大，
+            // 溢出后用例之间的实体会重叠（hit 与 near_miss 指向同一实体）而无人报错。
+            total_entity_ids += entity_ids_consumed(case) * entity_key_fields.len().max(1) as u128;
             // VN30：`join <window> as <key> { … }`（设计 §9 跨流注入）的静态一致性。
             validate_case_joins(
                 case,
@@ -91,10 +112,15 @@ pub(super) fn validate_syntax(
                     .iter()
                     .copied()
                     .find(|r| r.name == case.target_rule),
+                &entity_key_fields,
                 &schemas_by_name,
                 &mut errors,
             );
             let stream = case.stream.as_str();
+            // 用例 stream 的窗口：生成器 `build_alias_map_for_syntax_case` 按别名查 `background`
+            // 的 stream 块、取其窗口名。当前语法里 stream 名即窗口名（解析期 `alias` / `window`
+            // 同源），所以这里用 stream 名当窗口。
+            let stream_window = stream;
             let case_schema = schemas_by_name.get(stream).copied();
             if !background_streams.contains(stream) {
                 errors.push(ValidationError {
@@ -104,6 +130,32 @@ pub(super) fn validate_syntax(
                         stream
                     ),
                 });
+            }
+
+            // VN33：用例 stream 的窗口必须是目标规则的**事件绑定窗**。窗口对不上时生成器
+            // （`build_alias_map_for_syntax_case`）找不到任何可映射的 bind，用例造的事件
+            // 无处可放——此前只在生成期报 "cannot be mapped to any event step bind"，
+            // 写到一半才发现。提前到校验期拦下。目标规则本身不存在时由 VN14 报，不重复刷屏。
+            if !skip_wfl
+                && let Some(rule) = all_rules.iter().find(|rule| rule.name == case.target_rule)
+            {
+                let windows = rule_binding_windows(rule);
+                if !windows.iter().any(|window| window == stream_window) {
+                    errors.push(ValidationError {
+                        code: "VN33",
+                        message: format!(
+                            "注入用例 stream '{}' 的窗口 '{}' 不是规则 '{}' 的任何事件绑定窗（binding windows: {}）",
+                            stream,
+                            stream_window,
+                            case.target_rule,
+                            if windows.is_empty() {
+                                "无".to_string()
+                            } else {
+                                windows.join(", ")
+                            }
+                        ),
+                    });
+                }
             }
 
             if case.entity_count == 0 {
@@ -188,55 +240,36 @@ pub(super) fn validate_syntax(
             }
 
             // VN12 的口径 = 生成器的**实体键字段**集合（`generate_key_values` 的 `names`，
-            // 与 `RuleStructure::effective_entity_field` 同口径）：
+            // 与 `RuleStructure::effective_entity_field` 同口径）——算一次，两处共用：
             //   `match` 规则 → `match<...>` 的键（生成器无条件写入）；
             //   `on each`    → 没有 match key，生成器改把 `entity(...)` 的单字段当键写；
-            //   用例头显式写的实体字段 → 一并算在内。
+            //   用例头显式写的实体字段 → 一并算在内（join 块里的同名写法也拦，见
+            //   `validate_case_joins`）。
             // `use` 的 predicate_overrides 优先级只在 key_overrides 之后（见
             // `build_event_fields_with_predicates`）→ 写这些字段是静默失效，必须拦下。
             //
             // 别拿「规则推断的实体字段」当口径：`match<seller>` 而 `entity(…, b.auction)`
             // 时（join-then-key）生成器覆盖的是 `seller` 而不是 `auction`——按后者会误报，
             // 把本来能生效的 `use(auction=…)` 拒掉。
-            let rule_decl = if skip_wfl {
-                None
-            } else {
-                all_rules
-                    .iter()
-                    .find(|rule| rule.name == case.target_rule)
-            };
-            let mut entity_key_fields: Vec<String> = rule_decl
-                .map(|rule| rule_entity_key_fields(rule))
-                .unwrap_or_default();
-            match (case.entity_field.as_deref(), rule_decl) {
-                (Some(explicit), _) => {
-                    if !entity_key_fields.iter().any(|field| field == explicit) {
-                        entity_key_fields.push(explicit.to_string());
-                    }
-                }
-                (None, Some(rule)) if entity_key_fields.is_empty() => {
-                    if let Some(field) = rule_entity_field(rule) {
-                        entity_key_fields.push(field);
-                    }
-                }
-                _ => {}
-            }
 
-            // VN24：`use` 事件组数不得超过规则的事件步骤数（每个 `use ... x N` 对应
-            // 一个步骤）。生成期也拦（`inject_gen::helpers::plan::plan_use_steps`），
-            // 这里提前到校验期——数错组数会静默少注入某个步骤的事件。
+            // VN24：`use` 事件组数不得超过**该 stream 上**的事件步骤数（每个
+            // `use ... x N` 对应该 stream 上的一个步骤）。生成期也拦
+            // （`inject_gen::helpers::plan::plan_use_steps`），这里提前到校验期——
+            // 数错组数会静默少注入某个步骤的事件。步数口径见 [`injectable_step_count`]：
+            // 规则的语法步骤未必都落在该 stream 的窗口上，只有落在上面的才是有效步骤。
             if !skip_wfl
                 && let Some(rule) = all_rules.iter().find(|rule| rule.name == case.target_rule)
             {
-                let step_count = injectable_step_count(rule);
+                let step_count = injectable_step_count(rule, stream_window);
                 if case.groups.len() > step_count {
                     errors.push(ValidationError {
                         code: "VN24",
                         message: format!(
-                            "injection case '{}' 的 use 事件组数 {} 超过规则 '{}' 的事件步骤数 {}（每个 `use ... x N` 对应一个步骤）",
+                            "injection case '{}' 的 use 事件组数 {} 超过规则 '{}' 在 stream '{}' 上的事件步骤数 {}（每个 `use ... x N` 对应该 stream 上的一个步骤）",
                             stream,
                             case.groups.len(),
                             case.target_rule,
+                            stream_window,
                             step_count
                         ),
                     });
@@ -491,12 +524,16 @@ fn validate_entity_dists(
 /// （设计 §9 跨流注入）。
 ///
 /// 右事件的连接键与时间由生成器推导（连接键 = 左实体键字段的值、时间 = 左事件时间），所以这里要
-/// 保证推导是**有依据**的：目标窗要能唯一匹配到规则的一个 join 子句、形态是缺省 inner、
-/// 且（界可算时）规则的 `within` 区间确实含左事件时间。造错跨流数据会静默改掉断言口径，
-/// 因此全部按报错处理。
+/// 保证推导是**有依据**的：目标窗要能唯一匹配到规则的一个 join 子句，且形态是生成器实现了的
+/// 两种（deferred / snapshot，见下）。造错跳流数据会静默改掉断言口径，因此全部按报错处理。
+///
+/// 不做的事：`within` 下界是否真的包含左事件时间（它取决于左事件时间的具体取值，运行期由
+/// 引擎判定；校验期只校验形态与连接键）。
 fn validate_case_joins(
     case: &InjectCase,
     rule: Option<&RuleDecl>,
+    // 驱动侧实体键字段（与主事件组同一口径）：join 块里写这些字段同样会被生成器覆盖。
+    entity_key_fields: &[String],
     schemas_by_name: &HashMap<&str, &WindowSchema>,
     errors: &mut Vec<ValidationError>,
 ) {
@@ -512,22 +549,46 @@ fn validate_case_joins(
             continue;
         };
 
-        let matched = rule.and_then(|r| {
-            r.joins.iter().find(|jc| {
-                jc.target_window == join.window
-                    && jc
-                        .conditions
-                        .iter()
-                        .any(|c| field_ref_field_name(&c.right) == join.key_field)
+        let matched: Vec<&JoinClause> = rule
+            .map(|r| {
+                r.joins
+                    .iter()
+                    .filter(|jc| {
+                        // 只认**首条件**：生成器 `extract_rule_structure` 只登记
+                        // `join.conds.first()`（多条件 join 的其余条件生成器不管），
+                        // 匹配“任一条件”会让用例按一条生成器不实现的路径造数据。
+                        jc.target_window == join.window
+                            && jc
+                                .conditions
+                                .first()
+                                .is_some_and(|c| field_ref_field_name(&c.right) == join.key_field)
+                    })
+                    .collect()
             })
-        });
-        let Some(join_clause) = matched else {
+            .unwrap_or_default();
+        if matched.len() > 1 {
+            // 多条 join 子句喊同一个“目标窗 + 首条件右侧字段”时，“右行放哪、连接键写什么”
+            // 无从确定（生成器按第一条找，用户看到的不一定是同一条）→ 不猜，报错。
+            errors.push(ValidationError {
+                code: "VN30",
+                message: format!(
+                    "injection case '{}' 的 `join {} as {}` 在规则 '{}' 里匹配到 {} 条 join 子句（目标窗与首条件右侧字段都相同），无法确定按哪条生成；请让目标窗 + 连接键在规则里唯一",
+                    case.stream,
+                    join.window,
+                    join.key_field,
+                    case.target_rule,
+                    matched.len()
+                ),
+            });
+            continue;
+        }
+        let Some(join_clause) = matched.first().copied() else {
             // 规则本身找不到时由 VN14 报，这里不重复刷屏。
             if rule.is_some() {
                 errors.push(ValidationError {
                     code: "VN30",
                     message: format!(
-                        "injection case '{}' 的 `join {} as {}` 匹配不到规则 '{}' 的 join 子句（目标窗与右侧连接键要和规则的 `join … on … == …` 一致）",
+                        "injection case '{}' 的 `join {} as {}` 匹配不到规则 '{}' 的 join 子句（目标窗与**首条件**的右侧连接键要和规则的 `join … on … == …` 一致）",
                         case.stream, join.window, join.key_field, case.target_rule
                     ),
                 });
@@ -538,8 +599,8 @@ fn validate_case_joins(
         // 生成器支持两种形态（设计 §9）；右事件的放置由形态决定：
         //  - **deferred**：inner + `within` + `emit at` → 右事件与左事件**同刻**（到期评估时
         //    右行必已在窗内）；
-        //  - **snapshot**：`snapshot` 且**无** `within` 的点查 → 右事件**前挪 1ns**（驱动事件
-        //    被处理时右行必须已可见）。
+        //  - **snapshot**：`snapshot` 且**无** `within` 的点查 → 右事件**前挪 1ms**（驱动事件
+        //    被处理时右行必须已可见；常量见 `extract::SNAPSHOT_LEAD_NANOS`）。
         // 其余（`asof` / `anti`、无 `emit at` 的即时 inner、`snapshot` + `within`）明确拒绝：
         // 即时 inner 要求右行更早、而 `within` 下界常就是左事件时间，两者冲突会时好时坏。
         let deferred = matches!(join_clause.mode, JoinMode::Inner)
@@ -579,6 +640,14 @@ fn validate_case_joins(
                 });
             }
             // 字段落在**目标窗** schema 里；连接键由生成器写，重复声明按 VN12 报。
+            //
+            // 「生成器会写」的不只右窗连接键：右行的 `key_overrides` 先整份套上（左实体键 + 显式
+            // 实体字段），再叠 `use(...)`——所以在 join 块里写**驱动侧实体键字段**同样会被静默
+            // 替换，必须一并拦下（主事件组与 `without(...)` 已是这个口径）。
+            let mut protected: Vec<String> = entity_key_fields.to_vec();
+            if !protected.iter().any(|field| field == &join.key_field) {
+                protected.push(join.key_field.clone());
+            }
             for record in source_records(&group.source, errors, &join.window, idx) {
                 check_predicate_fields(
                     errors,
@@ -586,7 +655,7 @@ fn validate_case_joins(
                     idx,
                     "join use",
                     &record,
-                    std::slice::from_ref(&join.key_field),
+                    &protected,
                     Some(right_schema),
                 );
             }
@@ -718,27 +787,169 @@ fn validate_replays(
     }
 }
 
-/// 规则可注入的事件步骤数（设计 §4.1 VN24）。
+/// 规则在某个 stream（窗口）上**可注入**的事件步骤数（设计 §4.1 VN24）。
 ///
-/// 与编译产物同口径（`wf_lang` 的 `compiler/match_build` 装配 `event_steps`）：
-/// - `match` 普通形态 = `on event` 的步骤数；
-/// - `match` 链形态（`on event seq`）= 链步骤数，**negation 步骤不计**（编译器把它们
-///   交给 L2 的 `SeqPlan` 强制执行，不产出 use-step）；
-/// - `on each` = 1（生成器为该绑定合成一个步骤）；
-/// - stats 形态 = 1（`match_plan.event_steps` 为空，但生成器为 stats 的**绑定源窗**
-///   合成一个步骤——`inject_gen::extract_rule_structure` 与 `build_alias_map_for_syntax_case`
+/// 口径 = 生成器实际会走到的步骤数，与
+/// `inject_gen::dispatch::build_alias_map_for_syntax_case` 一致：只有 bind 的窗口等于
+/// 该用例 stream 的窗口时，生成器才把这个 bind 收进 alias map，`extract_rule_structure`
+/// 随后**只**为收进 map 的步骤产出 `StepInfo`。因此：
+/// - `match` 普通形态 = `on event` 里绑该窗的步骤数；
+/// - `match` 链形态（`on event seq`）= 绑该窗的链步骤数，**negation 步骤不计**（编译器把
+///   它们交给 L2 的 `SeqPlan` 强制执行，不产出 use-step）；
+/// - `on each` = 1（绑该窗时；生成器为该绑定合成一个步骤）；
+/// - stats 形态 = 1（绑该窗时；`match_plan.event_steps` 为空，但生成器为 stats 的
+///   **绑定源窗**合成一个步骤——`extract_rule_structure` 与 `build_alias_map_for_syntax_case`
 ///   的 stats 分支同口径：注 N 条事件即落入该规则的统计桶）。
-fn injectable_step_count(rule: &RuleDecl) -> usize {
-    if rule.each_clause.is_some() {
-        return 1;
+///
+/// 为什么不能直接数规则的**语法**步骤数：两个步骤绑在不同窗、用例只覆盖其中一个时，
+/// 另一个步骤落不进该 stream 的 alias map，对应的 `use ... x N` 找不到落点——多写的
+/// 那组被静默丢掉（不报错），断言于是少了一半事件。
+fn injectable_step_count(rule: &RuleDecl, window: &str) -> usize {
+    let window_of = |alias: &str| {
+        rule.events
+            .decls
+            .iter()
+            .find(|decl| decl.alias == alias)
+            .map(|decl| decl.window.as_str())
+    };
+    if let Some(each) = &rule.each_clause {
+        return usize::from(window_of(&each.alias) == Some(window));
     }
-    if rule.stats_clause.is_some() {
-        return 1;
+    if let Some(stats) = &rule.stats_clause {
+        // 生成器取 stats 的**第一个**度量源别名（无度量时退回第一个 bind，见
+        // `extract_rule_structure`），只有它在该 stream 上时才合成那 1 步。
+        let alias = stats
+            .measures
+            .first()
+            .map(|measure| measure.source_alias.as_str())
+            .or_else(|| rule.events.decls.first().map(|decl| decl.alias.as_str()));
+        return usize::from(alias.and_then(window_of) == Some(window));
     }
     match &rule.match_clause.seq {
-        Some(chain) => chain.steps.iter().filter(|step| !step.neg).count(),
-        None => rule.match_clause.on_event.len(),
+        Some(chain) => chain
+            .steps
+            .iter()
+            .filter(|step| !step.neg)
+            .filter(|step| window_of(&step.branch.source) == Some(window))
+            .count(),
+        None => rule
+            .match_clause
+            .on_event
+            .iter()
+            .filter(|step| {
+                step.branches
+                    .iter()
+                    .any(|branch| window_of(&branch.source) == Some(window))
+            })
+            .count(),
     }
+}
+
+/// 规则上生成器**会映射**到注入 stream 的事件绑定窗（VN33 的口径）。
+///
+/// 与 `build_alias_map_for_syntax_case` 同源：`match` 步骤的分支源、`on each` 的别名、
+/// stats 度量的源别名（无度量时退回第一个 bind）——别名经 `events { alias : window }`
+/// 解析成窗口名。只收真正参与匹配的绑定，`events` 里声明了但没用的别名不算。
+fn rule_binding_windows(rule: &RuleDecl) -> Vec<String> {
+    let mut aliases: Vec<&str> = Vec::new();
+    for step in &rule.match_clause.on_event {
+        aliases.extend(step.branches.iter().map(|branch| branch.source.as_str()));
+    }
+    if let Some(chain) = &rule.match_clause.seq {
+        aliases.extend(chain.steps.iter().map(|step| step.branch.source.as_str()));
+    }
+    if let Some(each) = &rule.each_clause {
+        aliases.push(each.alias.as_str());
+    }
+    if let Some(stats) = &rule.stats_clause {
+        if stats.measures.is_empty() {
+            aliases.extend(rule.events.decls.first().map(|decl| decl.alias.as_str()));
+        } else {
+            aliases.extend(
+                stats
+                    .measures
+                    .iter()
+                    .map(|measure| measure.source_alias.as_str()),
+            );
+        }
+    }
+
+    let mut windows: Vec<String> = Vec::new();
+    for alias in aliases {
+        if let Some(decl) = rule.events.decls.iter().find(|decl| decl.alias == alias)
+            && !windows.iter().any(|window| window == &decl.window)
+        {
+            windows.push(decl.window.clone());
+        }
+    }
+    windows
+}
+
+/// 生成器会**写进事件**的实体键字段（VN12 保护集与 join 块的共用口径）：
+/// 规则口径（[`rule_entity_key_fields`]）∪ join 驱动侧连接键 ∪ 实体标识字段
+/// （用例头显式写的优先，否则 `entity(...)` 的单字段）——
+/// 与生成器 `RuleStructure::keys ∪ entity_key_fields ∪ mirror_join_keys` 逐项对应。
+///
+/// 三者都必须收进来：生成器写的字段优先级高于 `use`（`build_event_fields_with_predicates`
+/// 先套 key_overrides），漏掉一个，对应的 `use(<该字段>=…)` 就是静默失效。
+fn case_entity_key_fields(
+    case: &InjectCase,
+    all_rules: &[&RuleDecl],
+    skip_wfl: bool,
+) -> Vec<String> {
+    let rule_decl = if skip_wfl {
+        None
+    } else {
+        all_rules
+            .iter()
+            .find(|rule| rule.name == case.target_rule)
+            .copied()
+    };
+    let mut fields: Vec<String> = rule_decl.map(rule_entity_key_fields).unwrap_or_default();
+    if let Some(rule) = rule_decl {
+        for field in rule_join_left_fields(rule) {
+            if !fields.contains(&field) {
+                fields.push(field);
+            }
+        }
+        // 实体标识字段：显式写的优先，否则 `entity(...)` 的单字段。生成器**总是**写它
+        // （不写就无法与告警 `entity_id` 对齐：断言真空）。
+        let identity = case
+            .entity_field
+            .clone()
+            .or_else(|| rule_entity_field(rule));
+        if let Some(field) = identity
+            && !fields.contains(&field)
+        {
+            fields.push(field);
+        }
+    } else if let Some(explicit) = case.entity_field.as_deref()
+        && !fields.iter().any(|field| field == explicit)
+    {
+        // `--no-wfl`：没有规则口径可用，只剩用例头显式写的那个字段。
+        fields.push(explicit.to_string());
+    }
+    fields
+}
+
+/// 规则的 join 子句里**驱动侧**的连接键字段（`on <left> == <right>` 的 left），
+/// 与生成器 `RuleStructure::mirror_join_keys` 同源：连接键两侧取同一个值，
+/// 生成器会把它写进驱动事件。
+fn rule_join_left_fields(rule: &RuleDecl) -> Vec<String> {
+    let mut fields: Vec<String> = Vec::new();
+    for join in &rule.joins {
+        // 与生成器同口径：只取**首条件**（`extract_rule_structure` 只支持它，
+        // 其余形态由 VN30 拦下）。
+        if let Some(field) = join
+            .conditions
+            .first()
+            .and_then(|cond| leaf_name(&cond.left))
+            && !fields.contains(&field)
+        {
+            fields.push(field);
+        }
+    }
+    fields
 }
 
 /// 规则里生成器会当作**实体键字段**写入事件的字段名（`RuleStructure::keys` 同口径）：
@@ -754,8 +965,7 @@ fn rule_entity_key_fields(rule: &RuleDecl) -> Vec<String> {
             return names;
         }
     }
-    rule
-        .match_clause
+    rule.match_clause
         .keys
         .iter()
         .filter_map(leaf_name)
@@ -952,6 +1162,22 @@ fn check_predicate_fields(
                     stream, step_idx, pred.field, schema.name
                 ),
             });
+        }
+        // VN35：`use` / `without` / `join` 块里不能写 schema 的时间字段（或内部键
+        // `_timestamp`）。生成器按事件时间写这一列（oracle 用 `GenEvent.timestamp`、引擎
+        // 按 schema 的 `time_field` 读列时间），用例再给一个值等于造出**双时间轴**：
+        // 字段里是被覆盖的值、两个消费方各自按另一条时间读，结果静默不一致。
+        if let Some(schema) = case_schema {
+            let time_field = schema.time_field.as_deref();
+            if time_field == Some(pred.field.as_str()) || pred.field == "_timestamp" {
+                errors.push(ValidationError {
+                    code: "VN35",
+                    message: format!(
+                        "注入用例 '{}' 第 {} 步的 {} 里写了时间字段 '{}'：时间字段由生成器按事件时间写入，不能由 use/without 覆盖（会造成双时间轴、静默不一致）",
+                        stream, step_idx, step_kind, pred.field
+                    ),
+                });
+            }
         }
     }
 }

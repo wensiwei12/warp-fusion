@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::datagen::replay_gen::generate_replay_events;
+use crate::datagen::replay_gen::{ReplayRecord, generate_replay_events, plan_replay_timeline};
 use crate::datagen::stream_gen::GenEvent;
 use crate::loader::resolve_replay_files;
 use crate::validate::validate_wfg;
@@ -175,6 +175,32 @@ fn replay_span_over_duration_is_vn25() {
         errors.iter().any(|error| error.starts_with("VN25")),
         "errors: {errors:?}"
     );
+}
+
+/// 时间字段回退（非单调）→ 报错，lint (VN26) 与生成期同一口。
+///
+/// 记录按文件顺序发货，而下游（合并排序 / oracle 窗口推进 / 引擎水位）全部假定
+/// 事件按时间有序：回退的记录会被当成“未来事件”，两侧窗口收口就此分叉。
+/// 重排是静默改用户数据，因此选择报错。
+#[test]
+fn replay_time_field_must_be_non_decreasing() {
+    let records = "{\"_timestamp\": 200}\n{\"_timestamp\": 100}\n";
+    let errors = validate_only(records, &scenario_with("raw.ndjson", "10m"));
+    let vn26: Vec<&String> = errors
+        .iter()
+        .filter(|error| error.starts_with("VN26"))
+        .collect();
+    assert_eq!(vn26.len(), 1, "errors: {errors:?}");
+    assert!(
+        vn26[0].contains("单调不减"),
+        "消息要点明单调性: {}",
+        vn26[0]
+    );
+
+    // 同刻（相等）是合法的：单调**不减**，不是严格递增。
+    let equal = "{\"_timestamp\": 100}\n{\"_timestamp\": 100}\n";
+    let errors = validate_only(equal, &scenario_with("raw.ndjson", "10m"));
+    assert!(errors.is_empty(), "同刻不该报错: {errors:?}");
 }
 
 /// 时间字段只出现在部分记录里 → VN26（落时间口径必须唯一）。
@@ -389,5 +415,38 @@ scenario replay_without_ok<seed=1> {
             .iter()
             .any(|event| event.fields.get("src_ip").and_then(|v| v.as_str()) == Some("10.9.9.9")),
         "replay 事件应在输出里"
+    );
+}
+
+/// 没有时间字段时按序号均匀落下，偏移用 `u128` 计算：`total × index` 在 `i64` 里会溢出
+/// （旧实现：`#[duration=2d]` + 10 万条记录的 `replay` 会让 `wfgen lint` panic；release 下
+/// 静默回绕为负偏移，事件落到场景起点之前）。
+#[test]
+fn no_time_field_timeline_over_huge_duration_does_not_overflow() {
+    let records: Vec<ReplayRecord> = (0..3)
+        .map(|_| ReplayRecord {
+            fields: std::collections::HashMap::new(),
+            internal_timestamp: None,
+        })
+        .collect();
+    // 7.2e9 秒 = 7.2e18 纳秒；对 3 条记录，旧实现算到 index=2 时是 1.44e19 > i64::MAX。
+    let duration = std::time::Duration::from_secs(7_200_000_000);
+
+    let timeline = plan_replay_timeline(&records, None, duration).expect("按序号落时间");
+
+    assert_eq!(timeline.time_field, None);
+    assert_eq!(timeline.offsets_nanos.len(), 3);
+    assert!(
+        timeline.offsets_nanos.windows(2).all(|w| w[0] <= w[1]),
+        "偏移应单调不减：{:?}",
+        timeline.offsets_nanos
+    );
+    assert!(
+        timeline
+            .offsets_nanos
+            .iter()
+            .all(|&offset| offset >= 0 && (offset as u128) < duration.as_nanos()),
+        "偏移应落在场景时长内：{:?}",
+        timeline.offsets_nanos
     );
 }

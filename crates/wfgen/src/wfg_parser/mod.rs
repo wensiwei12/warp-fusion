@@ -29,12 +29,12 @@ pub fn parse_wfg(input: &str) -> WfgenResult<WfgFile> {
     ws_skip(&mut rest)
         .map_err(|e| error::error(WfgenReason::Parse, format!("parse error: {e}")))?;
     if !rest.is_empty() {
+        // 预览必须按**字符**截断：`&rest[..60]` 在字节 60 落在多字节字符中间时会 panic
+        // （`.wfg` 尾部带中文残余就是这种情况）。
+        let preview: String = rest.chars().take(60).collect();
         return error::fail(
             WfgenReason::Parse,
-            format!(
-                "unexpected trailing content: {:?}",
-                &rest[..rest.len().min(60)]
-            ),
+            format!("unexpected trailing content: {preview:?}"),
         );
     }
     Ok(result)

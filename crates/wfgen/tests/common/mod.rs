@@ -18,7 +18,7 @@ use chrono::{DateTime, Utc};
 use wf_config::{ConfigVarContext, FusionConfigLoader, RawFusionConfigTree};
 use wf_runtime::lifecycle::Reactor;
 use wf_runtime::tracing_init::{DomainFormat, FileFields};
-use wfgen::verify::{ActualAlert, VerifyReport};
+use wfgen::verify::{ActualAlert, EmptyPolicy, VerifyReport};
 
 /// Arrow 帧分块行数（与运行时接收侧约定一致）。
 const FRAME_CHUNK_ROWS: usize = 2048;
@@ -203,6 +203,8 @@ rules   = "{example}/rules/*.wfl"
         &actual,
         tolerances.score_tolerance,
         tolerances.time_tolerance_secs,
+        // 与 CLI 默认同口径：空对空不算通过（L3 没有证据就是没验证过）。
+        EmptyPolicy::Deny,
     );
 
     EngineRun {

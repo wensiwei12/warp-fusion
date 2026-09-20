@@ -16,6 +16,19 @@ use matching::greedy_match;
 /// Match key for grouping alerts.
 type MatchKey = (String, String, String, String);
 
+/// 两侧都没有可比对告警（「空对空」）时的裁定策略。
+///
+/// 历史上的 `status = pass`（nothing to compare → no diffs → pass）会把
+/// 「期望生成 / 断言根本没跑」读成一盏绿灯（q15/q16 的“注入断言空转”就是这么
+/// 溜过去的）。无证据默认**不是**通过，要放行必须显式声明。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmptyPolicy {
+    /// 默认：无证据 → `fail`（退出码非 0）。
+    Deny,
+    /// `--allow-empty`：显式接受空输入，`status = pass` 且报告 `empty = true`。
+    Allow,
+}
+
 /// Compare actual alerts against oracle (expected) alerts.
 ///
 /// Algorithm:
@@ -30,16 +43,23 @@ type MatchKey = (String, String, String, String);
 /// 4. Paired alerts with `|time_diff| > time_tolerance` or `|score_diff| > score_tolerance`
 ///    count as field_mismatch.
 /// 5. Unpaired expected → missing, unpaired actual → unexpected.
-/// 6. Status = "pass" iff missing == 0 && unexpected == 0 && field_mismatch == 0.
+/// 6. Status = "pass" iff missing == 0 && unexpected == 0 && field_mismatch == 0
+///    **且有证据**（两侧至少一侧有可比对的告警）——见 [`EmptyPolicy`]。
 pub fn verify(
     expected: &[OracleAlert],
     actual: &[ActualAlert],
     score_tolerance: f64,
     time_tolerance_secs: f64,
+    empty_policy: EmptyPolicy,
 ) -> VerifyReport {
     let sink_expected: Vec<&OracleAlert> = expected.iter().filter(|a| !a.intermediate).collect();
+    let skipped_intermediate = expected.len() - sink_expected.len();
     let expected_groups = group_expected(&sink_expected);
     let actual_groups = group_actual(actual);
+
+    // 无证据 = 两侧都没有可比对的告警。空对空没有 `missing/unexpected` 可言，
+    // 因此 `status` 不能只看计数。
+    let empty = sink_expected.is_empty() && actual.is_empty();
 
     let mut matched = 0usize;
     let mut missing = 0usize;
@@ -131,7 +151,14 @@ pub fn verify(
         }
     }
 
-    let status = if missing == 0 && unexpected == 0 && field_mismatch == 0 {
+    // 无证据时的裁定不看计数（空输入没有计数可言）：`pass` 只能来自显式放行。
+    let status = if empty {
+        match empty_policy {
+            EmptyPolicy::Allow => "pass",
+            EmptyPolicy::Deny => "fail",
+        }
+        .to_string()
+    } else if missing == 0 && unexpected == 0 && field_mismatch == 0 {
         "pass".to_string()
     } else {
         "fail".to_string()
@@ -140,8 +167,11 @@ pub fn verify(
     VerifyReport {
         schema: "wfgen-verify-report/v2".to_string(),
         status,
+        empty,
+        note: empty_note(empty, empty_policy, skipped_intermediate),
         summary: VerifySummary {
             expected_total: sink_expected.len(),
+            expected_skipped_intermediate: skipped_intermediate,
             actual_total: actual.len(),
             matched,
             missing,
@@ -152,6 +182,32 @@ pub fn verify(
         unexpected_details,
         mismatch_details,
     }
+}
+
+/// 空输入说明（只在无证据时出现）：把「为什么没有证据」和「怎么放行」写清楚。
+fn empty_note(empty: bool, policy: EmptyPolicy, skipped_intermediate: usize) -> Option<String> {
+    if !empty {
+        return None;
+    }
+    let cause = if skipped_intermediate > 0 {
+        format!(
+            "expectation side had {} alert(s), all of them intermediate pipeline output \
+             (never reaches a sink); actual side had none",
+            skipped_intermediate
+        )
+    } else {
+        "both sides are empty".to_string()
+    };
+    Some(match policy {
+        EmptyPolicy::Allow => format!(
+            "no evidence ({cause}) - accepted by --allow-empty; this is NOT an correctness check"
+        ),
+        EmptyPolicy::Deny => format!(
+            "no evidence ({cause}) - an empty comparison is not a pass; \
+             check that expectation generation and assertions really ran, \
+             or pass --allow-empty to accept it explicitly"
+        ),
+    })
 }
 
 // ---------------------------------------------------------------------------

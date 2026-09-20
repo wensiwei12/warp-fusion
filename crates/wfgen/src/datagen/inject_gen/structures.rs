@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use wf_lang::ast::Measure;
 
 use crate::datagen::stream_gen::GenEvent;
+use crate::datagen::stream_gen::ReservedKeyBands;
 use crate::wfg_ast::{InjectCase, InjectCaseMode, JoinStmt};
 
 /// Result of inject event generation.
@@ -13,10 +14,38 @@ pub struct InjectGenResult {
     /// 注入实体清单（生成期断言 INJ1/INJ2 的输入，设计 §4.2）。
     pub entity_keys: Vec<InjectEntityKey>,
     /// 实体标识无法与 oracle 的 `entity_id` 口径对齐、因而**未**纳入断言的
-    /// 实体个数（复合 `entity(...)`、stats 桶键、实体字段不在 schema）。
-    pub unasserted_entities: u64,
+    /// 实体个数（按原因分列，见 [`UnassertedEntities`]）。
+    pub unasserted_entities: UnassertedEntities,
+    /// 背景生成要避让的注入键值域（见 [`ReservedKeyBands`]）。
+    pub reserved_bands: ReservedKeyBands,
     /// `without(...)` 约束的执行清单（设计 §3.8）；由背景生成阶段消费。
     pub without_guards: Vec<WithoutGuard>,
+}
+
+/// 未被纳入断言（INJ1/INJ2 覆盖不到）的注入实体计数，按**原因**分列。
+///
+/// 两者都是“断言真空”，但修法完全不同：`composite_entity` 要改规则
+/// （`entity(...)` 写成一个字段），`missing_key_field` 要改生成器的键覆盖口径。
+/// 以前把两者合成一个数字，`gen` 的警告只能写其中一种原因——对着警告去改，
+/// 很可能改错地方。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UnassertedEntities {
+    /// `entity(...)` 不是单字段表达式（如 `entity(digit, a.id * 10)`）：
+    /// 没有可与告警 `entity_id` 对齐的实体标识。
+    pub composite_entity: u64,
+    /// `entity(...)` 是单字段，但该字段的值不在本次注入的键覆盖里：
+    /// 数据里根本没写这个值，断言无从对齐。
+    pub missing_key_field: u64,
+}
+
+impl UnassertedEntities {
+    pub fn total(&self) -> u64 {
+        self.composite_entity + self.missing_key_field
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.total() == 0
+    }
 }
 
 /// `without(...)` 约束的执行清单（生成期）。
@@ -147,7 +176,9 @@ pub struct InjectStepCount {
 #[derive(Default)]
 pub(super) struct InjectEntities {
     pub(super) keys: Vec<InjectEntityKey>,
-    pub(super) unasserted: u64,
+    pub(super) unasserted: UnassertedEntities,
+    /// 被注入占用的 (窗口, 字段)：背景生成据此避让这些字段（见 [`ReservedKeyBands`]）。
+    pub(super) key_fields: Vec<(String, String)>,
     /// 下一个空闲实体 id。各用例按顺序**分段**取用（段间不重叠）：同一个实体
     /// 不可能既是 `hit` 又是 `near_miss`——那是两个互相矛盾的口径。
     next_entity_id: u64,
@@ -165,7 +196,7 @@ impl InjectEntities {
     /// `entity_id` 是该实体在场景键空间里的 id（`>= base`），`index` 是用例内
     /// 序号（1-based）。实体标识取规则 `entity(...)` 的单一字段（与 oracle 告警
     /// `entity_id` 同源）；规则实体是复合表达式、或该字段值不在本次注入的键覆盖
-    /// 里时无法对齐口径，计入 `unasserted` 而不是猜一个。
+    /// 里时无法对齐口径，按原因计入 `unasserted` 而不是猜一个。
     pub(super) fn record_entity(
         &mut self,
         case: &InjectCase,
@@ -178,12 +209,27 @@ impl InjectEntities {
         // 先推进段游标：下面任何提前返回都不能让下一个用例复用同一段 id。
         self.next_entity_id = self.next_entity_id.max(entity_id + 1);
 
+        // 登记被注入占用的字段——**先于**下面两个提前返回：无论能否断言，
+        // 这些值都已经写在事件里了，背景再拿到同一个值就会被规则算到这个实体头上
+        // （阈值被噪声顶过、否定步骤被噪声满足），负样本的“必不报警”变成概率性的。
+        let window = rule_struct
+            .steps
+            .first()
+            .map(|step| step.window_name.clone())
+            .unwrap_or_else(|| case.stream.clone());
+        for field in key_overrides.keys() {
+            let entry = (window.clone(), field.clone());
+            if !self.key_fields.contains(&entry) {
+                self.key_fields.push(entry);
+            }
+        }
+
         let Some(field) = entity_identity_field(rule_struct) else {
-            self.unasserted += 1;
+            self.unasserted.composite_entity += 1;
             return;
         };
         let Some(value) = key_overrides.get(&field).cloned() else {
-            self.unasserted += 1;
+            self.unasserted.missing_key_field += 1;
             return;
         };
 
@@ -244,22 +290,62 @@ pub(super) struct RuleStructure {
     pub(super) window_dur: Duration,
     pub(super) steps: Vec<StepInfo>,
     pub(super) entity_id_field: Option<String>,
+    /// 规则的 join 子句里**驱动侧**的连接键字段（`on <left> == <right>` 的 left）。
+    /// 与右行的连接键必须取同一个值——生成器把它们镜像成实体标识值写入驱动事件
+    /// （见 [`RuleStructure::mirror_join_keys`]）。
+    pub(super) join_left_fields: Vec<String>,
     /// 规则的 join 子句口径（设计 §9 跨流注入）。
     pub(super) joins: Vec<RuleJoinInfo>,
 }
 
 impl RuleStructure {
-    /// 生成器用的实体键字段：用例显式写的优先；`on each` 形态没有 match keys，
-    /// 用 `entity(...)` 的单一字段推断（设计 §3.7 第三行）。match 规则的推断仍由
-    /// [`RuleStructure::keys`] 承担（多 key = 实体是 key 元组，不在这里代入）。
-    pub(super) fn effective_entity_field<'a>(
-        &'a self,
-        explicit: Option<&'a str>,
-    ) -> Option<&'a str> {
-        match explicit {
-            Some(field) => Some(field),
-            None if self.keys.is_empty() => self.entity_id_field.as_deref(),
-            None => None,
+    /// 生成器要写进事件的**实体键字段**清单（设计 §3.7 / §9.5）：
+    /// 规则的键（[`Self::keys`]）∪ 实体标识字段——用例头显式写的优先，否则取
+    /// `entity(...)` 的单字段；推不出（复合 `entity(...)`）时只剩规则的键。
+    ///
+    /// 自实体标识字段为什么**一定要写**：INJ1/INJ2 比的是**告警的 `entity_id`**，
+    /// 而它取自规则 `entity(...)`。不写这个字段，注入值与告警就对不上口径
+    /// （`record_entity` 只能计入 `unasserted`——断言真空）；join-then-key 形态下
+    /// 它还是 join 的驱动侧连接键，不写连配对都建不起来，hit 根本不开火。
+    ///
+    /// 历史实现只在「没写显式字段、且规则**没有** match 键」时才代它（`keys` 非空
+    /// 就返回 `None`），于是 `match<seller>` + `entity(digit, b.auction)` 这类
+    /// join-then-key 规则上静默失效。
+    pub(super) fn entity_key_fields(&self, explicit: Option<&str>) -> Vec<String> {
+        let mut names = self.keys.clone();
+        if let Some(field) = explicit.or(self.entity_id_field.as_deref())
+            && !names.iter().any(|name| name == field)
+        {
+            names.push(field.to_string());
+        }
+        names
+    }
+
+    /// join 驱动侧连接键的**镜像**：把实体标识字段（没有则第一个键）的值也写到那些字段上。
+    ///
+    /// 连接条件 `on <left> == <right>` 要求两侧取同一个值，而 `<left>`
+    /// （如 q3 的 `a.seller`）通常不是 match 键也不是实体字段——历史实现靠
+    /// 「`key_overrides` 里恰好只有一个键时就用那个值」兜底：静默、脆弱，且把“值必须
+    /// 两边一致”这件事推给了用户手写 `use(seller=…)` 去凑（还得以知道实体 id 分配规律为前提）。
+    ///
+    /// 这里显式把它镜像成实体标识值：两侧同值自动成立，用户不需要写那个 `use`
+    /// （写了反而会被 VN12 拦——它属生成器书写的字段）。不额外消耗实体 id：
+    /// 镜像字段描述的是**同一个实体**。
+    pub(super) fn mirror_join_keys(&self, key_overrides: &mut HashMap<String, serde_json::Value>) {
+        let Some(source) = self
+            .entity_id_field
+            .clone()
+            .or_else(|| self.keys.first().cloned())
+        else {
+            return;
+        };
+        let Some(value) = key_overrides.get(&source).cloned() else {
+            return;
+        };
+        for field in &self.join_left_fields {
+            if field != &source {
+                key_overrides.entry(field.clone()).or_insert(value.clone());
+            }
         }
     }
 }

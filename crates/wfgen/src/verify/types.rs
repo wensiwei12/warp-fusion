@@ -13,6 +13,11 @@ pub struct ActualAlert {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VerifySummary {
     pub expected_total: usize,
+    /// 期望侧被剔除的**中间管道输出**条数（`OracleAlert::intermediate`）：它们不落 sink、
+    /// 不参与比较（见 [`crate::verify::verify`]）。单独计数，避免「期望 0 条」被读成
+    /// 「场景没有期望」——真实的 0 条与「全是中间输出被剔掉」是两回事。
+    #[serde(default)]
+    pub expected_skipped_intermediate: usize,
     pub actual_total: usize,
     pub matched: usize,
     pub missing: usize,
@@ -46,8 +51,18 @@ pub struct MismatchDetail {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VerifyReport {
     /// 回执 schema 版本（L1：与 `wfl test` 的 wfl-test-report/v1 同风格版本化）。
+    /// 后续新增字段都是**加性**的（`#[serde(default)]`），故不随字段增加而升版。
     pub schema: String,
     pub status: String,
+    /// 两侧都没有可比对的告警（无证据）。`status = pass` 只在显式 `--allow-empty` 下
+    /// 与它同时成立——见 [`crate::verify::EmptyPolicy`]。
+    #[serde(default)]
+    pub empty: bool,
+    /// 裁定说明：这次对拍**有没有证据**、无证据时怎么放行。写进报告而不是
+    /// stderr——调用方常把 stdout/stderr 合并重定向成 JSON 文件，往 stderr 写会
+    /// 直接毁掉那份 JSON。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     pub summary: VerifySummary,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing_details: Vec<AlertDetail>,
@@ -63,6 +78,9 @@ impl VerifyReport {
         let mut md = String::new();
         md.push_str("## wfgen Verify Report\n\n");
         md.push_str(&format!("**Status**: {}\n\n", self.status.to_uppercase()));
+        if let Some(note) = &self.note {
+            md.push_str(&format!("**Note**: {note}\n\n"));
+        }
 
         // Summary table
         md.push_str("### Summary\n\n");
@@ -72,6 +90,12 @@ impl VerifyReport {
             "| Expected total | {} |\n",
             self.summary.expected_total
         ));
+        if self.summary.expected_skipped_intermediate > 0 {
+            md.push_str(&format!(
+                "| Expected skipped (intermediate) | {} |\n",
+                self.summary.expected_skipped_intermediate
+            ));
+        }
         md.push_str(&format!(
             "| Actual total | {} |\n",
             self.summary.actual_total

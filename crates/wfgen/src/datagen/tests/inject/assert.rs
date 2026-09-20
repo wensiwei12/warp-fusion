@@ -154,7 +154,9 @@ scenario composite_entity<seed=42> {
 
     let result = generate(&wfg, &schemas, &plans).unwrap();
     assert!(result.inject_entities.is_empty());
-    assert_eq!(result.unasserted_inject_entities, 4);
+    // 原因归到「实体标识不是单字段」那一列：警告文案据此指修法（把 `entity(...)` 写成单字段）。
+    assert_eq!(result.unasserted_inject_entities.composite_entity, 4);
+    assert_eq!(result.unasserted_inject_entities.missing_key_field, 0);
 
     let oracle = run_oracle(
         &result.events,

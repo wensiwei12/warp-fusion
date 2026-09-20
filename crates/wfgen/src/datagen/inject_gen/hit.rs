@@ -45,14 +45,15 @@ pub(super) fn generate_hit_clusters(
 
     for (entity_counter, _cluster_idx) in (0_u64..).zip(0..num_clusters) {
         let entity_id = entity_base + entity_counter;
-        let key_overrides = generate_key_values(
-            &rule_struct.keys,
+        let mut key_overrides = generate_key_values(
+            &rule_struct.entity_key_fields(overrides.entity_field.as_deref()),
             entity_id,
             "hit",
             schemas,
             effective_steps,
-            rule_struct.effective_entity_field(overrides.entity_field.as_deref()),
         );
+        // join 驱动侧连接键跟实体标识同值（否则连接条件恒不成立）。
+        rule_struct.mirror_join_keys(&mut key_overrides);
         entities.record_entity(
             case,
             rule_struct,

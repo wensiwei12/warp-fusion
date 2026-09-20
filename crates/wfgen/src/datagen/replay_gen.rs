@@ -5,7 +5,8 @@
 //! 1. 记录 → 事件（记录自身的字段照抄，`_` 前缀的内部键忽略）；
 //! 2. 时间对齐：文件里的时间戳以**最早一条为锚平移到场景起点**，使 `#[duration]` 成为
 //!    background / inject / replay 三类事件共同的时间窗（§8.3 第 1 条）；文件没有时间
-//!    字段时按序号在 `duration` 内均匀落下（与 `miss` 同策略）；
+//!    字段时按序号在 `duration` 内均匀落下（与 `miss` 同策略）；有则必须**单调不减**
+//!    （见 `ensure_time_ordered`：下游全部按时间有序假定处理）；
 //! 3. 时间字段写回（schema 的 `time_field`），与 background / inject 的输出形态一致。
 
 use std::collections::HashMap;
@@ -75,16 +76,26 @@ pub(crate) fn plan_replay_timeline(
             );
         }
         let raw: Vec<i64> = parsed.into_iter().flatten().collect();
+        ensure_time_ordered(&raw, candidate)?;
         return Ok(ReplayTimeline {
             time_field: Some(candidate.to_string()),
             offsets_nanos: rebase_offsets(&raw),
         });
     }
 
-    let total = duration.as_nanos().min(i64::MAX as u128) as i64;
-    let count = records.len() as i64;
+    let total = duration.as_nanos().min(i64::MAX as u128);
+    let count = records.len();
+    // 用 `u128` 算 `total × index`：`total` 已钳到 `i64::MAX`，乘上“记录数”在 `i64` 里会溢出
+    // （实测 `#[duration=2d]` + 10 万条无时间字段的记录 → `lint` panic；release 下静默回绕成
+    // 负偏移，事件会落到场景起点之前）。
     let offsets_nanos = (0..count)
-        .map(|index| if count > 0 { total * index / count } else { 0 })
+        .map(|index| {
+            if count > 0 {
+                (total * index as u128 / count as u128) as i64
+            } else {
+                0
+            }
+        })
         .collect();
     Ok(ReplayTimeline {
         time_field: None,
@@ -98,6 +109,35 @@ fn rebase_offsets(raw: &[i64]) -> Vec<i64> {
     raw.iter()
         .map(|value| value.saturating_sub(anchor))
         .collect()
+}
+
+/// 记录的时间必须**单调不减**（同刻允许）。
+///
+/// `replay` 按文件顺序发货，而下游全是“按时间有序”的假定：`merge_sorted_chunks` 的
+/// k 路归并要求每块有序、oracle 的窗口推进/水位、引擎的收口语义都建在这上面。
+/// 文件里一旦出现回退，“后到的更早事件”会被当成未来事件：oracle 与引擎的窗口收口
+/// 就此分叉——两侧都“有数据”，只是一个对不上另一个，而且找不到原因。
+///
+/// 不在这里重排：`replay` 的语义是照单发货，静默改顺序等于改用户的数据。
+/// 报错让用户自己选（先把文件按时间排好，或去掉时间字段走“按序号均匀落下”）。
+fn ensure_time_ordered(raw: &[i64], field: &str) -> WfgenResult<()> {
+    for (idx, pair) in raw.windows(2).enumerate() {
+        if pair[1] < pair[0] {
+            return error::fail(
+                WfgenReason::Validation,
+                format!(
+                    "replay 记录的时间字段 '{field}' 不是单调不减：第 {} 条（{}）早于第 {} 条（{}）。\
+                     记录按文件顺序发货，下游按时间有序假定处理——请先把文件按时间排序，\
+                     或去掉时间字段（改为按序号在场景时长内均匀落下）",
+                    idx + 2,
+                    pair[1],
+                    idx + 1,
+                    pair[0]
+                ),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// 取候选时间字段的值：`_timestamp` 看记录里单独拎出来的那份，其余看事件字段。

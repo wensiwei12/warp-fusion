@@ -13,6 +13,7 @@ use wf_lang::WindowSchema;
 use wf_lang::plan::RulePlan;
 
 use crate::datagen::stream_gen::GenEvent;
+use crate::datagen::stream_gen::ReservedKeyBands;
 
 use crate::error::{self, WfgenReason, WfgenResult};
 use crate::injection_targets::injected_rule_names;
@@ -27,7 +28,9 @@ pub(crate) use extract::field_ref_field_name;
 pub(crate) use helpers::ENTITY_ID_SPACE;
 pub(crate) use helpers::entity_value_for_index;
 use structures::InjectEntities;
-pub use structures::{InjectEntityKey, InjectGenResult, InjectStepCount, WithoutGuard};
+pub use structures::{
+    InjectEntityKey, InjectGenResult, InjectStepCount, UnassertedEntities, WithoutGuard,
+};
 
 /// Generate inject events driven by rule plans.
 ///
@@ -79,17 +82,23 @@ pub fn generate_inject_events(
                     &rule_struct,
                     &events,
                     &entities.keys[keys_before..],
-                    entities.unasserted - unasserted_before,
+                    entities.unasserted.total() - unasserted_before.total(),
                 )?);
             }
             all_events.extend(events);
         }
     }
 
+    let key_fields = entities.key_fields.clone();
+
+    // 避让下界 = 实体 id 游标（已消耗的最大 id + 1）：所有注入键值都 < 它。
+    let reserved_bands = ReservedKeyBands::new(entities.next_entity_base(), key_fields);
+
     Ok(InjectGenResult {
         events: all_events,
         entity_keys: entities.keys,
         unasserted_entities: entities.unasserted,
+        reserved_bands,
         without_guards,
     })
 }

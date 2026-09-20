@@ -6,7 +6,7 @@ use rand::rngs::StdRng;
 use wf_lang::WindowSchema;
 
 use super::helpers::{
-    build_event_fields_with_predicates, generate_key_values,
+    build_event_fields_with_predicates, generate_key_values, join_lead_secs,
     plan_use_steps_allowing_filter_conflicts, push_join_events, resolve_cluster_count,
 };
 use super::structures::{InjectEntities, InjectOverrides, RuleStructure};
@@ -79,6 +79,9 @@ fn generate_non_hit_use_step_events(
     }
 
     let dur_nanos = duration.as_nanos() as i64;
+    // 首条事件落在场景起点时，join 右行前挪会跑到 `#[start]` 之前（见
+    // `generate_cluster_events_with_filter_validation` 的同名处理）。
+    let join_lead_nanos = (join_lead_secs(&rule_struct.joins) * 1e9) as i64;
 
     let mut events = Vec::new();
     let mut entity_index = 0_u64;
@@ -116,14 +119,14 @@ fn generate_non_hit_use_step_events(
                 // 每个 miss 实体只有一条事件、且只落在本步骤上。
                 let entity_id = entity_base + entity_index;
                 entity_index += 1;
-                let key_overrides = generate_key_values(
-                    &rule_struct.keys,
+                let mut key_overrides = generate_key_values(
+                    &rule_struct.entity_key_fields(overrides.entity_field.as_deref()),
                     entity_id,
                     "miss",
                     schemas,
                     steps,
-                    rule_struct.effective_entity_field(overrides.entity_field.as_deref()),
                 );
+                rule_struct.mirror_join_keys(&mut key_overrides);
                 let mut entity_step_counts = vec![0_u64; steps.len()];
                 entity_step_counts[step_idx] = 1;
                 entities.record_entity(
@@ -136,7 +139,8 @@ fn generate_non_hit_use_step_events(
                 );
 
                 let offset_nanos = if total_events > 1 {
-                    dur_nanos * event_index / total_events
+                    join_lead_nanos
+                        + (dur_nanos - join_lead_nanos).max(0) * event_index / total_events
                 } else {
                     dur_nanos / 2
                 };

@@ -52,14 +52,14 @@ pub(super) fn generate_near_miss_clusters(
 
     for (entity_counter, _cluster_idx) in (0_u64..).zip(0..num_clusters) {
         let entity_id = entity_base + entity_counter;
-        let key_overrides = generate_key_values(
-            &rule_struct.keys,
+        let mut key_overrides = generate_key_values(
+            &rule_struct.entity_key_fields(overrides.entity_field.as_deref()),
             entity_id,
             "nm",
             schemas,
             &rule_struct.steps,
-            rule_struct.effective_entity_field(overrides.entity_field.as_deref()),
         );
+        rule_struct.mirror_join_keys(&mut key_overrides);
         entities.record_entity(
             case,
             rule_struct,

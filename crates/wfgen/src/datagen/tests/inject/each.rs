@@ -71,7 +71,7 @@ scenario each_infer<seed=42> {
         .filter_map(|entity| entity.value.as_str())
         .collect();
     assert_eq!(values.len(), 3, "每个实体必须拿到不同的推断键值");
-    assert_eq!(result.unasserted_inject_entities, 0);
+    assert!(result.unasserted_inject_entities.is_empty());
 
     // 断言本身通过（3 个实体都命中 attempts >= 100）。
     let start = "2024-01-01T00:00:00Z".parse().unwrap();

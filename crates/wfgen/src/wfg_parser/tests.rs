@@ -1,6 +1,28 @@
 use super::parse_wfg;
 use crate::wfg_ast::*;
 
+/// 尾部残余的预览必须按字符截断：`.wfg` 尾部带中文残余时，字节 60 落在多字节字符
+/// 中间，`&rest[..60]` 会 panic（不再报“unexpected trailing content”）。
+#[test]
+fn test_trailing_multibyte_content_reports_error_not_panic() {
+    let mut input = String::from(
+        r#"
+#[duration=10m]
+scenario trailing_probe<seed=1> {
+  background { stream auth_events gen 1/s }
+}
+"#,
+    );
+    input.push('X'); // 前导一个 ASCII 字节：使字节 60 落在后面的多字节字符中间
+    input.push_str(&"日".repeat(40));
+
+    let err = parse_wfg(&input).unwrap_err().to_string();
+    assert!(
+        err.contains("unexpected trailing content"),
+        "应报尾部残余而不是 panic：{err}"
+    );
+}
+
 #[test]
 fn test_parse_minimal_syntax_scenario() {
     let input = r#"
@@ -545,10 +567,7 @@ scenario dur<seed=1> {
     let wfg = parse_wfg(input).unwrap();
     let attrs = &wfg.syntax.as_ref().unwrap().attrs;
     assert_eq!(
-        attrs
-            .iter()
-            .find(|a| a.key == "duration")
-            .map(|a| &a.value),
+        attrs.iter().find(|a| a.key == "duration").map(|a| &a.value),
         Some(&AttrValue::Duration(std::time::Duration::from_secs(60)))
     );
     let case = &wfg
@@ -563,7 +582,10 @@ scenario dur<seed=1> {
         panic!("应为 Predicates");
     };
     assert_eq!(
-        predicates.iter().find(|p| p.field == "ttl").map(|p| &p.value),
+        predicates
+            .iter()
+            .find(|p| p.field == "ttl")
+            .map(|p| &p.value),
         Some(&AttrValue::Duration(std::time::Duration::from_secs(30)))
     );
 }

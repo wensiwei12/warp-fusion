@@ -206,6 +206,88 @@ async fn no_wfl_run_skips_cli_wfl_files() {
 }
 
 #[tokio::test]
+async fn no_expect_run_removes_stale_expectation_sidecars() {
+    // 期望文件路径按用例名（= 场景文件 stem）固定：这次不写，上一次的产物就留在原地。
+    // 下游 `wfgen verify --expected <out>/brute_force.except.jsonl` 会拿**旧期望**去比
+    // 新数据——两侧都非空，于是静默给出一个看起来有证据、实际对错了版本的结论。
+    // 夹具 brute_force.wfg 有注入用例，因此这三种文件本来都会被写出来。
+    let tmp = std::env::temp_dir().join("wfgen-e2e-no-expect-stale");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).expect("create temp out dir");
+
+    let stale = [
+        "brute_force.except.jsonl",
+        "brute_force.except.meta.jsonl",
+        "brute_force.faulted-except.jsonl",
+    ];
+    for name in stale {
+        std::fs::write(tmp.join(name), "{\"stale\":true}\n").expect("write stale sidecar");
+    }
+
+    let out = tmp.clone();
+    let res = run(gen_args(out.clone(), Vec::new(), false, true)).await;
+    assert!(res.is_ok(), "--no-expect run failed: {:?}", res.err());
+
+    for name in stale {
+        assert!(
+            !tmp.join(name).exists(),
+            "stale expectation sidecar must be removed under --no-expect: {name}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// `--no-expect` 把 INJ1/INJ2 一起关掉了（断言吃的是**期望**那份 oracle 结果）：
+/// 注入照旧执行、数据照旧产出，但 hit/near_miss/miss 的口径没有任何验证。
+/// 这件事必须出声——否则 `--no-expect` 看起来只是“不写期望文件”。
+#[test]
+fn no_expect_warns_that_inject_assertions_did_not_run() {
+    let tmp = std::env::temp_dir().join("wfgen-e2e-no-expect-warn");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).expect("create temp out dir");
+
+    let stderr = |extra: &[&str]| -> String {
+        let out_dir =
+            std::env::temp_dir().join(format!("wfgen-e2e-no-expect-warn-{}", extra.join("-")));
+        let _ = std::fs::remove_dir_all(&out_dir);
+        std::fs::create_dir_all(&out_dir).expect("create temp out dir");
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_wfgen"))
+            .arg("gen")
+            .arg("--scenario")
+            .arg(manifest().join(WFG_REL))
+            .arg("--out")
+            .arg(&out_dir)
+            .args(extra)
+            .output()
+            .expect("run wfgen gen");
+        assert!(
+            output.status.success(),
+            "wfgen gen {extra:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8_lossy(&output.stderr).into_owned();
+        let _ = std::fs::remove_dir_all(&out_dir);
+        text
+    };
+
+    let warned = stderr(&["--no-expect"]);
+    assert!(
+        warned.contains("INJ1/INJ2") && warned.contains("--no-expect"),
+        "--no-expect 必须警告注入断言未跑，实际 stderr:\n{warned}"
+    );
+
+    // 反向对照：正常跑（写期望 = 跑断言）不该出现这条警告。
+    let normal = stderr(&[]);
+    assert!(
+        !normal.contains("INJ1/INJ2"),
+        "正常路径不应警告断言未跑，实际 stderr:\n{normal}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[tokio::test]
 async fn no_expect_run_keeps_injected_fixed_values() {
     // `--no-expect` keeps the WFL pipeline, so injection `use()` fixed values
     // still apply: the generated events must include the injected

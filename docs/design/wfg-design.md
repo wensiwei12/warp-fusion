@@ -291,25 +291,36 @@ scenario no_login_then_xfer<seed=7> {
 
 从高到低（`inject_gen/helpers/generate.rs::build_event_fields_with_predicates`）：
 
-1. 实体键覆盖（保证同实体聚合）
+1. 实体键覆盖（保证同实体聚合；字段集合见 §3.7）
 2. 当前 step 的 `use(...)` 谓词
 3. 规则 bind filter 推导出的字段约束
 4. 时间字段（自动填 `timestamp`）
 5. 随机默认生成
 
+第 1 项不是“规则 key”一个集合：= 规则键 ∪ 实体标识字段 ∪ join 驱动侧连接键（§9.5）。
+三个都由生成器写，优先级都高于 `use`——写进 `use(...)` 就是静默失效，由 VN12 拦下。
+
 ### 3.7 实体字段推断（决策 1）
 
-实体键省略时按规则形态推断：
+生成器写进事件的**实体键字段**（`RuleStructure::entity_key_fields`）= 规则键 ∪ 实体标识字段，
+再叠加 join 驱动侧连接键的镜像（§9.5）。字段名口径：
 
-| 规则形态 | 实体字段 |
+| 规则形态 | 生成器写的键字段 |
 |---|---|
 | `match<sip:5m>`（单 key） | `sip` |
-| `match<sip,dport:5m>`（多 key） | 全部 key 各生成唯一值（实体 = key 元组） |
-| `on each s` + `entity(<type>, s.event_id)` | `event_id`（注入侧同口径推断，见 §3.2） |
+| `match<sip,dport:5m>`（多 key） | 两个 key 各写一个唯一值（实体 = key 元组），外加 `entity(...)` 的单字段 |
+| `key { login = e.sip }`（显式 key 映射） | 映射的**来源字段** `sip`——引擎按来源字段取值（`wf-cep::extract_key` 先查 `(逻辑名, 本别名)` 的 `source_field`），写逻辑名会落到 schema 里不存在的列上、覆盖被静默丢弃 |
+| `on each s` + `entity(<type>, s.event_id)` | `event_id` |
+
+**实体标识字段（`entity(...)` 的单字段）总是写**：INJ1/INJ2 比的是告警的 `entity_id`，不写它
+注入值就与告警对不上口径（该实体只能计入 `unasserted`——断言真空）；join-then-key 时它还是 join
+的驱动侧连接键，不写连配对都建不起来（hit 根本不开火）。
 
 - 显式给出时才用 `hit<sip: 500>`；显式值应与推断结果一致。
 - 显式与推断不一致 → `VN23`；字段不在该 stream 的 schema → `VN22`（都是**校验期**错误，
   §4.1）。注意多 key 规则的实体是 key 元组，显式写字段属于**消歧**用法，不算不一致。
+- 上表这些字段都**不能再写进 `use(...)` / `without(...)` / `join` 块**：生成器的键覆盖优先级
+  更高，写了是静默失效——由 VN12 拦下。
 
 ### 3.8 `without(...)`：否定步骤的构造约束
 
@@ -418,28 +429,33 @@ stream / 规则绑定 → `VN3` / `VN10` / `VN14`；字段与 schema → `VN11` 
 | VN9 | 同一 `use` 内重复字段 | `… has duplicate field '<f>' in use` |
 | VN10 | 注入用例的 stream 不在 `background` 中声明 | `injection case stream '<s>' is not declared in background` |
 | VN11 | `use` 字段不在该 stream 的 schema | `… field '<f>' not found in schema '<w>'` |
-| VN12 | `use` 重复了实体字段 | `… repeats entity field '<f>'` |
+| VN12 | `use` / `without` / join 块里写了**生成器书写的实体键字段**（规则键 ∪ 实体标识字段 ∪ join 驱动侧连接键，§3.7；生成器按实体 id 写这些字段，写在这里会被静默丢弃） | `… step N 的 use 里写了实体键字段 '<f>'…` |
 | VN14 | `for RULE` 指向的规则不在 `.wfl` | `… targets rule '<r>' not found in WFL files` |
 | VN17 | `use({...})` 顶层不是 object / object 数组（或记录不是 object、数组为空） | `… use({...}) 的顶层必须是 JSON object 或 object 数组` |
 | VN20 | 使用旧语法 `hit<N%>` / `with(N)` | 见 §5.1（**解析期**报错） |
 | VN21 | 实体个数为 0、`x 0`、或没有任何事件组 | `… 实体个数必须大于 0 / 第 k 个事件组 x 0 / 至少需要一个 use … x N 事件组` |
 | VN22 | 显式实体字段不在该 stream 的 schema | `… 实体字段 '<f>' 不在 stream '<s>' 的 schema '<w>' 里` |
 | VN23 | 显式实体字段与规则推断不一致（单 key `match` = 该 key；`on each` = `entity(...)` 的单字段） | `… 显式实体字段 '<f>' 与规则 '<r>' 推断的实体字段 '<g>' 不一致（去掉显式字段即用推断值；多 key 规则才需要显式消歧）` |
-| VN24 | `use` 事件组数 > 规则的事件步骤数（每个 `use ... x N` 对应一个步骤） | `… use 事件组数 2 超过规则 '<r>' 的事件步骤数 1（每个 `use ... x N` 对应一个步骤）` |
+| VN24 | `use` 事件组数 > 规则在**该 stream 上**的事件步骤数（每个 `use ... x N` 对应一个步骤；链式规则里绑在别的窗上的步骤不算） | `… use 事件组数 2 超过规则 '<r>' 的事件步骤数 1（每个 `use ... x N` 对应一个步骤）` |
 | VN25 | `spread` / `without ... within` / `replay` 文件跨度 超过 `#[duration]` | `spread 20m` / `第 1 个 without 的 within 20m` / `replay 文件 \`x.ndjson\` 的时间跨度 300 超过场景 duration 60s` |
-| VN26 | `replay` 文件为空，或文件里的时间字段口径不齐（部分记录有 / 没有） | `replay 文件 \`raw.ndjson\` 为空` / `… 时间字段 '_timestamp' 只在 1 / 3 条记录上出现（或不是合法时间戳）` |
-| VN27 | 场景的实体 id 总数 ≥ 2^24（用例之间靠分段保证实体值不重叠，而实体值按 24 位地址映射） | `injection 实体 id 总数 16777216 达到上限 16777216（…超出后用例之间的实体会重叠：hit 与 near_miss 会指向同一实体）` |
+| VN26 | `replay` 文件为空、时间字段口径不齐（部分记录有 / 没有）、或时间**非单调不减** | `replay 文件 \`raw.ndjson\` 为空` / `… 时间字段 '_timestamp' 只在 1 / 3 条记录上出现（或不是合法时间戳）` / `… 时间字段 '_timestamp' 不是单调不减：第 2 条（…）早于第 1 条（…）` |
+| VN27 | 场景的实体 id 总数 ≥ 2^24（用例之间靠分段保证实体值不重叠，而实体值按 24 位地址映射；**每个实体、每个键字段各占一个 id**） | `injection 实体 id 总数 16777216 达到上限 16777216（…超出后用例之间的实体会重叠：hit 与 near_miss 会指向同一实体）` |
 | VN29 | 场景注解键不在白名单（`#[...]` 只认 `duration`，`<...>` 只认 `seed`），或值类型不合法 | `注解键 'tick' 不支持：\`#[...]\` 只认 'duration'（tick / rows / emit 从未实现）` / `注解 'duration' 的值必须是时长字面量（如 \`10m\`），实际是数字` |
-| VN30 | `join <window> as <key>` 匹配不到规则的 join 子句（目标窗 / 右侧连接键 / 形态）或 `within` 区间不含左事件时间 | `… 的 \`join auction_events as wrong_key\` 匹配不到规则 'r' 的 join 子句（…）` / `… 的 \`join x\` 指向的规则 join 是 snapshot/asof/anti 形态，暂不支持（v1 只支持缺省 inner）` |
+| VN30 | `join <window> as <key>` 匹配不到规则的 join 子句（目标窗 / 右侧连接键），或形态不是生成器实现的两种（deferred = inner + `within` + `emit at`；snapshot = `snapshot` 且无 `within`） | `… 的 \`join auction_events as wrong_key\` 匹配不到规则 'r' 的 join 子句（…）` / `… 形成不支持：只支持 deferred（inner + \`within\` + \`emit at\`）与 snapshot（无 \`within\`）两种…` |
 | VN31 | `entity <window>.<field> zipf(...)`：目标窗 / 字段不存在或类型不可承载、参数越界、重复声明、与注入实体的**值域预算**超出 24 位空间 | `entity 分布的字段 'ok' 类型不支持（只支持 ip / digit / float / chars / hex）` / `entity 'src_ip' 的值域超出 24 位地址空间：注入实体 100 + 池 8388609 + 新值带 8388609 > 16777216（…）` |
 | VN32 | 重复书写 `background` / `inject` 块（两者是单例，**不合并**；旧行为是静默丢掉前一个块） | `VN32 \`background\` 块重复：一个场景只允许一个 \`background\`（两个块不会合并，此前是静默丢掉前一个块）。请把两个块的内容合并到同一个 \`background { … }\` 里。`（**解析期**报错） |
+| VN33 | 注入用例的 `stream` 不是目标规则的**绑定窗**（生成期映射不到任何事件步骤，此前只能到生成期才报） | `… 的 stream 窗口 '<w>' 不是规则 '<r>' 的任何事件绑定窗（binding windows: …）` |
+| VN35 | `use(...)` / `without(...)` / join 块里写了 schema 的**时间字段**（`time_field` 或 `_timestamp`）——会造出双时间轴：事件字段与 oracle/引擎读的列时间分叉 | `… 不能覆盖时间字段 '<f>'（时间由生成器按事件时间写入；覆盖会造成双时间轴）` |
+| VN34 | 同一个 `background` 里对**同一窗口**重复声明 `stream`（生成器各造一份：流量按速率之和叠加、两条流各有独立取值带） | `background 里重复声明了 stream '<s>'：同一窗口只能声明一次（…）；请合并成一条 \`gen <rate>\`` |
 | VN28 | 背景速率用了未实现的随时间形态 `wave(...)` / `burst(...)` / `timeline { ... }`（会按 `base=` 常量生成，与写法不符） | `stream 'auth_events': \`gen burst(...)\` 的随时间变化尚未实现（当前会按 \`base=\` 的常量速率生成，与写法不符）；请先改用常量速率 \`gen 100/s\`` |
 
 `without(...)` 的谓词与 `use(...)` 共用同一套字段检查：重名 VN9、不在 schema VN11、
 重复实体键 VN12（VN12 在这条路径上尤其重要——见 §3.8）。
 
-VN27 的计数口径与生成侧一致：`hit` / `near_miss` 每个实体占一个 id；`miss` 是「每个事件
-一个独立键」，故每个用例占 `实体个数 × ΣN`（这是 `miss` 能不成簇的前提，§4.2）。
+VN27 的计数口径与生成侧一致：**每个实体、每个键字段各占一个 id**（生成器用
+`entity_counter + i` 遍历键字段，§3.7），因此`hit` / `near_miss` 每个用例占
+`实体个数 × 键字段数`；`miss` 是「每个事件一个独立键」，再乘 `ΣN`（这是 `miss` 能不成簇的前提，
+§4.2）。少算键字段数会把 id 空间算大，溢出后用例之间的实体会重叠而无人报错。
 
 > 旧号（占比域、`expect` 规则存在性、`seq`/`not(...)` 步骤相关、`SC2/SC2a/SC3/SC4`、
 > `SV2/SV3/SV4/SV6/SV7/SV8`）随旧语法一起删除，不复用。
@@ -465,9 +481,13 @@ VN27 的计数口径与生成侧一致：`hit` / `near_miss` 每个实体占一�
   （Str 透传 / 数字整数不带 `.0` / 容器退化为 `[array]`、`[object]`）。
 - 失败**一次性汇总**报出（`WfgenReason::Generation`），每类最多列 5 条明细 + 同码总数，
   避免语料级失败（上万个实体）刷屏。
-- 断言覆盖不到的实体（`entity(...)` 不是单一字段、实体字段不在本次键覆盖里）会计入
-  `GenResult::unasserted_inject_entities`，由 `gen` 打一条 Warning 说明——不静默跳过。
-- `--no-expect` / `--no-wfl` / 无 `--out`（即不生成期望文件的场景）不做断言。
+- 断言覆盖不到的实体会计入 `GenResult::unasserted_inject_entities`（按**原因**分两列：
+  `composite_entity` = `entity(...)` 不是单字段；`missing_key_field` = 单字段但值没写进事件键），
+  由 `gen` 分别打 Warning——两类修法完全不同（改规则 vs 改键覆盖），合并成一个数字会指向错的修法。
+- `--no-expect` / `--no-wfl` / 无 `--out`（即不生成期望文件的场景）不做断言：此时必须**出声**
+  （注入照旧执行、数据照旧产出，但 hit/near_miss/miss 口径没有任何验证），不静默跳过。
+  同时删掉 `--out` 下上一次留下的 `*.except*.jsonl`：期望文件路径按用例名固定，陈旧的那份会让
+  下游 `wfgen verify` 拿旧期望比新数据（两侧都非空 → 看起来有证据）。
 - `miss` 的 `x N` 是"N 条各自独立键"，因此**实体数 = 用例头实体数 × Σ N**，比
   `hit`/`near_miss` 的口径大 N 倍（同一实体成簇就会报警，独立键是 `miss` 能构造出来的前提）。
 
@@ -563,6 +583,11 @@ wfg + wfs + wfl
 
 `wfgen gen` 在未 `--no-expect` / 未 `--no-wfl` 时会生成 `.except.jsonl` / `.except.meta.jsonl`
 （期望告警），`wfgen verify` 据此对拍。
+
+**对拍没有证据 ≠ 通过**：两侧都是 0 条时 `wfgen verify` 默认 `status=fail`（退出码非 0），报告里
+`empty=true` + `note` 说明“哪种无证据”（真实 0 条 / 期望全是中间管道输出被剔除）；确实想接受空输入
+就显式 `--allow-empty`（`wfl verify` 同名旗标）。`summary.expected_skipped_intermediate` 给出被剔除的
+中间管道输出条数——它是“期望为 0”与“期望被剔空”的分界线（§4.2 的 q15/q16 就属后者）。
 
 ## 7. 落地状态
 
@@ -700,7 +725,11 @@ wfg + wfs + wfl
    `replay` 事件以文件内最早时间戳为锚平移进该窗（同文件内相对间隔保持），锚点即**场景起点**。
 2. **事件时间优先**：文件记录里若有时间字段（`_timestamp` 或 schema 的 `time_field`），
    **用字段值**算锚点与间隔；同一个文件里“部分记录有时间字段” ⇒ **报错**（口径必须唯一）；
-   全都没有时间字段时，按序号在 `duration` 内均匀落下（与 `miss` 同策略，见 §3.5）。
+   时间值必须**单调不减**（同刻允许）⇒ 否则**报错**（`ensure_time_ordered`）：
+   记录按文件顺序发货，而下游（`merge_sorted_chunks` 的 k 路归并、oracle 的窗口推进、
+   引擎水位）全假定按时间有序——回退的记录会被当成“未来事件”，两侧窗口收口就此分叉。
+   不在这里重排（那是静默改用户数据）；全都没有时间字段时，按序号在 `duration` 内均匀落下
+   （与 `miss` 同策略，见 §3.5）。
 3. **断言豁免、但参与流**：`replay` 不对任何实体承诺"必须 / 不得报警"，但它的事件**必须**
    进期望的输入流——否则期望文件与引擎不一致（这正是 D 的问题）。
 4. **与 `inject` 可指同一 stream**：叠加是预期语义；叠加后若 replay 数据破坏了 hit /
@@ -851,7 +880,7 @@ q6 的 `match<seller:10m>` 里，**键 `seller` 不在驱动事件（bid）上�
 
 | 环节 | 做法 |
 |---|---|
-| 连接键 | 取规则 `on <left> == <right>` 的 **left（驱动侧）字段**值，写进驱动事件与右行的 `right` 字段——两侧因此指向同一实体（q6 的 `b.auction` ↔ `auction_events.id`） |
+| 连接键 | 取规则 `on <left> == <right>` 的 **left（驱动侧）字段**值，写进驱动事件与右行的 `right` 字段——两侧因此指向同一实体（q6 的 `b.auction` ↔ `auction_events.id`）。驱动侧那个字段由生成器**镜像**成实体标识值（`RuleStructure::mirror_join_keys`，不额外占实体 id）：两侧同值自动成立，用户不需要写 `use(<left>=…)` 去凑（写了反而被 VN12 拦下） |
 | join 侧键 | 驱动 schema 里没有的 match key（`seller`）**写到右行**上，按目标窗字段类型生成 |
 | 实体推断 | VN23 在 join-then-key 时不再拿 match 键当实体（那会误报不一致），改取规则 `entity(...)` |
 
@@ -859,6 +888,9 @@ join 侧键的值落在**与背景噪声分开的值带**（`1 << 22` 起）：�
 随机 24 位——不分开的话，注入实例会和背景事件并到同一条窗口实例上，`avg >= 200` 之类的阈值
 被背景稀释，断言随背景波动。**已知边界**：驱动实体值域超过 `1<<22`（> 420 万实体）时可能与
 实体段重叠（VN27 只守 `< 2^24`），此时该边界靠 INJ1 的可见失败暴露。
+
+右事件相对左事件的偏移由形态决定（deferred `0` / snapshot `-1ms`）；簇的**起点整体后移**这个
+提前量（`join_lead_secs`），以免首簇正好落在场景起点时、前挪的右行跑到 `#[start]` 之前。
 
 ### 9.6 落地清单
 
@@ -919,6 +951,21 @@ VN31 校验 `total_entity_ids + 2·pool ≤ 2^24`。少了这一步，背景噪�
   做实体没有意义）——其它类型报 VN31，不静默忽略。
 - 只作用于**背景**事件：`inject` / `replay` 的实体值仍由它们各自的机制决定。
 - 同一 `(窗口, 字段)` 重复声明报 VN31（避免"哪条生效"的歧义）。
+
+### 10.3.1 没声明池的字段：背景也必须避开注入键值（`ReservedKeyBands`）
+
+池是**显式声明**的手段；没声明池的字段（`digit` / `float`）依旧会撞上注入实体：注入键值取自 24 位
+空间**底部**（`entity_base + i`，小数字），而背景数字是 `0..100_000` 的均匀分布——背景事件偶尔会
+拿到某个注入实体的键值，规则便把那条背景事件算到该实体头上（阈值被噪声顶过、否定步骤被噪声
+满足），INJ2「near_miss / miss 必不报警」于是变成**概率性**的。
+
+生成器因此把这些字段的背景取值**下界抬到注入占用区间之上**（`ReservedKeyBands`，确定性平移而非
+重抽：值域整体右移，分布形状不变，也不会出现"抽不干净"的死角）。只对数值字段生效——`chars` /
+`hex` / `ip` 的随机值恰好落在注入值形如 `hit_auction_000123` / `10.0.0.123` 上的概率可忽略。
+
+> 实证：q5 语料原本的 near_miss「差 1 票」在某个窗口切片里与 hit **并列最高**，长期靠“背景 bids 偶然
+> 撞上注入键值、恰好给 hit 补 1 票”才能过；下界抬升后并列坐实，语料随之改成 `spread 0s`
+> （把簇压在同一时刻，票数不再随窗口切分变化）。见 `scenarios/q5_verify.wfg` 的关键写法 ①。
 
 ### 10.4 落地清单
 

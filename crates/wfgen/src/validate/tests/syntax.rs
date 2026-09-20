@@ -512,6 +512,103 @@ scenario s<seed=1> {
     );
 }
 
+/// VN12 也要覆盖 join 块的**驱动侧**实体键字段：生成器给右行先整份套上 `key_overrides`
+/// （= 驱动侧实体键字段 + 显式实体字段）再叠 `use(...)`，所以在 join 块里写这些字段同样会被
+/// 静默替换——此前只拦了右窗连接键。
+#[test]
+fn test_vn12_join_use_covers_driver_entity_key_fields() {
+    let rule = "
+rule p_joins_a {
+    events { p : person_events }
+    on each p -> score(10)
+    join auction_events within [p.timestamp, <bucket_end(p.timestamp, 5s)]
+        on p.id == auction_events.seller
+        emit at bucket_end(p.timestamp, 5s)
+    entity(digit, p.id)
+    yield alerts(id = p.id)
+}";
+    let schemas = vec![
+        make_schema(
+            "person_events",
+            vec![("id", BaseType::Digit), ("name", BaseType::Chars)],
+        ),
+        // `id` 同时是右窗的合法字段：否则旧实现会在 VN11（字段不在目标窗）就报错、
+        // 掩盖“驱动侧键字段被静默替换”这条（那才是本用例要钉的）。
+        make_schema(
+            "auction_events",
+            vec![("seller", BaseType::Digit), ("id", BaseType::Digit)],
+        ),
+    ];
+    let wfl = wf_lang::parse_wfl(rule).unwrap();
+
+    let input = r#"
+#[duration=10s]
+scenario s<seed=1> {
+    background { stream person_events gen 5/s }
+    inject {
+        hit<id: 2> for p_joins_a person_events {
+            use(name="x") x 1
+            join auction_events as seller { use(id=1) x 1 }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let errors = validate_wfg(&wfg, &schemas, std::slice::from_ref(&wfl), false);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.code == "VN12" && e.message.contains("'id'")),
+        "join 块里写驱动侧实体键字段 'id' 应报 VN12: {errors:?}"
+    );
+}
+
+/// VN34：同一个 `background` 里对**同一窗口**重复声明 `stream`——生成器会各造一份
+/// （流量按速率的**和**叠加、两条流各有独立取值带），此前重复本身静默生效。
+#[test]
+fn test_vn34_duplicate_background_stream_rejected() {
+    let input = r#"
+#[duration=10s]
+scenario s<seed=1> {
+    background {
+        stream auth_events gen 100/s
+        stream auth_events gen 80/s
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_schema("auth_events", vec![("sip", BaseType::Ip)])];
+    let errors = validate_wfg(&wfg, &schemas, &[], false);
+    let vn34: Vec<_> = errors.iter().filter(|e| e.code == "VN34").collect();
+    assert_eq!(vn34.len(), 1, "重复 stream 应只报一条 VN34：{errors:?}");
+    assert!(
+        vn34[0].message.contains("'auth_events'"),
+        "消息应点名窗口：{:?}",
+        vn34[0].message
+    );
+
+    // 放行对照：不同窗口各一条不报。
+    let ok = r#"
+#[duration=10s]
+scenario s<seed=1> {
+    background {
+        stream auth_events gen 100/s
+        stream fw_events gen 80/s
+    }
+}
+"#;
+    let wfg = parse_wfg(ok).unwrap();
+    let schemas = vec![
+        make_schema("auth_events", vec![("sip", BaseType::Ip)]),
+        make_schema("fw_events", vec![("sip", BaseType::Ip)]),
+    ];
+    let errors = validate_wfg(&wfg, &schemas, &[], false);
+    assert!(
+        !errors.iter().any(|e| e.code == "VN34"),
+        "不同窗口不应报 VN34：{errors:?}"
+    );
+}
+
 /// VN29：注解键白名单——`#[...]` 只认 `duration`，`<...>` 只认 `seed`。
 /// 注解列表是泛化解析的，其余键此前被**静默忽略**（文档里声明「未实现」的
 /// `tick` / `rows` / `emit` 正是这一类）。
@@ -874,11 +971,13 @@ scenario s<seed=1> {
     );
 }
 
-/// VN12 的**误报护栏**（join-then-key）：`match<seller>` 而 `entity(…, b.auction)` 时，
-/// 生成器覆盖的是规则 key `seller`，`entity(...)` 的 `auction` 并不在覆盖之列——
-/// 拿"推断的实体字段"当口径会把本来能生效的 `use(auction=…)` 误拒。
+/// VN12 口径：**实体标识字段**（`entity(...)` 的单字段）也属于“生成器书写”的字段。
+///
+/// 反向的历史护栏在这里：`match<seller>` 而 `entity(digit, b.auction)`（join-then-key）
+/// 时，生成器**也会**写 `auction`（它是告警 `entity_id` 的来源，不写就断言不到实体；
+/// 同时它还是 join 的驱动侧连接键）——所以 `use(auction=…)` 同样是静默失效。
 #[test]
-fn test_syntax_entity_field_not_in_rule_keys_is_allowed_in_use() {
+fn test_syntax_entity_field_not_in_rule_keys_is_rejected_in_use() {
     let input = r#"
 #[duration=10m]
 scenario s<seed=1> {
@@ -899,7 +998,7 @@ scenario s<seed=1> {
             ("price", BaseType::Digit),
         ],
     )];
-    // match<seller>（规则 key）+ entity(ip, b.auction)（实体字段）：两者不同
+    // match<seller>（规则 key）+ entity(digit, b.auction)（实体字段）：两者不同
     let wfl = make_wfl_match(
         "rule_j",
         vec![("b", "bid_events")],
@@ -908,8 +1007,8 @@ scenario s<seed=1> {
     );
     let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
     assert!(
-        !errors.iter().any(|e| e.code == "VN12"),
-        "entity(...) 字段不在规则 key 里时不该报 VN12（生成器不覆盖它）: {:?}",
+        errors.iter().any(|e| e.code == "VN12"),
+        "实体标识字段由生成器写入，use 里写它应当报 VN12: {:?}",
         errors
     );
 }
@@ -1715,5 +1814,256 @@ fn test_syntax_entity_id_budget_accumulates_across_cases() {
     assert!(
         two.iter().any(|e| e.starts_with("VN27")),
         "两个用例各占一半、合计触顶，必须报 VN27: {two:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// VN24（B8）：步数按「该用例 stream 上的有效步」算，不是规则的语法步数
+// ---------------------------------------------------------------------------
+
+/// 链式 match 的两个步骤绑在**不同窗**、用例只覆盖其中一个时，另一步骤落不进这条 stream
+/// 的 alias map，生成器为它合成不了 use-step——多写的第 2 组 `use` 找不到落点、被静默丢掉。
+/// VN24 只有按该 stream 上的有效步数（=1）判定，才拦得住这种「写了两组只生效一组」。
+#[test]
+fn test_vn24_counts_steps_on_case_stream_window_only() {
+    let rule = r#"rule probe_rule {
+    events {
+        a : auth_events
+        b : auction_events
+    }
+    match<sip : 1m> { on event seq { has a; has b; } }
+    -> score(1)
+    entity(ip, a.sip)
+    yield alerts()
+}"#;
+    let schemas = vec![
+        make_schema(
+            "auth_events",
+            vec![("sip", BaseType::Ip), ("retry", BaseType::Digit)],
+        ),
+        make_schema(
+            "auction_events",
+            vec![("sip", BaseType::Ip), ("price", BaseType::Digit)],
+        ),
+        make_schema("alerts", vec![]),
+    ];
+    let wfl = wf_lang::parse_wfl(rule).unwrap();
+
+    let probe = |groups: usize| {
+        let groups_src: String = (0..groups)
+            .map(|i| format!("            use(retry={i}) x 1\n"))
+            .collect();
+        let src = format!(
+            "#[duration=10m]\nscenario s<seed=1> {{\n    background {{ stream auth_events gen 100/s stream auction_events gen 100/s }}\n    inject {{\n        hit<sip: 5> for probe_rule auth_events {{\n{groups_src}        }}\n    }}\n}}\n"
+        );
+        let wfg = parse_wfg(&src).unwrap();
+        validate_wfg(&wfg, &schemas, std::slice::from_ref(&wfl), false)
+            .into_iter()
+            .any(|e| e.code == "VN24")
+    };
+
+    assert!(!probe(1), "1 组 = 该 stream 上 1 个有效步，不该报 VN24");
+    assert!(
+        probe(2),
+        "2 组超过该 stream 上的有效步数 1（第 2 步绑在 auction_events 上、本用例覆盖不到），必须报 VN24"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// VN33：用例 stream 必须是目标规则的绑定窗
+// ---------------------------------------------------------------------------
+
+/// 造一个「`for probe_rule <stream>` + 单组 use」的场景，返回错误码集合。
+/// background 同时声明两个窗，便于用「声明了但没绑」的窗当反例。
+fn vn33_probe(schemas: &[WindowSchema], rule_src: &str, stream: &str, field: &str) -> Vec<String> {
+    let src = format!(
+        "#[duration=10m]\nscenario s<seed=1> {{\n    background {{ stream auth_events gen 100/s stream auction_events gen 100/s }}\n    inject {{\n        hit<sip: 5> for probe_rule {stream} {{\n            use({field}=1) x 1\n        }}\n    }}\n}}\n"
+    );
+    let wfg = parse_wfg(&src).unwrap();
+    let wfl = wf_lang::parse_wfl(rule_src).unwrap();
+    validate_wfg(&wfg, schemas, std::slice::from_ref(&wfl), false)
+        .into_iter()
+        .map(|e| e.code.to_string())
+        .collect()
+}
+
+/// 窗口对不上时生成器 `build_alias_map_for_syntax_case` 找不到可映射的 bind，用例造的事件
+/// 无处可放——此前只在生成期报错，VN33 把它提前到校验期。
+#[test]
+fn test_vn33_case_stream_must_be_rule_binding_window() {
+    let schemas = vec![
+        make_schema(
+            "auth_events",
+            vec![("sip", BaseType::Ip), ("retry", BaseType::Digit)],
+        ),
+        make_schema(
+            "auction_events",
+            vec![("sip", BaseType::Ip), ("price", BaseType::Digit)],
+        ),
+        make_schema("alerts", vec![]),
+    ];
+
+    let match_rule = r#"rule probe_rule {
+    events { a : auth_events }
+    match<sip : 1m> { on event { a | count >= 1; } }
+    -> score(1)
+    entity(ip, a.sip)
+    yield alerts()
+}"#;
+    let ok = vn33_probe(&schemas, match_rule, "auth_events", "retry");
+    assert!(
+        !ok.iter().any(|code| code == "VN33"),
+        "auth_events 是规则的绑定窗，不该报 VN33: {ok:?}"
+    );
+    // 反例：auction_events 在 background 里声明了，但规则只绑 auth_events。
+    let bad = vn33_probe(&schemas, match_rule, "auction_events", "price");
+    assert!(
+        bad.iter().any(|code| code == "VN33"),
+        "auction_events 不是绑定窗，必须报 VN33: {bad:?}"
+    );
+
+    // `on each` 形态：绑定窗来自 `rule.each_clause` 的别名，同样要判。
+    let each_rule = r#"rule probe_rule {
+    events { e : auth_events }
+    on each e -> score(1)
+    entity(ip, e.sip)
+    yield alerts()
+}"#;
+    let each_ok = vn33_probe(&schemas, each_rule, "auth_events", "retry");
+    assert!(
+        !each_ok.iter().any(|code| code == "VN33"),
+        "on each 的绑定窗应放行: {each_ok:?}"
+    );
+    let each_bad = vn33_probe(&schemas, each_rule, "auction_events", "price");
+    assert!(
+        each_bad.iter().any(|code| code == "VN33"),
+        "on each 规则不绑 auction_events，必须报 VN33: {each_bad:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// VN35：use/without/join 里不能写 schema 的时间字段（双时间轴）
+// ---------------------------------------------------------------------------
+
+/// 带 `time_field` 的 schema（默认 helper 的 time_field 是 `None`）。
+fn schema_with_time_field(
+    name: &str,
+    fields: Vec<(&str, BaseType)>,
+    time_field: &str,
+) -> WindowSchema {
+    let mut schema = make_schema(name, fields);
+    schema.time_field = Some(time_field.to_string());
+    schema
+}
+
+/// 造一个带 `body`（use / without 片段）的场景，返回错误码集合。
+fn vn35_probe(schemas: &[WindowSchema], rule_src: &str, body: &str) -> Vec<String> {
+    let src = format!(
+        "#[duration=10m]\nscenario s<seed=1> {{\n    background {{ stream auth_events gen 100/s }}\n    inject {{\n        hit<sip: 5> for probe_rule auth_events {{\n{body}        }}\n    }}\n}}\n"
+    );
+    let wfg = parse_wfg(&src).unwrap();
+    let wfl = wf_lang::parse_wfl(rule_src).unwrap();
+    validate_wfg(&wfg, schemas, std::slice::from_ref(&wfl), false)
+        .into_iter()
+        .map(|e| e.code.to_string())
+        .collect()
+}
+
+/// 时间字段由生成器按事件时间写入（oracle 用 `GenEvent.timestamp`、引擎按 schema 的
+/// `time_field` 读列时间），用例再覆盖就等于两套时间轴各自走，结果静默不一致。
+#[test]
+fn test_vn35_time_field_not_overridable() {
+    let rule = r#"rule probe_rule {
+    events { a : auth_events }
+    match<sip : 1m> { on event { a | count >= 1; } }
+    -> score(1)
+    entity(ip, a.sip)
+    yield alerts()
+}"#;
+    let schemas = vec![
+        schema_with_time_field(
+            "auth_events",
+            vec![
+                ("sip", BaseType::Ip),
+                ("dateTime", BaseType::Digit),
+                ("retry", BaseType::Digit),
+            ],
+            "dateTime",
+        ),
+        make_schema("alerts", vec![]),
+    ];
+
+    let overridden = vn35_probe(&schemas, rule, "            use(dateTime=123) x 1\n");
+    assert!(
+        overridden.iter().any(|code| code == "VN35"),
+        "use 覆盖 schema 的时间字段必须报 VN35: {overridden:?}"
+    );
+
+    let normal = vn35_probe(&schemas, rule, "            use(retry=1) x 1\n");
+    assert!(
+        !normal.iter().any(|code| code == "VN35"),
+        "普通字段不该报 VN35: {normal:?}"
+    );
+
+    // `without(...)` 走同一个检查函数（join 块亦然）。
+    let without = vn35_probe(
+        &schemas,
+        rule,
+        "            use(retry=1) x 1\n            without(dateTime=1)\n",
+    );
+    assert!(
+        without.iter().any(|code| code == "VN35"),
+        "without 覆盖时间字段必须报 VN35: {without:?}"
+    );
+
+    // 内部键 `_timestamp` 同罪：它是 JSONL 的时间来源，不能当普通字段覆盖。
+    let internal = vn35_probe(&schemas, rule, "            use(_timestamp=1) x 1\n");
+    assert!(
+        internal.iter().any(|code| code == "VN35"),
+        "内部键 _timestamp 必须报 VN35: {internal:?}"
+    );
+}
+
+/// `join ... { use(...) }` 走同一个 `check_predicate_fields`（schema 是**右窗**的）：
+/// 右窗的时间字段同样不能覆盖。
+#[test]
+fn test_vn35_join_use_time_field_rejected() {
+    let rule = "
+rule p_joins_a {
+    events { p : person_events }
+    on each p -> score(10)
+    join auction_events within [p.timestamp, <bucket_end(p.timestamp, 5s)] on p.id == auction_events.seller emit at bucket_end(p.timestamp, 5s)
+    entity(digit, p.id)
+    yield alerts(id = p.id)
+}";
+    let schemas = vec![
+        schema_with_time_field("person_events", vec![("id", BaseType::Digit)], "timestamp"),
+        schema_with_time_field(
+            "auction_events",
+            vec![("seller", BaseType::Digit), ("ts", BaseType::Digit)],
+            "ts",
+        ),
+    ];
+    let src = r#"
+#[duration=10s]
+scenario s<seed=1> {
+    background { stream person_events gen 5/s }
+    inject {
+        hit<id: 2> for p_joins_a person_events {
+            use(id=1) x 1
+            join auction_events as seller { use(ts=1) x 1 }
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(src).unwrap();
+    let wfl = wf_lang::parse_wfl(rule).unwrap();
+    let codes: Vec<String> = validate_wfg(&wfg, &schemas, std::slice::from_ref(&wfl), false)
+        .into_iter()
+        .map(|e| e.code.to_string())
+        .collect();
+    assert!(
+        codes.iter().any(|code| code == "VN35"),
+        "join 块写右窗时间字段必须报 VN35: {codes:?}"
     );
 }

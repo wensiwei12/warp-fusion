@@ -1,5 +1,5 @@
 use crate::oracle::OracleAlert;
-use crate::verify::{ActualAlert, verify};
+use crate::verify::{ActualAlert, EmptyPolicy, verify};
 
 #[test]
 fn exact_match_passes() {
@@ -23,7 +23,7 @@ fn exact_match_passes() {
         fired_at: "2024-01-01T00:05:00Z".to_string(),
     }];
 
-    let report = verify(&expected, &actual, 0.01, 1.0);
+    let report = verify(&expected, &actual, 0.01, 1.0, EmptyPolicy::Deny);
     assert_eq!(report.status, "pass");
     assert_eq!(report.summary.matched, 1);
     assert_eq!(report.summary.missing, 0);
@@ -46,7 +46,7 @@ fn missing_alert_fails() {
 
     let actual = vec![];
 
-    let report = verify(&expected, &actual, 0.01, 1.0);
+    let report = verify(&expected, &actual, 0.01, 1.0, EmptyPolicy::Deny);
     assert_eq!(report.status, "fail");
     assert_eq!(report.summary.missing, 1);
 }
@@ -64,7 +64,7 @@ fn unexpected_alert_fails() {
         fired_at: "2024-01-01T00:05:00Z".to_string(),
     }];
 
-    let report = verify(&expected, &actual, 0.01, 1.0);
+    let report = verify(&expected, &actual, 0.01, 1.0, EmptyPolicy::Deny);
     assert_eq!(report.status, "fail");
     assert_eq!(report.summary.unexpected, 1);
 }
@@ -91,7 +91,7 @@ fn score_mismatch_fails() {
         fired_at: "2024-01-01T00:05:00Z".to_string(),
     }];
 
-    let report = verify(&expected, &actual, 0.01, 1.0);
+    let report = verify(&expected, &actual, 0.01, 1.0, EmptyPolicy::Deny);
     assert_eq!(report.status, "fail");
     assert_eq!(report.summary.field_mismatch, 1);
 }
@@ -118,16 +118,78 @@ fn score_within_tolerance_passes() {
         fired_at: "2024-01-01T00:05:00Z".to_string(),
     }];
 
-    let report = verify(&expected, &actual, 0.01, 1.0);
+    let report = verify(&expected, &actual, 0.01, 1.0, EmptyPolicy::Deny);
     assert_eq!(report.status, "pass");
     assert_eq!(report.summary.matched, 1);
 }
 
+/// 空对空**不是**通过：两侧都没有可比对的告警 ⇒ 这次对拍没有证据。
+///
+/// 历史实现按「missing == 0 && unexpected == 0 && field_mismatch == 0」判 pass，
+/// 于是「期望生成/断言根本没跑」也报 pass（q15/q16 的“注入断言空转”就是靠这条
+/// 静默通过的）。现在默认 fail，要放行得显式 `--allow-empty`。
 #[test]
-fn empty_both_passes() {
-    let report = verify(&[], &[], 0.01, 1.0);
-    assert_eq!(report.status, "pass");
+fn empty_both_is_not_a_pass_by_default() {
+    let report = verify(&[], &[], 0.01, 1.0, EmptyPolicy::Deny);
+    assert_eq!(report.status, "fail");
+    assert!(report.empty);
     assert_eq!(report.summary.matched, 0);
+    let note = report.note.as_deref().expect("无证据必须给出说明");
+    assert!(note.contains("no evidence"), "note: {note}");
+    assert!(note.contains("--allow-empty"), "note: {note}");
+}
+
+#[test]
+fn empty_both_passes_with_allow_empty() {
+    let report = verify(&[], &[], 0.01, 1.0, EmptyPolicy::Allow);
+    assert_eq!(report.status, "pass");
+    assert!(report.empty);
+    let note = report.note.as_deref().expect("放行也要留痕");
+    assert!(note.contains("--allow-empty"), "note: {note}");
+}
+
+/// 「期望全是中间管道输出」同样是无证据——而且要说清是哪种无证据
+/// （真实 0 条 vs 全被剔除，诊断上完全不同）。
+#[test]
+fn empty_because_all_expected_are_intermediate_is_not_a_pass() {
+    let expected = vec![OracleAlert {
+        rule_name: "q4a".to_string(),
+        score: 20.0,
+        entity_type: "digit".to_string(),
+        entity_id: "7".to_string(),
+        origin: "event".to_string(),
+        emit_time: "2024-01-01T00:05:00Z".to_string(),
+        fields: vec![],
+        intermediate: true,
+    }];
+
+    let report = verify(&expected, &[], 0.01, 1.0, EmptyPolicy::Deny);
+    assert_eq!(report.status, "fail");
+    assert!(report.empty);
+    assert_eq!(report.summary.expected_total, 0);
+    assert_eq!(report.summary.expected_skipped_intermediate, 1);
+    let note = report.note.as_deref().expect("无证据必须给出说明");
+    assert!(note.contains("intermediate"), "note: {note}");
+}
+
+/// 一侧有证据就不算空：期望为空 + 实际有告警是**真**失败（unexpected），
+/// 不能被“空输入”的宽松口径吞掉。
+#[test]
+fn actual_only_is_a_real_failure_not_empty() {
+    let actual = vec![ActualAlert {
+        rule_name: "r1".to_string(),
+        score: 85.0,
+        entity_type: "ip".to_string(),
+        entity_id: "10.0.0.2".to_string(),
+        origin: "event".to_string(),
+        fired_at: "2024-01-01T00:05:00Z".to_string(),
+    }];
+
+    let report = verify(&[], &actual, 0.01, 1.0, EmptyPolicy::Allow);
+    assert_eq!(report.status, "fail");
+    assert!(!report.empty);
+    assert_eq!(report.summary.unexpected, 1);
+    assert!(report.note.is_none());
 }
 
 #[test]
@@ -143,7 +205,7 @@ fn missing_alert_has_details() {
         intermediate: false,
     }];
 
-    let report = verify(&expected, &[], 0.01, 1.0);
+    let report = verify(&expected, &[], 0.01, 1.0, EmptyPolicy::Deny);
     assert_eq!(report.missing_details.len(), 1);
     assert_eq!(report.missing_details[0].rule_name, "r1");
     assert_eq!(report.missing_details[0].entity_id, "10.0.0.1");
@@ -160,7 +222,7 @@ fn unexpected_alert_has_details() {
         fired_at: "2024-01-01T00:05:00Z".to_string(),
     }];
 
-    let report = verify(&[], &actual, 0.01, 1.0);
+    let report = verify(&[], &actual, 0.01, 1.0, EmptyPolicy::Deny);
     assert_eq!(report.unexpected_details.len(), 1);
     assert_eq!(report.unexpected_details[0].entity_id, "10.0.0.2");
 }
@@ -187,7 +249,7 @@ fn score_mismatch_has_details() {
         fired_at: "2024-01-01T00:05:00Z".to_string(),
     }];
 
-    let report = verify(&expected, &actual, 0.01, 1.0);
+    let report = verify(&expected, &actual, 0.01, 1.0, EmptyPolicy::Deny);
     assert_eq!(report.mismatch_details.len(), 1);
     assert_eq!(report.mismatch_details[0].expected_score, 85.0);
     assert_eq!(report.mismatch_details[0].actual_score, 50.0);
@@ -215,7 +277,7 @@ fn test_markdown_report_format() {
         fired_at: "2024-01-01T00:05:00Z".to_string(),
     }];
 
-    let report = verify(&expected, &actual, 0.01, 1.0);
+    let report = verify(&expected, &actual, 0.01, 1.0, EmptyPolicy::Deny);
     let md = report.to_markdown();
 
     assert!(md.contains("## wfgen Verify Report"), "should have header");
@@ -236,10 +298,11 @@ fn test_markdown_report_format() {
 
 #[test]
 fn test_markdown_pass_report() {
-    let report = verify(&[], &[], 0.01, 1.0);
+    let report = verify(&[], &[], 0.01, 1.0, EmptyPolicy::Allow);
     let md = report.to_markdown();
 
     assert!(md.contains("**Status**: PASS"));
+    assert!(md.contains("**Note**:"), "空通过必须留痕");
     // No details sections for pass
     assert!(!md.contains("### Missing"));
     assert!(!md.contains("### Unexpected"));
@@ -269,13 +332,13 @@ fn time_mismatch_beyond_tolerance_fails() {
     }];
 
     // With 1s tolerance → mismatch
-    let report = verify(&expected, &actual, 0.01, 1.0);
+    let report = verify(&expected, &actual, 0.01, 1.0, EmptyPolicy::Deny);
     assert_eq!(report.status, "fail");
     assert_eq!(report.summary.field_mismatch, 1);
     assert_eq!(report.summary.matched, 0);
 
     // With 10s tolerance → pass
-    let report = verify(&expected, &actual, 0.01, 10.0);
+    let report = verify(&expected, &actual, 0.01, 10.0, EmptyPolicy::Deny);
     assert_eq!(report.status, "pass");
     assert_eq!(report.summary.matched, 1);
 }
@@ -313,7 +376,7 @@ fn hot_group_matching_stays_fast_and_correct() {
         })
         .collect();
 
-    let report = verify(&expected, &actual, 0.01, 1.0);
+    let report = verify(&expected, &actual, 0.01, 1.0, EmptyPolicy::Deny);
     assert_eq!(report.summary.expected_total, N);
     assert_eq!(report.summary.matched, N, "同分布的两侧应逐条配上");
     assert_eq!(report.summary.missing + report.summary.unexpected, 0);

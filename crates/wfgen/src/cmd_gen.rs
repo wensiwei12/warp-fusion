@@ -166,6 +166,13 @@ pub async fn run(args: Args) -> WfgenResult<()> {
     // 此时 WFL 编译失败必须致命，否则会写出错误的期望。
     let expected_requested = !skip_wfl && !no_expect;
 
+    // 注入用例存在与否（用于「INJ 断言未运行」的警告：`--no-expect` 会连断言一起关掉）。
+    let has_inject_cases = wfg
+        .syntax
+        .as_ref()
+        .and_then(|syntax| syntax.injection.as_ref())
+        .is_some_and(|injection| !injection.cases.is_empty());
+
     // Compile WFL rules. Skipped entirely by `--no-wfl`; `--no-expect` still
     // compiles so injection-aware generation works, and only expected
     // output is suppressed. `rule_plans` stays empty only under `--no-wfl`,
@@ -245,11 +252,23 @@ pub async fn run(args: Args) -> WfgenResult<()> {
         if asserted > 0 {
             println!("Inject assert: {asserted} entities match their hit/near_miss/miss mode");
         }
-        if result.unasserted_inject_entities > 0 {
+        // `unasserted` 按原因分列报：两类问题的修法完全不同（改规则 vs 改键覆盖），
+        // 合成一个数字再写一句笼统的警告，会把人指向错的地方。
+        let unasserted = &result.unasserted_inject_entities;
+        if unasserted.composite_entity > 0 {
             eprintln!(
-                "Warning: {} inject entities skipped by the mode assertion \
-                 (entity(...) is not a single field, so it cannot be matched against entity_id)",
-                result.unasserted_inject_entities
+                "Warning: {} inject entities 的 `entity(...)` 不是单字段表达式（实体标识是复合值），\
+                 与告警 `entity_id` 对不上口径，未参与 INJ1/INJ2 断言；\
+                 把规则写成 `entity(<type>, <单字段>)` 就能被断言覆盖",
+                unasserted.composite_entity
+            );
+        }
+        if unasserted.missing_key_field > 0 {
+            eprintln!(
+                "Warning: {} inject entities 的实体字段没有被写进事件键（生成器的 key_overrides 里没有它），\
+                 数据里根本没有这个值，未参与 INJ1/INJ2 断言；\
+                 对该字段写 `use(...)` 或在用例头显式指定实体字段",
+                unasserted.missing_key_field
             );
         }
 
@@ -273,6 +292,30 @@ pub async fn run(args: Args) -> WfgenResult<()> {
         std::fs::write(&meta_file, meta_json)
             .source_err(WfgenReason::Io, format!("writing {}", meta_file.display()))?;
         println!("Expected meta -> {}", meta_file.display());
+    } else if let Some(out) = out.as_ref() {
+        // 这次**没有**生成期望（`--no-expect` / `--no-wfl` / 没有规则计划），但
+        // `--out` 下可能留着上一次的产物。期望文件的路径是按用例名固定的，下游
+        // `wfgen verify --expected <out>/<case>.except.jsonl` 会拿**旧期望**去比新数据
+        // ——两侧都非空，于是静默给出一个看起来有证据、实际对错了版本的结论。
+        // 删掉它们，让缺证据暴露成“文件不存在”。
+        remove_stale_expectation_files(out, &output_case);
+    }
+
+    // `--no-expect` 会把 INJ1/INJ2 一并关掉（断言用到的 oracle 结果就是期望）：
+    // 注入照旧执行、数据照旧产出，但 hit/near_miss/miss 的口径**没有任何验证**。
+    // 这件事必须说出来，否则 `--no-expect` 看起来只是“不写期望文件”。
+    if !expected_enabled && !skip_wfl && has_inject_cases {
+        let why = if no_expect {
+            "--no-expect 关掉了期望输出（注入断言靠的就是它）"
+        } else if out.is_none() {
+            "没有 --out，期望无处可写"
+        } else {
+            "本次没有产出任何规则计划（WFL 未编译出规则）"
+        };
+        eprintln!(
+            "Warning: INJ1/INJ2 注入断言未运行：{why}；\
+             注入事件的 hit/near_miss/miss 口径这次没有被验证过"
+        );
     }
 
     // Apply faults (after oracle, on clean events)
@@ -322,6 +365,13 @@ pub async fn run(args: Args) -> WfgenResult<()> {
             faulted_expected.alerts.len(),
             faulted_expected_file.display()
         );
+    } else if expected_enabled
+        && !has_faults
+        && let Some(out) = out.as_ref()
+    {
+        // 本次场景没有 faults → 不会写 `.faulted-except.jsonl`；上一轮 faults 留下的那份
+        // 与本次的干净期望语义不同，留着会被下游当成配对结果误用。
+        remove_stale_file(&out.join(format!("{}.faulted-except.jsonl", output_case)));
     }
 
     // Write output
@@ -360,6 +410,34 @@ pub async fn run(args: Args) -> WfgenResult<()> {
     }
 
     Ok(())
+}
+
+/// 期望 sidecar 的文件名后缀（写入/删除两侧共用一份口径，避免改一边漏一边）。
+const EXPECTATION_SUFFIXES: [&str; 3] = [
+    ".except.jsonl",
+    ".except.meta.jsonl",
+    ".faulted-except.jsonl",
+];
+
+/// 删除 `--out` 下本次没有生成的期望 sidecar（见调用点注释：陈旧期望会让
+/// `wfgen verify` 对着上一版数据给出一个“看起来有证据”的结论）。
+fn remove_stale_expectation_files(out: &std::path::Path, output_case: &str) {
+    for suffix in EXPECTATION_SUFFIXES {
+        remove_stale_file(&out.join(format!("{output_case}{suffix}")));
+    }
+}
+
+/// 删掉一个文件；不存在、或删不掉（权限等）都不算致命——但删不掉要出声，
+/// 因为它意味着下游可能拿到陈旧文件。
+fn remove_stale_file(path: &std::path::Path) {
+    match std::fs::remove_file(path) {
+        Ok(()) => eprintln!("Removed stale expectation file {}", path.display()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => eprintln!(
+            "Warning: cannot remove stale expectation file {}: {err}",
+            path.display()
+        ),
+    }
 }
 
 #[cfg(test)]

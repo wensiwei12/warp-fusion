@@ -238,6 +238,8 @@ FAIL_THRESHOLD = "3"
         &actual,
         tolerances.score_tolerance,
         tolerances.time_tolerance_secs,
+        // 与 CLI 默认同口径：空对空不算通过。
+        wfgen::verify::EmptyPolicy::Deny,
     );
     let report_md = report.to_markdown();
     let report_path = artifact_dir.join("verify_report.md");

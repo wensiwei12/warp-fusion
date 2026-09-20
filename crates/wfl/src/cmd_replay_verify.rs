@@ -8,7 +8,7 @@ use crate::error::{self, WflReason, WflResult, WflStructExt};
 use wf_config::ConfigVarContext;
 use wfgen::oracle::OracleTolerances;
 use wfgen::output::jsonl::read_oracle_jsonl;
-use wfgen::verify::{ActualAlert, verify};
+use wfgen::verify::{ActualAlert, EmptyPolicy, verify};
 
 const GREEN: &str = "\x1b[1;32m";
 const RED: &str = "\x1b[1;31m";
@@ -28,6 +28,7 @@ pub fn run(
     time_tolerance: Option<f64>,
     meta: Option<PathBuf>,
     format: String,
+    allow_empty: bool,
 ) -> WflResult<()> {
     use wf_config::project::{load_schemas, parse_vars};
 
@@ -87,6 +88,11 @@ pub fn run(
         &actual,
         effective_score_tol,
         effective_time_tol,
+        if allow_empty {
+            EmptyPolicy::Allow
+        } else {
+            EmptyPolicy::Deny
+        },
     );
 
     eprintln!("---");

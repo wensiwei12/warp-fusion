@@ -225,3 +225,47 @@ scenario no_inject<seed=1> {
     let mut wfg = parse_wfg(source).expect("parse");
     resolve_inject_files(&mut wfg, Path::new("/nonexistent/scenario.wfg")).unwrap();
 }
+
+/// `join` 块里的 `use from` 同样要解析：此前只遍历主事件组，join 块里的值来源带着
+/// `File` 活到生成期才报「尚未解析为内联 JSON」（`lint` 说 OK、`gen` 失败）。
+#[test]
+fn join_group_use_from_file_is_resolved() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("vals.json");
+    std::fs::write(&file, r#"{"seller": 7}"#).unwrap();
+
+    let source = format!(
+        r#"
+#[duration=10s]
+scenario join_use_from_probe<seed=42> {{
+  background {{
+    stream bid_events gen 10/s
+  }}
+  inject {{
+    hit<auction: 1> for some_rule bid_events {{
+      use(price=1) x 1
+      join auction_events as id {{ use from "{}" x 2 }}
+    }}
+  }}
+}}
+"#,
+        file.display()
+    );
+    let mut wfg = parse_wfg(&source).expect("parse wfg");
+    resolve_inject_files(&mut wfg, &dir.path().join("scenario.wfg")).unwrap();
+
+    let join_group = &wfg
+        .syntax
+        .as_ref()
+        .and_then(|syntax| syntax.injection.as_ref())
+        .expect("injection block")
+        .cases[0]
+        .joins[0]
+        .groups[0];
+    match &join_group.source {
+        ValueSource::Json(serde_json::Value::Object(map)) => {
+            assert_eq!(map.get("seller"), Some(&serde_json::json!(7)));
+        }
+        other => panic!("join 块的 use from 应被内联成 object，实际 {other:?}"),
+    }
+}

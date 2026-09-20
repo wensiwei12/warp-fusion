@@ -17,19 +17,19 @@ use wf_lang::plan::RulePlan;
 
 use crate::error::{self, WfgenReason, WfgenResult};
 use crate::wfg_ast::{EntityDistStmt, WfgFile};
-use inject_gen::InjectEntityKey;
 use inject_gen::generate_inject_events;
+use inject_gen::{InjectEntityKey, UnassertedEntities};
 use inject_gen::{InjectGenResult, WithoutGuard};
 use replay_gen::generate_replay_events;
-use stream_gen::{EntityPool, GenEvent, generate_stream_events};
+use stream_gen::{EntityPool, GenEvent, ReservedKeyBands, generate_stream_events};
 
 /// Result of data generation.
 pub struct GenResult {
     pub events: Vec<GenEvent>,
     /// 注入实体清单（生成期断言 INJ1/INJ2 的输入，设计 §4.2）；无注入用例时为空。
     pub inject_entities: Vec<InjectEntityKey>,
-    /// 实体标识无法与 oracle `entity_id` 对齐、未纳入断言的实体个数。
-    pub unasserted_inject_entities: u64,
+    /// 实体标识无法与 oracle `entity_id` 对齐、未纳入断言的实体个数（按原因分列）。
+    pub unasserted_inject_entities: UnassertedEntities,
 }
 
 /// Generate events from a parsed and validated `.wfg` scenario.
@@ -62,7 +62,7 @@ pub fn generate(
     // --- Inject generation (if applicable) ---
     let mut sorted_chunks: Vec<Vec<GenEvent>> = Vec::new();
     let mut inject_entities: Vec<InjectEntityKey> = Vec::new();
-    let mut unasserted_inject_entities = 0_u64;
+    let mut unasserted_inject_entities = UnassertedEntities::default();
     let mut without_guards: Vec<WithoutGuard> = Vec::new();
 
     // `entity <window>.<field> zipf(...)` 声明（设计 §10）。
@@ -78,15 +78,19 @@ pub fn generate(
         .and_then(|syntax| syntax.injection.as_ref())
         .is_some_and(|injection| !injection.cases.is_empty());
     let has_inject = has_syntax_inject && !rule_plans.is_empty();
+    // 背景必须避开的注入键值域（没有注入用例时为空，背景行为完全不变）。
+    let mut reserved_keys = ReservedKeyBands::default();
     if has_inject {
         let InjectGenResult {
             events: mut inject_events,
             entity_keys,
             unasserted_entities,
+            reserved_bands,
             without_guards: guards,
         } = generate_inject_events(wfg, rule_plans, schemas, &start, &duration, &mut rng)?;
         inject_entities = entity_keys;
         unasserted_inject_entities = unasserted_entities;
+        reserved_keys = reserved_bands;
         without_guards = guards;
         inject_events.sort_by_key(|a| a.timestamp);
         if !inject_events.is_empty() {
@@ -187,7 +191,14 @@ pub fn generate(
             })
             .collect();
         let events = generate_stream_events(
-            stream, schema, &pools, bg_count, &start, &duration, &mut rng,
+            stream,
+            schema,
+            &pools,
+            bg_count,
+            &start,
+            &duration,
+            &mut rng,
+            &reserved_keys,
         );
         let events = suppress_without_guards(events, &without_guards);
         if !events.is_empty() {

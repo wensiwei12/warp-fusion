@@ -119,6 +119,13 @@ enum Commands {
         /// Output format: "json" or "markdown" (default: markdown)
         #[arg(long, default_value = "markdown")]
         format: String,
+
+        /// Accept a comparison with no evidence (both sides empty) as a pass.
+        ///
+        /// Without this flag an empty-on-both-sides comparison fails: 两侧都是 0 条
+        /// 说明期望或回报根本没生成，不是“对拍通过”。
+        #[arg(long)]
+        allow_empty: bool,
     },
 
     /// Run contract tests against compiled rules
@@ -250,6 +257,7 @@ fn run_cli() -> WflResult<()> {
             time_tolerance,
             meta,
             format,
+            allow_empty,
         } => {
             wfl::cmd_replay_verify::run(
                 file,
@@ -263,6 +271,7 @@ fn run_cli() -> WflResult<()> {
                 time_tolerance,
                 meta,
                 format,
+                allow_empty,
             )?;
         }
 

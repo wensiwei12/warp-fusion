@@ -75,6 +75,18 @@ fn generate_cluster_events_with_filter_validation(
         validate_filter_conflicts,
     )?;
 
+    // join 右行要相对左事件**前挪**才能在驱动事件处理时可见（`SNAPSHOT_LEAD_NANOS`）。
+    // 首簇的左事件正好落在场景起点时（`uniform_cluster_start` 的首个偏移 = 0），前挪后
+    // 右行会跑到 `#[start]` **之前**：超出场景时间窗——oracle 与引擎的窗口/水位都从 start
+    // 起算，边界外的行是另一回事。整簇统一后移这个提前量：簇内相对关系（含右行在左行之前）
+    // 完全不变，只是不再压着场景边界；窗长相应缩短，保证簇尾仍在 [start, start+duration] 内。
+    let join_lead = join_lead_secs(rule_joins);
+    let (cluster_start_secs, window_secs) = if join_lead > 0.0 && window_secs > join_lead {
+        (cluster_start_secs + join_lead, window_secs - join_lead)
+    } else {
+        (cluster_start_secs, window_secs)
+    };
+
     // Track cumulative time offset across steps for multi-step ordering
     let mut cumulative_offset = 0.0;
     let per_step_window = if steps.len() > 1 {
@@ -143,6 +155,16 @@ fn generate_cluster_events_with_filter_validation(
     Ok(())
 }
 
+/// join 右行需要相对左事件**前挪**的最大时长（秒）：只有 snapshot 形态会前挪
+/// （`SNAPSHOT_LEAD_NANOS`），deferred 是同刻（偏移 0）。注入事件的时间轴据此
+/// 整体后移，避免右行被前挪到场景起点之前（详见 `generate_cluster_events_with_filter_validation`）。
+pub(crate) fn join_lead_secs(rule_joins: &[RuleJoinInfo]) -> f64 {
+    rule_joins
+        .iter()
+        .map(|info| (-info.offset_nanos).max(0) as f64 / 1e9)
+        .fold(0.0_f64, f64::max)
+}
+
 /// 为一个左事件补发 `join` 块声明的右事件（设计 §9 跨流注入）。
 ///
 /// 右行的**连接键** = 左实体键值、**时间** = 该左事件时间（校验期 VN30 已保证规则的
@@ -179,25 +201,20 @@ pub(crate) fn push_join_events(
         let right_ts = *left_ts + ChronoDuration::nanoseconds(info.offset_nanos);
 
         // 连接键：取规则 `on <left> == <right>` 的 **left（驱动侧）字段**值——两侧因此指向
-        // 同一个实体（q6 的 `b.auction` ↔ `auction_events.id`）。
-        let connective = key_overrides
-            .get(&info.left_field)
-            .or_else(|| {
-                if key_overrides.len() == 1 {
-                    key_overrides.values().next()
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| {
-                error::error(
-                    WfgenReason::Validation,
-                    format!(
-                        "join 块需要规则 join 驱动侧键 `{}` 的取值（`on {} == {}.{}`），但本用例没有它",
-                        info.left_field, info.left_field, join.window, join.key_field
-                    ),
-                )
-            })?;
+        // 同一个实体（q6 的 `b.auction` ↔ `auction_events.id`）。这个值由生成器自己写入
+        // （`RuleStructure::mirror_join_keys`），因此正常流程里必定存在；缺了说明两侧口径
+        // 不一致，必须报错——历史上这里在“只有一个键”时静默用那个键的值充当连接键，
+        // 于是一个值填错了地方也能跑过，用户还得靠 `use(<left>=…)` 手动凑上去。
+        let connective = key_overrides.get(&info.left_field).ok_or_else(|| {
+            error::error(
+                WfgenReason::Validation,
+                format!(
+                    "join 块需要规则 join 驱动侧键 `{}` 的取值（`on {} == {}.{}`），\
+                     但本次注入的实体键里没有它（生成器应把它镜像成实体标识值）",
+                    info.left_field, info.left_field, join.window, join.key_field
+                ),
+            )
+        })?;
 
         let schema = schemas
             .iter()
@@ -390,6 +407,11 @@ pub(crate) fn entity_value_for_index(
 
 /// Generate unique key values for a cluster entity.
 ///
+/// `key_names` 是生成器要写进事件的实体键字段（[`super::structures::RuleStructure::entity_key_fields`]，
+/// 已经包含实体标识字段）；每个字段占一个实体 id（`entity_counter + i`），
+/// 所以一个实体实际消耗 `key_names.len()` 个 id——校验期的实体空间预算（VN27/VN31）
+/// 按同一口径核算。
+///
 /// Uses the entity counter and a prefix to produce deterministic unique values
 /// based on the field type from the schema.
 pub(crate) fn generate_key_values(
@@ -398,7 +420,6 @@ pub(crate) fn generate_key_values(
     prefix: &str,
     schemas: &[WindowSchema],
     steps: &[StepInfo],
-    entity_field: Option<&str>,
 ) -> HashMap<String, serde_json::Value> {
     let mut overrides = HashMap::new();
 
@@ -407,14 +428,7 @@ pub(crate) fn generate_key_values(
         .first()
         .and_then(|s| schemas.iter().find(|sch| sch.name == s.window_name));
 
-    let mut names = key_names.to_vec();
-    if let Some(field) = entity_field
-        && !names.iter().any(|name| name == field)
-    {
-        names.push(field.to_string());
-    }
-
-    for (i, key_name) in names.iter().enumerate() {
+    for (i, key_name) in key_names.iter().enumerate() {
         let id = entity_counter + i as u64;
         let value = match first_schema.and_then(|sch| field_type_of(sch, key_name)) {
             Some(field_type) => {

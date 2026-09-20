@@ -4,8 +4,10 @@ use "../rules/brute_force.wfl"
 #[duration=10m]
 scenario brute_force_detect<seed=42> {
   background {
-    stream auth_events gen 100/s
-    stream auth_events gen 80/s
+    // 原为 `gen 100/s` + `gen wave(base=80/s, ...)`：`wave` 语义未实现（VN28 拦下），当时按 base
+    // 平坦化成第二行，于是同一个窗口出现两条 `stream auth_events`（现按 VN34 拒绝）。
+    // 合并为一条：速率取两行之和（与原先生成量一致）。
+    stream auth_events gen 180/s
   }
 
   inject {

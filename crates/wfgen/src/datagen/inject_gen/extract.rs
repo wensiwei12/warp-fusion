@@ -45,12 +45,25 @@ pub(super) fn extract_rule_structure(
         WindowSpec::Hop { size, .. } => size,
     };
 
-    let keys: Vec<String> = rule_plan
-        .match_plan
-        .keys
-        .iter()
-        .map(|fr| field_ref_field_name(fr).to_string())
-        .collect();
+    // 生成器要写进事件的键字段。
+    //
+    // `key { login = e.sip }` 这类显式 key 映射下，引擎按 **source 字段**取值
+    // （`wf-cep::extract_key`：先按 `(逻辑名, 本别名)` 查 key_map 的 `source_field`，
+    // 找不到才回退到“逻辑名字段”）；生成器因此也必须写 `source_field`——
+    // 写逻辑名会落到一个 **schema 里不存在的列**上，`build_event_fields_with_predicates`
+    // 按 schema 逐字段套覆盖，那条覆盖**静默丢弃**，数据里根本不是注入值。
+    // 校验期的 `rule_entity_key_fields` 取同一口径（source 字段）。
+    let keys: Vec<String> = if let Some(key_map) = &rule_plan.match_plan.key_map {
+        dedup_preserving_order(key_map.iter().map(|item| item.source_field.clone()))
+    } else {
+        dedup_preserving_order(
+            rule_plan
+                .match_plan
+                .keys
+                .iter()
+                .map(|fr| field_ref_field_name(fr).to_string()),
+        )
+    };
 
     let mut steps = Vec::new();
     for step_plan in &rule_plan.match_plan.event_steps {
@@ -170,6 +183,7 @@ pub(super) fn extract_rule_structure(
 
     // 规则侧 join 口径（设计 §9）：决定用例 `join` 块的右事件放哪。
     let mut joins = Vec::new();
+    let mut join_left_fields: Vec<String> = Vec::new();
     for join in &rule_plan.joins {
         let Some(first_cond) = join.conds.first() else {
             continue;
@@ -178,6 +192,12 @@ pub(super) fn extract_rule_structure(
             continue;
         };
         let left_field = field_ref_field_name(&first_cond.left).to_string();
+        // 驱动侧的连接键：右行的连接键要跟它一致，所以生成器必须把它一起写进驱动事件
+        // （`mirror_join_keys`）。空名（非简单字段引用）不入列——引擎/生成器都只
+        // 支持字段引用形态的连接条件（其余由 VN30 在校验期拦下）。
+        if !left_field.is_empty() && !join_left_fields.iter().any(|f| f == &left_field) {
+            join_left_fields.push(left_field.clone());
+        }
         // 只登记生成器支持的两种形态（其余由 VN30 在校验期拦下）：
         //  - deferred：`emit at` + `within` → 右事件与左事件**同刻**（见 DEFERRED_OFFSET_NANOS：
         //    正好压在区间下界上，该边界已被两侧的精确整数口径支撑）；
@@ -202,6 +222,7 @@ pub(super) fn extract_rule_structure(
         window_dur,
         steps,
         entity_id_field,
+        join_left_fields,
         joins,
     })
 }
@@ -221,6 +242,19 @@ pub(crate) fn field_ref_field_name(fr: &FieldRef) -> &str {
         FieldRef::Qualified(_, name) | FieldRef::Bracketed(_, name) => name,
         _ => "",
     }
+}
+
+/// 保序去重。键字段列表用：`key { login = e.sip; login = b.user }` 这类映射会在
+/// 同一字段上重复出现（`source_field` 也可能相同），重复进 `key_overrides` 无意义，
+/// 还会把实体 id 的消耗多算一份。
+fn dedup_preserving_order<I: Iterator<Item = String>>(items: I) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for item in items {
+        if !out.iter().any(|existing| existing == &item) {
+            out.push(item);
+        }
+    }
+    out
 }
 
 /// 用例 → 生成期覆盖。

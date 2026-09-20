@@ -159,7 +159,14 @@ pub fn resolve_inject_files(wfg: &mut WfgFile, wfg_path: &Path) -> WfgenResult<(
     };
 
     for case in &mut injection.cases {
-        for group in &mut case.groups {
+        // 值来源包括主事件组与 **join 块**里的组（`join <window> as <key> { use … }`）——
+        // `join` 块同样走 `parse_use_group`，所以 `use from "file"` 在那边也是合法写法；
+        // 只遍历 `case.groups` 会让它带着 `ValueSource::File` 活到生成期才报错。
+        for group in case.groups.iter_mut().chain(
+            case.joins
+                .iter_mut()
+                .flat_map(|join| join.groups.iter_mut()),
+        ) {
             let ValueSource::File(path) = &group.source else {
                 continue;
             };
