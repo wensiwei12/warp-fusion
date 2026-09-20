@@ -2067,3 +2067,174 @@ scenario s<seed=1> {
         "join 块写右窗时间字段必须报 VN35: {codes:?}"
     );
 }
+
+/// VN27 的 id 预算按「**每个实体 × 每个键字段**各占一个 id」计（与生成器
+/// `generate_key_values` 的 `entity_counter + i` 同口径）。
+///
+/// 少算这一因子会把 id 空间算大：超出 2^24 后不同用例的实体会**静默**拿到同一个值
+/// （hit 与 near_miss 指向同一实体，两个口径互相污染）。这里用 2^23 个实体卡边界：
+/// 单 key 规则合法（2^23 < 2^24），双 key 规则即超限（2^23 × 2 = 2^24）。
+#[test]
+fn test_vn27_budget_counts_every_key_field() {
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![("sip", BaseType::Ip), ("dport", BaseType::Digit)],
+    )];
+    let count = 8_388_608_u64; // 2^23
+
+    let case = |keys: &str, entity_field: Option<&str>| {
+        let wfl = make_wfl_match("rule_a", vec![("a", "auth_events")], keys, entity_field);
+        let input = format!(
+            r#"
+#[duration=10s]
+scenario s<seed=1> {{
+    background {{ stream auth_events gen 5/s }}
+    inject {{
+        hit<{count}> for rule_a auth_events {{
+            use(success=true) x 1
+        }}
+    }}
+}}
+"#
+        );
+        let wfg = parse_wfg(&input).unwrap();
+        let errors = validate_wfg(&wfg, &schemas, std::slice::from_ref(&wfl), false);
+        errors.iter().any(|e| e.code == "VN27")
+    };
+
+    assert!(
+        !case("sip", None),
+        "单 key 规则：2^23 个实体只占 2^23 个 id，不该报 VN27"
+    );
+    assert!(
+        case("sip, dport", Some("sip")),
+        "双 key 规则：2^23 个实体占 2^24 个 id，应报 VN27"
+    );
+}
+
+/// VN12 的保护集包含 join 的**驱动侧连接键**（生成器把它镜像成实体标识值写入驱动事件，
+/// `RuleStructure::mirror_join_keys`）——写进 `use` 同样会被静默覆盖。
+///
+/// 这里的 `name` 既不是 match 键（`id`）也不是实体标识字段（`id`），只由规则 join 的
+/// 左侧字段决定；旧口径（保护集 = 键 ∪ 实体标识字段）会漏掉它。
+#[test]
+fn test_vn12_protects_join_driver_side_key_field() {
+    let rule = "
+rule p_joins_a {
+    events { p : person_events }
+    match<id:1m> {
+        on event { p | count >= 1; }
+    } -> score(1)
+    join auction_events snapshot on p.name == auction_events.seller
+    entity(digit, p.id)
+    yield AlertWindow()
+}";
+    let schemas = vec![
+        make_schema(
+            "person_events",
+            vec![("id", BaseType::Digit), ("name", BaseType::Chars)],
+        ),
+        make_schema(
+            "auction_events",
+            vec![("seller", BaseType::Chars), ("price", BaseType::Digit)],
+        ),
+    ];
+    let wfl = wf_lang::parse_wfl(rule).unwrap();
+
+    let validate = |use_body: &str| {
+        let input = format!(
+            r#"
+#[duration=10s]
+scenario s<seed=1> {{
+    background {{ stream person_events gen 5/s }}
+    inject {{
+        hit<1> for p_joins_a person_events {{
+            {use_body}
+            join auction_events as seller {{ use(price=1) x 1 }}
+        }}
+    }}
+}}
+"#
+        );
+        let wfg = parse_wfg(&input).unwrap();
+        validate_wfg(&wfg, &schemas, std::slice::from_ref(&wfl), false)
+            .into_iter()
+            .filter(|e| e.code == "VN12")
+            .count()
+    };
+
+    assert!(
+        validate("use(name=\"x\") x 1") > 0,
+        "join 驱动侧连接键字段由生成器写入，写进 use 应报 VN12"
+    );
+    assert_eq!(
+        validate("use(price=1) x 1"),
+        0,
+        "普通字段（price）不该报 VN12"
+    );
+}
+
+/// VN30 只认 join 的**首条件**（生成器 `extract_rule_structure` 只登记 `join.conds.first()`）。
+///
+/// 多条件 join 里按第二个条件的右侧字段写 `join` 块，会造出一条生成器**不实现**的配对路径
+/// ——旧口径按「任一条件」匹配，lint 放行、数据却对不上。
+#[test]
+fn test_vn30_join_block_matches_first_condition_only() {
+    let rule = "
+rule p_joins_a {
+    events { p : person_events }
+    on each p -> score(10)
+    join auction_events within [p.timestamp, <bucket_end(p.timestamp, 5s)]
+        on p.id == auction_events.seller && p.name == auction_events.category
+        emit at bucket_end(p.timestamp, 5s)
+    entity(digit, p.id)
+    yield alerts(id = p.id)
+}";
+    let schemas = vec![
+        make_schema(
+            "person_events",
+            vec![("id", BaseType::Digit), ("name", BaseType::Chars)],
+        ),
+        make_schema(
+            "auction_events",
+            vec![
+                ("seller", BaseType::Digit),
+                ("category", BaseType::Digit),
+                ("price", BaseType::Digit),
+            ],
+        ),
+    ];
+    let wfl = wf_lang::parse_wfl(rule).unwrap();
+
+    let vn30 = |decl: &str| {
+        let input = format!(
+            r#"
+#[duration=10s]
+scenario s<seed=1> {{
+    background {{ stream person_events gen 5/s }}
+    inject {{
+        hit<id: 2> for p_joins_a person_events {{
+            use(id=1) x 1
+            {decl}
+        }}
+    }}
+}}
+"#
+        );
+        let wfg = parse_wfg(&input).unwrap();
+        validate_wfg(&wfg, &schemas, std::slice::from_ref(&wfl), false)
+            .into_iter()
+            .filter(|e| e.code == "VN30")
+            .count()
+    };
+
+    assert_eq!(
+        vn30("join auction_events as seller { use(price=1) x 1 }"),
+        0,
+        "首条件的右侧字段应当匹配"
+    );
+    assert!(
+        vn30("join auction_events as category { use(price=1) x 1 }") > 0,
+        "第二个条件的右侧字段生成器不登记，应报 VN30"
+    );
+}
