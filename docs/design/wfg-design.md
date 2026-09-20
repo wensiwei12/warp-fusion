@@ -444,8 +444,8 @@ stream / 规则绑定 → `VN3` / `VN10` / `VN14`；字段与 schema → `VN11` 
 | VN30 | `join <window> as <key>` 匹配不到规则的 join 子句（目标窗 / 右侧连接键），或形态不是生成器实现的两种（deferred = inner + `within` + `emit at`；snapshot = `snapshot` 且无 `within`） | `… 的 \`join auction_events as wrong_key\` 匹配不到规则 'r' 的 join 子句（…）` / `… 形成不支持：只支持 deferred（inner + \`within\` + \`emit at\`）与 snapshot（无 \`within\`）两种…` |
 | VN31 | `entity <window>.<field> zipf(...)`：目标窗 / 字段不存在或类型不可承载、参数越界、重复声明、与注入实体的**值域预算**超出 24 位空间 | `entity 分布的字段 'ok' 类型不支持（只支持 ip / digit / float / chars / hex）` / `entity 'src_ip' 的值域超出 24 位地址空间：注入实体 100 + 池 8388609 + 新值带 8388609 > 16777216（…）` |
 | VN32 | 重复书写 `background` / `inject` 块（两者是单例，**不合并**；旧行为是静默丢掉前一个块） | `VN32 \`background\` 块重复：一个场景只允许一个 \`background\`（两个块不会合并，此前是静默丢掉前一个块）。请把两个块的内容合并到同一个 \`background { … }\` 里。`（**解析期**报错） |
-| VN33 | 注入用例的 `stream` 不是目标规则的**绑定窗**（生成期映射不到任何事件步骤，此前只能到生成期才报） | `… 的 stream 窗口 '<w>' 不是规则 '<r>' 的任何事件绑定窗（binding windows: …）` |
-| VN35 | `use(...)` / `without(...)` / join 块里写了 schema 的**时间字段**（`time_field` 或 `_timestamp`）——会造出双时间轴：事件字段与 oracle/引擎读的列时间分叉 | `… 不能覆盖时间字段 '<f>'（时间由生成器按事件时间写入；覆盖会造成双时间轴）` |
+| VN33 | 注入用例的 `stream` 不是目标规则的**绑定窗**（生成期映射不到任何事件步骤，此前只能到生成期才报） | `注入用例 stream '<s>' 的窗口 '<w>' 不是规则 '<r>' 的任何事件绑定窗（binding windows: …）` |
+| VN35 | `use(...)` / `without(...)` / join 块里写了 schema 的**时间字段**（会造出双时间轴：事件字段与 oracle/引擎读的列时间分叉） | `… 第 N 步的 use 里写了时间字段 '<f>'：时间字段由生成器按事件时间写入，不能由 use/without 覆盖（会造成双时间轴、静默不一致）` |
 | VN34 | 同一个 `background` 里对**同一窗口**重复声明 `stream`（生成器各造一份：流量按速率之和叠加、两条流各有独立取值带） | `background 里重复声明了 stream '<s>'：同一窗口只能声明一次（…）；请合并成一条 \`gen <rate>\`` |
 | VN28 | 背景速率用了未实现的随时间形态 `wave(...)` / `burst(...)` / `timeline { ... }`（会按 `base=` 常量生成，与写法不符） | `stream 'auth_events': \`gen burst(...)\` 的随时间变化尚未实现（当前会按 \`base=\` 的常量速率生成，与写法不符）；请先改用常量速率 \`gen 100/s\`` |
 
