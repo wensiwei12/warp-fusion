@@ -1,0 +1,58 @@
+// L3 夹具（issue #72）：嵌套 object + `on each` 注入，两条诉求的端到端回归。
+//
+// 覆盖：
+//   1. `use(field={...})` 直接写**嵌套 object**（多层嵌套 + 数组）——值按 schema 的
+//      `object` 列落到帧里，规则 `yield` 用 `s.source_finding_obj.title` 读得出来；
+//   2. `use({...})` 一次写**整份 JSON**（顶层每个键当一个字段覆盖）；注意值必须是
+//      **严格 JSON**（键要加引号）；
+//   3. `on each` 规则可作注入目标（`hit<N> for <rule> <stream>`），不需要测试专用 WFL/WFS。
+//
+// 两条护栏（本夹具刻意避开，注释在此说明为什么）：
+//   - **实体键字段**（这里是 `event_id`，即规则 `entity(...)` 的单字段）不能由 `use(...)`
+//     写 → VN12：它的值由生成器按实体 id 分配；
+//   - schema 的**时间字段**（`occur_time`）同样不能写 → VN35：它由生成器按事件时间写入，
+//     覆盖会造成双时间轴。
+//   想"原样发自己的日志（含自己的 event_id 与时间）"走 `replay <window> { use from "file" }`
+//   —— 照单发货、不做实体数学。
+use "../schemas/sdm.wfs"
+use "../rules/object_on_each.wfl"
+
+#[duration=1m]
+scenario on_each_object<seed=42> {
+    background {
+        stream sdm_event gen 1/s
+    }
+
+    inject {
+        // 形式 1：逐字段写，其中两个字段是嵌套 object（含数组）。
+        hit<1> for object_on_each sdm_event {
+            use(
+                log_type="sip_atk_alarm_log",
+                source_finding_obj={
+                    "title": "自定义威胁情报",
+                    "category_code": "AUTH_VIOLATION",
+                    "severity": "HIGH",
+                    "rule": {"label": "账号攻击"}
+                },
+                extensions_obj={
+                    "schema_version": 2,
+                    "source_private": {"alert_id": "2141000061", "ioc": ["www.61house.com"]},
+                    "unmapped": {"status": "none"}
+                }
+            ) x 1
+        }
+
+        // 形式 2：整份 JSON 一次写（严格 JSON；顶层键 = 字段名）。
+        hit<1> for object_on_each sdm_event {
+            use({
+                "tenant_id": "tenant03",
+                "log_type": "sip_atk_alarm_log",
+                "source_finding_obj": {
+                    "title": "整份 JSON 写法",
+                    "category_code": "AUTH_VIOLATION",
+                    "severity": "LOW"
+                }
+            }) x 1
+        }
+    }
+}

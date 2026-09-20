@@ -69,6 +69,11 @@ async fn l3_corpus_matches_the_real_engine() {
             "背景实体分布 entity … zipf(...)",
             Some(60),
         ),
+        (
+            "object_fields/scenarios/on_each_object.wfg",
+            "嵌套 object 注入 + `on each` + 嵌套路径 yield（issue #72）",
+            Some(60),
+        ),
     ] {
         cases.push((fixtures.as_path(), scenario, what, secs));
     }

@@ -47,6 +47,8 @@ const CORPUS: &[&str] = &[
     "crates/wfgen/tests/fixtures/wfg_l3/without/scenarios/probe.wfg",
     "crates/wfgen/tests/fixtures/wfg_l3/zipf/scenarios/hot.wfg",
     "crates/wfgen/tests/fixtures/wfg_l3/deferred/scenarios/probe.wfg",
+    // `use(...)` 写嵌套 object + `on each` 注入（issue #72）。
+    "crates/wfgen/tests/fixtures/wfg_l3/object_fields/scenarios/on_each_object.wfg",
     // docker 示例里的同构副本（4 个）——与模板内容应保持一致，漂移即失败。
     "docker/default_setting/models/scenarios/port_scan.wfg",
     "docker/default_setting/models/scenarios/port_scan_quick.wfg",

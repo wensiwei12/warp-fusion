@@ -1,0 +1,18 @@
+// `on each` + 嵌套路径读取：alert 的三个字段都取自 `source_finding_obj` 内部
+// （结构化列在引擎侧按结构值解析，不是字符串）。
+rule object_on_each {
+    events {
+        s : sdm_event
+    }
+
+    on each s -> score(1.0)
+    entity(chars, s.event_id)
+
+    yield alert (
+        tenant_id = s.tenant_id,
+        alert_id = s.event_id,
+        alert_name = s.source_finding_obj.title,
+        category_code = s.source_finding_obj.category_code,
+        severity = s.source_finding_obj.severity
+    )
+}

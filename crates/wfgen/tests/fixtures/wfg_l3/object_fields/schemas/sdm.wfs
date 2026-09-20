@@ -1,0 +1,30 @@
+// L3 夹具（issue #72）：嵌套 object 字段。
+//
+// `object` / `array` 是 schema 支持的结构化列类型（引擎侧按结构值解析，规则里可以用
+// `s.source_finding_obj.title` 这类嵌套路径读）。本夹具给「`use(...)` 直接写嵌套 object」
+// 这条路径做端到端回归。
+window sdm_event {
+    stream_tag = "sdm_event"
+    time = occur_time
+    over = 1m
+    fields {
+        tenant_id: chars
+        event_id: chars
+        log_type: chars
+        occur_time: time
+        source_finding_obj: object
+        extensions_obj: object
+    }
+}
+
+// 产出窗（`over = 0`：静态，不收口）。
+window alert {
+    over = 0
+    fields {
+        tenant_id: chars
+        alert_id: chars
+        alert_name: chars
+        category_code: chars
+        severity: chars
+    }
+}
