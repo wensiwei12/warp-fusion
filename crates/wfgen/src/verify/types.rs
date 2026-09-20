@@ -12,7 +12,7 @@ pub struct ActualAlert {
 /// Summary statistics of the verify comparison.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VerifySummary {
-    pub oracle_total: usize,
+    pub expected_total: usize,
     pub actual_total: usize,
     pub matched: usize,
     pub missing: usize,
@@ -69,8 +69,8 @@ impl VerifyReport {
         md.push_str("| Metric | Count |\n");
         md.push_str("|--------|-------|\n");
         md.push_str(&format!(
-            "| Oracle total | {} |\n",
-            self.summary.oracle_total
+            "| Expected total | {} |\n",
+            self.summary.expected_total
         ));
         md.push_str(&format!(
             "| Actual total | {} |\n",

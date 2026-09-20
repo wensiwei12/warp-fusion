@@ -417,7 +417,7 @@ rule scan_and_login_cooccur {
 | 解析/编译 | `wf-lang`（wp-reactor） | AST + 编译：`on event` 并行条件 → 有序步骤 |
 | 执行 | `wf-engine`（wp-reactor） | rule stage 新增 seq 求值路径 + `SeqState` + TTL + 指标 |
 | 规则工具 | warp-fusion（wfl/wfusion rule） | lint 新检查、fmt、`explain` 渲染步骤表 |
-| 测试 | warp-fusion | 内联 `test` 块支持时序断言；wfgen oracle 对拍（注入 seq 已就绪） |
+| 测试 | warp-fusion | 内联 `test` 块支持时序断言；wfgen 期望对拍（注入 seq 已就绪） |
 | 映射/reload | warp-fusion | `rule_mapping.dat` 支持单规则多窗口；`reload_state_policy="clear"` |
 | 文档 | warp-fusion | `rules.md` 补 seq 章节 |
 
@@ -444,5 +444,5 @@ rule scan_and_login_cooccur {
 - [x] wf-engine seq 求值（L1）→ lint/fmt/explain 支持
 - [x] `within` / `not`（L2）→ TTL（`rule.seq_*` 指标埋点延后，`rule.instances` 已覆盖部分匹配 gauge）
 - [x] 示例规则改造（rat_propagation / password_spraying → `on event seq`）+ 内联测试
-- [x] wfgen oracle 对拍验证
+- [x] wfgen 期望对拍验证
 - [x] 文档（rules.md / spec / CHANGELOG）

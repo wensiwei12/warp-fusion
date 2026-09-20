@@ -103,7 +103,7 @@ wfgen gen --scenario crates/wfadm/templates/models/scenarios/ssh_brute_force.wfg
 | `near_miss` | 差一点，但**不该**报警 | 每个 `near_miss` 实体必须不产出告警，否则 FAIL |
 | `miss` | 与规则无关，**不该**报警 | 每个 `miss` 实体必须不产出告警，否则 FAIL |
 
-- 断言复用 oracle 结果，失败在**写期望文件之前**报出，不会留下半成品侧车文件。
+- 断言复用期望结果，失败在**写期望文件之前**报出，不会留下半成品侧车文件。
 - 用例之间**实体键空间分段**（各自独占一段 `10.a.b.c` 地址），因此 `hit` 与
   `near_miss` 不会指向同一个实体、两个口径互相污染。
 - 目标规则是 `on each` 形态时：命中的**一条**事件即产出告警，故 `near_miss` 与
@@ -246,7 +246,7 @@ scenario replay_only<seed=1> {
   同文件内的相对间隔保持；文件没有时间字段时按序号在 `#[duration]` 内均匀落下。
   平移后超出 `#[duration]` 报 `VN25`（不截断）。
 - 目标窗口要在 schema 里（`VN3`），但**不必**写进 `background`。
-- 不对任何实体做"必须 / 不得报警"的断言；但它的事件会进 oracle 的输入流，因此
+- 不对任何实体做"必须 / 不得报警"的断言；但它的事件会进期望的输入流，因此
   `verify` 的口径仍与实际一致。若 `inject` 的 `without(...)` 窗口里落进了 replay 事件，
   生成期直接报错（replay 的数据不能自动剔除）。
 
@@ -284,7 +284,7 @@ scenario replay_only<seed=1> {
 
 | 坑 | 现象 | 正确做法 |
 |---|---|---|
-| 数值字段的**整值形态** | 早期 `use(bytes=30000000)` 会落成 `30000000.0`，经 Arrow 写 `digit` 列时被 `as_i64()` 静默丢成 null（引擎侧 `sum` 恒为 0，而 oracle 说“必报”） | 已修：整值保持整数；断言 `as_i64()` 即可（`use from` 的文件里 `3e7` 这类也已被 Arrow 侧兼容） |
+| 数值字段的**整值形态** | 早期 `use(bytes=30000000)` 会落成 `30000000.0`，经 Arrow 写 `digit` 列时被 `as_i64()` 静默丢成 null（引擎侧 `sum` 恒为 0，而期望说“必报”） | 已修：整值保持整数；断言 `as_i64()` 即可（`use from` 的文件里 `3e7` 这类也已被 Arrow 侧兼容） |
 | JSONL 的 `_timestamp` 只有**毫秒**精度 | 纳秒级断言拿不到值 | 读 schema 时间字段列（纳秒）；只在需要“看得出先后”时用 `_timestamp` |
 | `_stream` 是 **tag 不是窗口名** | 按 `_stream` 过滤窗口，过滤错 | 用 `_window` / `window_name` |
 | schema 里**没有的字段不落位** | 自定义字段（含 join 侧键）静默丢弃 | 先把它加进对应窗口的 schema |
@@ -310,6 +310,6 @@ scenario replay_only<seed=1> {
 
 ## 相关命令
 
-`wfgen lint` / `gen` / `verify` / `send` / `bench` / `stream` 的参数与 `--no-oracle` /
+`wfgen lint` / `gen` / `verify` / `send` / `bench` / `stream` 的参数与 `--no-expect` /
 `--no-wfl` 语义见 [`cli/cli.md`](cli/cli.md)；把生成的数据送到引擎联调见
 [`integration.md`](integration.md)。

@@ -103,7 +103,7 @@ wfgen lint models/scenarios/port_scan.wfg
 # 生成事件 + 期望告警（*.except.jsonl / *.except.meta.jsonl）
 wfgen gen --scenario models/scenarios/port_scan.wfg --out out/gen
 wfgen gen --scenario s.wfg --format arrow --out out/gen      # 列式 .arrow 输出
-wfgen gen --scenario s.wfg --no-oracle --out out/gen         # 只出事件，不写期望文件（仍编译 WFL，注入 use() 生效）
+wfgen gen --scenario s.wfg --no-expect --out out/gen         # 只出事件，不写期望文件（仍编译 WFL，注入 use() 生效）
 wfgen gen --scenario s.wfg --no-wfl --out out/gen            # 跳过整个 WFL 管线（纯背景随机事件）
 wfgen gen --scenario s.wfg --send --addr 127.0.0.1:9800      # 直接发给引擎
 wfgen gen --scenario s.wfg --duration 1m --out out/gen       # 覆盖 #[duration]（背景按比例缩，注入不变）
@@ -139,7 +139,7 @@ wfgen stream --scenario-dir models/scenarios --wfl "rules/*.wfl" [--rate 100000]
 
 ```bash
 cargo test -p wfgen --test wfg_corpus      # L0–L2：VN 校验 + INJ1/INJ2 断言 + 期望文件 + 条数守恒
-cargo test -p wfgen --test wfg_corpus_l3   # L3：生成 → oracle → 真实引擎 → verify 对拍
+cargo test -p wfgen --test wfg_corpus_l3   # L3：生成 → 期望 → 真实引擎 → verify 对拍
 WFC_CORPUS_ONLY=conv cargo test -p wfgen --test wfg_corpus   # 本地只跑一部分（按路径子串过滤）
 ```
 

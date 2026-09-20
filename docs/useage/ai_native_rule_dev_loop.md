@@ -16,7 +16,7 @@
 | 1 | 语义自证（契约测试） | `wfl test` | 逐条手写的 `expect` 证明"规则按作者意图执行" |
 | 2 | 对抗测试生成 | `wfl test --gen-negatives` | 机器从规则结构补负例，打破"AI 写规则 + AI 自证" |
 | 3 | 检测意图验证 | `wfl intent`（`.wfi` 样本集） | 从正/负样本证明"意图本身对"——漏报/误报可测 |
-| 4 | 真实回放 / 对拍 | `wfl replay` / `wfl verify` | 真实数据流 + oracle 逐条比对 |
+| 4 | 真实回放 / 对拍 | `wfl replay` / `wfl verify` | 真实数据流 + 期望逐条比对 |
 | 5 | 性能护栏 | `wfgen perf-diag --gate` | 语义对还不够，性能可接受才放行 |
 
 **核心承诺**：每条规则跑出的回执都带 schema 版本、结构化明细与自解释失败原因；
@@ -38,7 +38,7 @@ wfl explain rules/ssh_brute_force.wfl --schemas "schemas/*.wfs"   # 编译后规
 ### 2.1 语义自证 —— `wfl test`（契约测试）
 
 WFL 语言内嵌 `test` 块：`input { row/tick }` → `expect { hits cmp N; hit[i].字段 cmp … }`。
-`expect` 是**独立语义 oracle**——AI 改规则没跟着改期望，测试就 FAIL。
+`expect` 是**独立语义期望**——AI 改规则没跟着改期望，测试就 FAIL。
 
 ```bash
 wfl test rules/ssh_brute_force.wfl --schemas "schemas/*.wfs"          # human
@@ -92,7 +92,7 @@ wfl verify  rules/ssh_brute_force.wfl --schemas "schemas/*.wfs" \
 ```
 - replay 按每行 JSON 的 `_stream` 字段路由到 window/bind（数据文件须带流标签，见
   `examples/rules/ssh_brute_force` 验证记录）；EOF 统一 close_all，与引擎 flush 收口一致
-- verify 逐事件按真实 watermark 扫窗口过期，与引擎逐批语义对齐；oracle 比对支持
+- verify 逐事件按真实 watermark 扫窗口过期，与引擎逐批语义对齐；期望比对支持
   score/time 容差（CLI 或 meta 文件）
 
 ### 2.5 性能护栏 —— `wfgen perf-diag --gate`（L4）

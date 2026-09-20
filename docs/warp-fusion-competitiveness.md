@@ -206,7 +206,7 @@ YARA-L 2.0（Google Chronicle）、Elastic EQL、Sigma、Splunk SPL、KQL（Micr
 | **Join 时点语义** | `snapshot` / `asof within` 一等语法，消除在线与回放在维表取值时点上的语义漂移 |
 | **确定性生成与对拍** | `wfgen` 同一 count+seed 字节级确定；`wfl verify` 逐字段对拍 |
 
-正确性现状：30M 规模 oracle 对拍中 Q4/Q9 **完全一致**；已知差异为 Q12（fixed+close 尾桶，已知差异）与 Q19（stats oracle 未接入）。
+正确性现状：30M 规模期望对拍中 Q4/Q9 **完全一致**；已知差异为 Q12（fixed+close 尾桶，已知差异）与 Q19（stats 期望未接入）。
 
 ### 4.1 数据接入与 Connector 体系
 

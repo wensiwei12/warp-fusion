@@ -1,10 +1,10 @@
-//! Functional tests for `--no-oracle` / `--no-wfl` (issue #58).
+//! Functional tests for `--no-expect` / `--no-wfl` (issue #58).
 //!
 //! `--no-wfl` opts out of the whole WFL pipeline: no rule loading
 //! (`_global.wfl` / yield-preset evaluation), no compilation, no injection, so
-//! generation falls back to baseline random events. `--no-oracle` keeps the
-//! pipeline (injection `use()` fixed values still apply) and only skips oracle
-//! / expected output. These tests use the `examples/count` fixture, which
+//! generation falls back to baseline random events. `--no-expect` keeps the
+//! pipeline (injection `use()` fixed values still apply) and only skips the
+//! expected-output sidecars. These tests use the `examples/count` fixture, which
 //! declares an `expect` block (so normal mode would emit `.except.jsonl`
 //! sidecars).
 
@@ -22,7 +22,7 @@ use wfgen::wfg_parser::parse_wfg;
 const WFG_REL: &str = "examples/count/scenarios/brute_force.wfg";
 
 /// 构造 `wfgen gen` 参数（fixture 固定：brute_force.wfg / jsonl / 不发送）。
-fn gen_args(out: PathBuf, wfl: Vec<PathBuf>, no_wfl: bool, no_oracle: bool) -> cmd_gen::Args {
+fn gen_args(out: PathBuf, wfl: Vec<PathBuf>, no_wfl: bool, no_expect: bool) -> cmd_gen::Args {
     cmd_gen::Args {
         scenario: manifest().join(WFG_REL),
         format: "jsonl".to_string(),
@@ -30,7 +30,7 @@ fn gen_args(out: PathBuf, wfl: Vec<PathBuf>, no_wfl: bool, no_oracle: bool) -> c
         ws: Vec::new(),
         wfl,
         no_wfl,
-        no_oracle,
+        no_expect,
         send: false,
         addr: "127.0.0.1:1".to_string(),
         duration: None,
@@ -91,14 +91,14 @@ fn skip_wfl_generates_baseline_events() {
 }
 
 #[tokio::test]
-async fn no_oracle_run_writes_events_without_sidecars() {
-    let tmp = std::env::temp_dir().join("wfgen-e2e-no-oracle");
+async fn no_expect_run_writes_events_without_sidecars() {
+    let tmp = std::env::temp_dir().join("wfgen-e2e-no-expect");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).expect("create temp out dir");
     let out = tmp.clone();
 
     let res = run(gen_args(out.clone(), Vec::new(), false, true)).await;
-    assert!(res.is_ok(), "--no-oracle run failed: {:?}", res.err());
+    assert!(res.is_ok(), "--no-expect run failed: {:?}", res.err());
 
     let files: Vec<String> = std::fs::read_dir(&out)
         .expect("read out dir")
@@ -112,7 +112,7 @@ async fn no_oracle_run_writes_events_without_sidecars() {
     );
     assert!(
         !files.iter().any(|f| f.contains(".except.")),
-        "no oracle sidecars under --no-oracle: {files:?}"
+        "no expected sidecars under --no-expect: {files:?}"
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -121,7 +121,7 @@ async fn no_oracle_run_writes_events_without_sidecars() {
 #[tokio::test]
 async fn no_wfl_run_writes_events_without_sidecars() {
     // `--no-wfl` skips the whole WFL pipeline (no compilation, no injection, no
-    // oracle); confirm it still writes baseline events with no sidecars.
+    // expected output); confirm it still writes baseline events with no sidecars.
     let tmp = std::env::temp_dir().join("wfgen-e2e-no-wfl");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).expect("create temp out dir");
@@ -142,7 +142,7 @@ async fn no_wfl_run_writes_events_without_sidecars() {
     );
     assert!(
         !files.iter().any(|f| f.contains(".except.")),
-        "no oracle sidecars under --no-wfl: {files:?}"
+        "no expected sidecars under --no-wfl: {files:?}"
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -199,25 +199,25 @@ async fn no_wfl_run_skips_cli_wfl_files() {
         .collect();
     assert!(
         !files.iter().any(|f| f.contains(".except.")),
-        "no oracle sidecars: {files:?}"
+        "no expected sidecars: {files:?}"
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[tokio::test]
-async fn no_oracle_run_keeps_injected_fixed_values() {
-    // `--no-oracle` keeps the WFL pipeline, so injection `use()` fixed values
+async fn no_expect_run_keeps_injected_fixed_values() {
+    // `--no-expect` keeps the WFL pipeline, so injection `use()` fixed values
     // still apply: the generated events must include the injected
     // `action="failed"` values rather than pure random baseline. Only
     // `--no-wfl` produces random events (see skip_wfl_generation_drops_*).
-    let tmp = std::env::temp_dir().join("wfgen-e2e-no-oracle-inject");
+    let tmp = std::env::temp_dir().join("wfgen-e2e-no-expect-inject");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).expect("create temp out dir");
     let out = tmp.clone();
 
     let res = run(gen_args(out.clone(), Vec::new(), false, true)).await;
-    assert!(res.is_ok(), "--no-oracle run failed: {:?}", res.err());
+    assert!(res.is_ok(), "--no-expect run failed: {:?}", res.err());
 
     // output_case = the scenario file stem → brute_force.jsonl.
     let events_file = out.join("brute_force.jsonl");
@@ -234,7 +234,7 @@ async fn no_oracle_run_keeps_injected_fixed_values() {
     assert!(total > 0, "events file written");
     assert!(
         failed > total / 20,
-        "injection fixed values must be present under --no-oracle (failed={failed}/{total})"
+        "injection fixed values must be present under --no-expect (failed={failed}/{total})"
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -242,7 +242,7 @@ async fn no_oracle_run_keeps_injected_fixed_values() {
 
 #[test]
 fn normal_mode_loads_rules() {
-    // `--no-oracle` keeps the WFL pipeline (skip_wfl = false), so rules load
+    // `--no-expect` keeps the WFL pipeline (skip_wfl = false), so rules load
     // from `use` declarations and compile — the inverse of the `--no-wfl` skip.
     let wfg_path = manifest().join(WFG_REL);
     let content = std::fs::read_to_string(&wfg_path).expect("read wfg");
@@ -253,7 +253,7 @@ fn normal_mode_loads_rules() {
     assert!(!schemas.is_empty());
     assert!(
         !wfl_files.is_empty(),
-        "rules must load when the WFL pipeline is active (--no-oracle / normal)"
+        "rules must load when the WFL pipeline is active (--no-expect / normal)"
     );
 
     let plans = wfl_files
@@ -265,7 +265,7 @@ fn normal_mode_loads_rules() {
 
 #[test]
 fn normal_mode_generation_applies_injected_fixed_values() {
-    // With the WFL pipeline active (skip_wfl = false, as under --no-oracle),
+    // With the WFL pipeline active (skip_wfl = false, as under --no-expect),
     // compiled rule plans drive injection: the fixture's `use(action="failed")`
     // fixed values appear in a large fraction of generated events.
     let wfg_path = manifest().join(WFG_REL);

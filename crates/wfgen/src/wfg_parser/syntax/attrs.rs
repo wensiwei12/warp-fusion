@@ -85,9 +85,18 @@ pub(crate) fn parse_attr_value(input: &mut &str) -> ModalResult<AttrValue> {
     }
 
     // Duration is parsed before bare number to avoid consuming `10m` as `10`.
+    //
+    // 但**必须带单位**才算时长：`wf_lang::parse_utils::duration_value` 为了 `.wfs` 的
+    // `over = 0`（静态窗）刻意接受裸 `0`。这里若照收，就会出两个静默错误：
+    //   `use(f=0)`   → `Duration::ZERO`，落盘成字符串 `"0ns"`（写的不是 0）；
+    //   `<seed=0>`   → 被 VN29 当成“时长”拒掉（而 0 正是 seed 默认值）。
+    // 所以要求消费到的文本含单位字母，否则回退按数字解析（`0` → `Number(0)`）。
     let duration_saved = *input;
     if let Ok(d) = wf_lang::parse_utils::duration_value.parse_next(input) {
-        return Ok(AttrValue::Duration(d));
+        let consumed = &duration_saved[..duration_saved.len() - input.len()];
+        if consumed.bytes().any(|b| b.is_ascii_alphabetic()) {
+            return Ok(AttrValue::Duration(d));
+        }
     }
     *input = duration_saved;
 

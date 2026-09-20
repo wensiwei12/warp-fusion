@@ -481,6 +481,93 @@ scenario structured<seed=1> {
     );
 }
 
+/// 裸 `0` 必须是**数字 0**，不能被当成时长。
+///
+/// 回归：`wf_lang::parse_utils::duration_value` 为 `.wfs` 的 `over = 0`（静态窗）
+/// 接受裸 `0`；本解析器又先试时长，于是 `use(f=0)` 落盘成了字符串 `"0ns"`
+/// （写的不是 0），`<seed=0>` 也被 VN29 当成“时长”拒掉。现要求时长必须带单位。
+#[test]
+fn test_bare_zero_is_a_number_not_a_duration() {
+    let input = r#"
+#[duration=1m]
+scenario zero<seed=0> {
+  background { stream sdm_event gen 100/s }
+  inject {
+    hit<sip: 1> for sdm_rule sdm_event {
+      use(port=0, weight=0.5) x 1
+    }
+  }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let case = &wfg
+        .syntax
+        .as_ref()
+        .unwrap()
+        .injection
+        .as_ref()
+        .unwrap()
+        .cases[0];
+    let ValueSource::Predicates(predicates) = &case.groups[0].source else {
+        panic!("应为 Predicates");
+    };
+    let value_of = |name: &str| {
+        predicates
+            .iter()
+            .find(|p| p.field == name)
+            .map(|p| &p.value)
+    };
+    assert_eq!(value_of("port"), Some(&AttrValue::Number(0.0)));
+    assert_eq!(value_of("weight"), Some(&AttrValue::Number(0.5)));
+
+    // `<seed=0>` 是 seed 默认值，不得被当成时长（VN29 报“实际是时长”）。
+    let errors = crate::validate::validate_wfg(&wfg, &[], &[], true);
+    assert!(
+        !errors.iter().any(|e| e.code == "VN29"),
+        "seed=0 不该报 VN29: {errors:?}"
+    );
+}
+
+/// 带单位的时长照旧（`#[duration=1m]` / `within 30s` 这类依赖它）。
+#[test]
+fn test_suffixed_duration_still_parses_as_duration() {
+    let input = r#"
+#[duration=1m]
+scenario dur<seed=1> {
+  background { stream sdm_event gen 100/s }
+  inject {
+    hit<sip: 1> for sdm_rule sdm_event {
+      use(ttl=30s) x 1
+    }
+  }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let attrs = &wfg.syntax.as_ref().unwrap().attrs;
+    assert_eq!(
+        attrs
+            .iter()
+            .find(|a| a.key == "duration")
+            .map(|a| &a.value),
+        Some(&AttrValue::Duration(std::time::Duration::from_secs(60)))
+    );
+    let case = &wfg
+        .syntax
+        .as_ref()
+        .unwrap()
+        .injection
+        .as_ref()
+        .unwrap()
+        .cases[0];
+    let ValueSource::Predicates(predicates) = &case.groups[0].source else {
+        panic!("应为 Predicates");
+    };
+    assert_eq!(
+        predicates.iter().find(|p| p.field == "ttl").map(|p| &p.value),
+        Some(&AttrValue::Duration(std::time::Duration::from_secs(30)))
+    );
+}
+
 /// 顶层不是 object 的 `use([...])` 必须被解析层拒绝（避免静默无字段）。
 #[test]
 fn test_reject_use_json_array_toplevel() {

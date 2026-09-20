@@ -197,6 +197,16 @@ inject {
 实体字段的静态检查：不在该 stream 的 schema → **VN22**；与规则推断的实体字段不一致 →
 **VN23**（多 key 规则的显式字段属消歧用法，放行）。
 
+注意：生成器会**无条件把自己算出来的值写进事件**，覆盖 `use(...)` 给的同名字段
+（`key_overrides` 优先级高于 `use` 的 `predicate_overrides`）。被覆盖的是**实体键字段**：
+`match<...>` 的键（`on each` 无 match key，则为 `entity(...)` 的单字段 `实体字段`）∪ 用例头
+显式写的字段。这些字段在 `use` / `without` 里再写一律报 **VN12** —— 不是多此一举：写进去的值
+会被静默丢掉，数据里是实体 id 派生的（首个用例从 `0` 起、用例间分段）。
+
+要命中以**键取值**为条件的规则（如 `b.auction % 123 == 0`），靠的是这个分配规律，而不是在
+`use` 里指定值。注意 `match<seller>` + `entity(…, b.auction)` 这类 join-then-key 规则：被覆盖的是
+`seller`，`auction` 不在覆盖之列，写它**不报错**（但实体标识可能对不上，`gen` 会打 `unasserted` 警告）。
+
 **用例体：四类语句（顺序无关）**
 
 | 语句 | 写法 | 占「步骤位」？ | 参与断言？ |
@@ -224,7 +234,7 @@ inject {
 值字面量（`v`）可以是字符串、数字、时长、`true` / `false` / `null`，或 `{…}` / `[…]` 结构化值。
 
 字段级检查：同一 `use` 内重复字段 → **VN9**；字段不在该 stream 的 schema → **VN11**；
-重复了实体字段 → **VN12**；`use({…})` / 文件形态非法 → **VN17**。
+重复了生成器会覆盖的字段（规则 key / 实体字段，见 §4.4）→ **VN12**；`use({…})` / 文件形态非法 → **VN17**。
 
 ### 4.5 `replay <窗口> { use from "…" }`
 
@@ -271,7 +281,7 @@ replay conn_events { use from "raw/monday.ndjson" }
 | `VN9` | 同一 `use` 内重复字段 |
 | `VN10` | 用例的 stream 没在 `background` 里声明 |
 | `VN11` | `use` / `without` 的字段不在该 stream 的 schema 里 |
-| `VN12` | `use` / `without` 重复了实体字段 |
+| `VN12` | `use` / `without` 里写了**实体键字段**（`match<...>` 的键；`on each` 规则为 `entity(...)` 的单字段；join 块为连接键）——这些字段的值由实体 id 分配，写了会被静默丢掉，所以拦下来 |
 | `VN14` | `for RULE` 指向的规则不在已加载 `.wfl` 里 |
 | `VN17` | `use({…})` / `use from` 的记录形态非法（非 object、数组元素不是 object、数组为空） |
 | `VN20` | 用了旧语法（`hit<N%>` / `with(N)` / `not(...) within(...)` / `traffic` / `injection` / `expect` / `<field> seq` / `replay` 写条数），文案给出改写方向 |

@@ -187,6 +187,41 @@ pub(super) fn validate_syntax(
                 }
             }
 
+            // VN12 的口径 = 生成器的**实体键字段**集合（`generate_key_values` 的 `names`，
+            // 与 `RuleStructure::effective_entity_field` 同口径）：
+            //   `match` 规则 → `match<...>` 的键（生成器无条件写入）；
+            //   `on each`    → 没有 match key，生成器改把 `entity(...)` 的单字段当键写；
+            //   用例头显式写的实体字段 → 一并算在内。
+            // `use` 的 predicate_overrides 优先级只在 key_overrides 之后（见
+            // `build_event_fields_with_predicates`）→ 写这些字段是静默失效，必须拦下。
+            //
+            // 别拿「规则推断的实体字段」当口径：`match<seller>` 而 `entity(…, b.auction)`
+            // 时（join-then-key）生成器覆盖的是 `seller` 而不是 `auction`——按后者会误报，
+            // 把本来能生效的 `use(auction=…)` 拒掉。
+            let rule_decl = if skip_wfl {
+                None
+            } else {
+                all_rules
+                    .iter()
+                    .find(|rule| rule.name == case.target_rule)
+            };
+            let mut entity_key_fields: Vec<String> = rule_decl
+                .map(|rule| rule_entity_key_fields(rule))
+                .unwrap_or_default();
+            match (case.entity_field.as_deref(), rule_decl) {
+                (Some(explicit), _) => {
+                    if !entity_key_fields.iter().any(|field| field == explicit) {
+                        entity_key_fields.push(explicit.to_string());
+                    }
+                }
+                (None, Some(rule)) if entity_key_fields.is_empty() => {
+                    if let Some(field) = rule_entity_field(rule) {
+                        entity_key_fields.push(field);
+                    }
+                }
+                _ => {}
+            }
+
             // VN24：`use` 事件组数不得超过规则的事件步骤数（每个 `use ... x N` 对应
             // 一个步骤）。生成期也拦（`inject_gen::helpers::plan::plan_use_steps`），
             // 这里提前到校验期——数错组数会静默少注入某个步骤的事件。
@@ -220,7 +255,7 @@ pub(super) fn validate_syntax(
                     });
                 }
                 // 逐条记录检查（`use from` 的数组形态有多条）：字段级校验必须按记录
-                // 分别做——不同记录重复出现同一字段是正常的（每条记录都有实体键）。
+                // 分别做——不同记录重复出现同一字段是正常的（每条记录都带实体键字段）。
                 for record in source_records(&group.source, &mut errors, stream, idx) {
                     check_predicate_fields(
                         &mut errors,
@@ -228,7 +263,7 @@ pub(super) fn validate_syntax(
                         idx,
                         "use",
                         &record,
-                        case.entity_field.as_deref(),
+                        &entity_key_fields,
                         case_schema,
                     );
                 }
@@ -243,7 +278,7 @@ pub(super) fn validate_syntax(
                     idx,
                     "without",
                     &without.predicates,
-                    case.entity_field.as_deref(),
+                    &entity_key_fields,
                     case_schema,
                 );
             }
@@ -268,7 +303,7 @@ pub(super) fn validate_syntax(
     validate_entity_dists(syntax, schemas, total_entity_ids, &mut errors);
 
     // Rule-presence check (VN14) is skipped when the WFL pipeline is opted out
-    // (--no-wfl / --no-oracle): there are no rules to reference.
+    // (--no-wfl / --no-expect): there are no rules to reference.
     if !skip_wfl && let Some(inj) = &syntax.injection {
         for case in &inj.cases {
             if !all_rules.iter().any(|rule| rule.name == case.target_rule) {
@@ -455,7 +490,7 @@ fn validate_entity_dists(
 /// VN30：`join <target_window> as <right_key_field> { use … x N }` 的静态一致性
 /// （设计 §9 跨流注入）。
 ///
-/// 右事件的连接键与时间由生成器推导（键 = 左实体键值、时间 = 左事件时间），所以这里要
+/// 右事件的连接键与时间由生成器推导（连接键 = 左实体键字段的值、时间 = 左事件时间），所以这里要
 /// 保证推导是**有依据**的：目标窗要能唯一匹配到规则的一个 join 子句、形态是缺省 inner、
 /// 且（界可算时）规则的 `within` 区间确实含左事件时间。造错跨流数据会静默改掉断言口径，
 /// 因此全部按报错处理。
@@ -551,7 +586,7 @@ fn validate_case_joins(
                     idx,
                     "join use",
                     &record,
-                    Some(&join.key_field),
+                    std::slice::from_ref(&join.key_field),
                     Some(right_schema),
                 );
             }
@@ -704,6 +739,35 @@ fn injectable_step_count(rule: &RuleDecl) -> usize {
     }
 }
 
+/// 规则里生成器会当作**实体键字段**写入事件的字段名（`RuleStructure::keys` 同口径）：
+/// 显式 key 映射 → 映射的来源字段；否则 `match<...>` 的键。
+/// `on each` 规则没有 match key，返回空（由 [`rule_entity_field`] 补位）。
+fn rule_entity_key_fields(rule: &RuleDecl) -> Vec<String> {
+    if let Some(mapping) = &rule.match_clause.key_mapping {
+        let names: Vec<String> = mapping
+            .iter()
+            .filter_map(|item| leaf_name(&item.source_field))
+            .collect();
+        if !names.is_empty() {
+            return names;
+        }
+    }
+    rule
+        .match_clause
+        .keys
+        .iter()
+        .filter_map(leaf_name)
+        .collect()
+}
+
+/// `entity(...)` 的单字段——`on each` 形态下它就是生成器的实体键字段。
+fn rule_entity_field(rule: &RuleDecl) -> Option<String> {
+    match &rule.entity.id_expr {
+        Expr::Field(fr) => leaf_name(fr),
+        _ => None,
+    }
+}
+
 /// 规则推断出的实体字段（设计 §3.7）：单 key `match` → 该 key；`on each` →
 /// `entity(<type>, <field>)` 的单字段表达式；显式 key 映射 → 映射的来源字段
 /// （真正逐实体变化的字段）。
@@ -842,14 +906,18 @@ fn object_record(json: &serde_json::Value) -> Vec<FieldPredicate> {
         .collect()
 }
 
-/// 注入用例里字段覆盖的公共检查（重名 / 与实体键重复 / 字段不在 schema）。
+/// 注入用例里字段覆盖的公共检查（重名 / 命中实体键字段 / 字段不在 schema）。
+///
+/// `entity_key_fields` = 生成器会写进事件的**实体键字段**（`match<...>` 的键；`on each` 时
+/// 为 `entity(...)` 的单字段；join 块为连接键）。这些字段的值由实体 id 分配，写在 `use` /
+/// `without` 里会被静默丢弃，所以报 VN12。
 fn check_predicate_fields(
     errors: &mut Vec<ValidationError>,
     stream: &str,
     step_idx: usize,
     step_kind: &str,
     predicates: &[FieldPredicate],
-    entity_field: Option<&str>,
+    entity_key_fields: &[String],
     case_schema: Option<&WindowSchema>,
 ) {
     let mut seen = HashSet::new();
@@ -863,14 +931,12 @@ fn check_predicate_fields(
                 ),
             });
         }
-        if let Some(entity) = entity_field
-            && pred.field == entity
-        {
+        if entity_key_fields.iter().any(|field| field == &pred.field) {
             errors.push(ValidationError {
                 code: "VN12",
                 message: format!(
-                    "injection case '{}' step {} repeats entity field '{}' in {}",
-                    stream, step_idx, pred.field, step_kind
+                    "注入用例 '{}' 第 {} 步的 {} 里写了实体键字段 '{}'：该字段的值由生成器按实体 id 分配，这里给的值会被静默丢弃",
+                    stream, step_idx, step_kind, pred.field
                 ),
             });
         }

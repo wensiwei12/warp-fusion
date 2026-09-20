@@ -781,6 +781,139 @@ scenario s<seed=1> {
     );
 }
 
+/// VN12（`on each` 推断出的实体键字段）：用例头**没写**实体字段时，`use` 里写实体键
+/// 同样是静默失效 —— 生成器 `build_event_fields_with_predicates` 里 key_overrides 优先级
+/// 最高，会把 `use` 给的值覆盖成实体 id 派生值，数据里根本不是作者写的那个数。
+#[test]
+fn test_syntax_inferred_entity_key_field_must_not_be_redeclared_in_use() {
+    let input = r#"
+#[duration=10m]
+scenario s<seed=1> {
+    background { stream bid_events gen 100/s }
+    inject {
+        hit<1> for q2_mod_123 bid_events {
+            use(auction=123, price=100) x 1
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_schema(
+        "bid_events",
+        vec![("auction", BaseType::Digit), ("price", BaseType::Digit)],
+    )];
+    // `on each b -> …` + `entity(digit, b.auction)` → 推断实体字段 = auction
+    let wfl = make_wfl_each("q2_mod_123", "bid_events", "auction");
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        errors.iter().any(|e| e.code == "VN12"),
+        "推断实体字段在 use 里重复应报 VN12: {:?}",
+        errors
+    );
+}
+
+/// VN12（非实体键字段不拦）：`use` 里写**非**实体键字段照旧放行。
+#[test]
+fn test_syntax_non_key_field_in_use_is_allowed() {
+    let input = r#"
+#[duration=10m]
+scenario s<seed=1> {
+    background { stream bid_events gen 100/s }
+    inject {
+        hit<1> for q2_mod_123 bid_events {
+            use(price=100, channel="G") x 1
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_schema(
+        "bid_events",
+        vec![
+            ("auction", BaseType::Digit),
+            ("price", BaseType::Digit),
+            ("channel", BaseType::Chars),
+        ],
+    )];
+    let wfl = make_wfl_each("q2_mod_123", "bid_events", "auction");
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        !errors.iter().any(|e| e.code == "VN12"),
+        "非实体字段不该报 VN12: {:?}",
+        errors
+    );
+}
+
+/// VN12（`match` 规则的实体键字段）：生成器无条件把规则的实体键字段写进事件，`use` 里再写
+/// 它同样是被覆盖的静默失效——注意这里被拦的是**规则的 key**，不是 `entity(...)`。
+#[test]
+fn test_syntax_match_key_must_not_be_redeclared_in_use() {
+    let input = r#"
+#[duration=10m]
+scenario s<seed=1> {
+    background { stream auth_events gen 100/s }
+    inject {
+        hit<1> for rule_a auth_events {
+            use(sip=1, dport=22) x 1
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_schema(
+        "auth_events",
+        vec![("sip", BaseType::Ip), ("dport", BaseType::Digit)],
+    )];
+    // match<sip, dport> 双 key；`use(sip=…)` 会被生成器覆盖 → VN12
+    let wfl = make_wfl_match("rule_a", vec![("a", "auth_events")], "sip, dport", None);
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        errors.iter().any(|e| e.code == "VN12"),
+        "use 里重复 match key 应报 VN12: {:?}",
+        errors
+    );
+}
+
+/// VN12 的**误报护栏**（join-then-key）：`match<seller>` 而 `entity(…, b.auction)` 时，
+/// 生成器覆盖的是规则 key `seller`，`entity(...)` 的 `auction` 并不在覆盖之列——
+/// 拿"推断的实体字段"当口径会把本来能生效的 `use(auction=…)` 误拒。
+#[test]
+fn test_syntax_entity_field_not_in_rule_keys_is_allowed_in_use() {
+    let input = r#"
+#[duration=10m]
+scenario s<seed=1> {
+    background { stream bid_events gen 100/s }
+    inject {
+        hit<1> for rule_j bid_events {
+            use(auction=123, price=100) x 1
+        }
+    }
+}
+"#;
+    let wfg = parse_wfg(input).unwrap();
+    let schemas = vec![make_schema(
+        "bid_events",
+        vec![
+            ("auction", BaseType::Digit),
+            ("seller", BaseType::Digit),
+            ("price", BaseType::Digit),
+        ],
+    )];
+    // match<seller>（规则 key）+ entity(ip, b.auction)（实体字段）：两者不同
+    let wfl = make_wfl_match(
+        "rule_j",
+        vec![("b", "bid_events")],
+        "seller",
+        Some("auction"),
+    );
+    let errors = validate_wfg(&wfg, &schemas, &[wfl], false);
+    assert!(
+        !errors.iter().any(|e| e.code == "VN12"),
+        "entity(...) 字段不在规则 key 里时不该报 VN12（生成器不覆盖它）: {:?}",
+        errors
+    );
+}
+
 /// VN22：显式实体字段不在该 stream 的 schema 里。生成器对拿不到类型的字段只会用
 /// 字符串兜底，注入会静默指向一个"看似实体"的字段。
 #[test]
@@ -1328,7 +1461,7 @@ fn test_use_records_array_is_accepted() {
     );
 }
 
-/// 多记录里重复出现同一字段是正常的（每条记录都有实体键），不得报 VN9。
+/// 多记录里重复出现同一字段是正常的（每条记录都带实体键字段），不得报 VN9。
 #[test]
 fn test_use_records_repeating_a_field_is_not_vn9() {
     let wfg = wfg_with_inject_json(serde_json::json!([
@@ -1446,7 +1579,7 @@ fn test_syntax_without_field_outside_schema_is_vn11() {
     );
 }
 
-/// `without` 的谓词重复同一字段 → VN9；重复实体键 → VN12。
+/// `without` 的谓词重复同一字段 → VN9；重复实体键字段 → VN12。
 #[test]
 fn test_syntax_without_duplicate_and_entity_field_rejected() {
     let schemas = vec![make_schema(
@@ -1464,7 +1597,7 @@ fn test_syntax_without_duplicate_and_entity_field_rejected() {
     );
     assert!(
         errors.iter().any(|e| e.starts_with("VN12")),
-        "重复实体键应报 VN12: {errors:?}"
+        "重复实体键字段应报 VN12: {errors:?}"
     );
 }
 

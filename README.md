@@ -44,7 +44,7 @@ cd wf-examples/nginx_log_stats
 | --- | --- |
 | `wfusion` | 引擎主二进制 |
 | `wfl` | 规则开发工具 |
-| `wfgen` | 数据生成与 oracle 验证|
+| `wfgen` | 数据生成与期望验证|
 | `wfadm` | 管理 CLI|
 
 ## 文档
