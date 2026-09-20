@@ -1,0 +1,15 @@
+use "../schemas/login.wfs"
+use "../rules/threshold_dynamic.wfl"
+
+#[duration=1m]
+scenario lint_threshold_dynamic<seed=7> {
+    background {
+        stream LoginWindow gen 20/s
+    }
+
+    inject {
+        hit<src_ip: 10> for bad_threshold LoginWindow {
+            use(success=false) x 2
+        }
+    }
+}

@@ -412,6 +412,7 @@ replay conn_events { use from "raw/monday.ndjson" }
 | 族 | 管什么 |
 |---|---|
 | `VN` | `.wfg` 的语法与注入语义（本节的表） |
+| `WFL` | `.wfl` 的**规则语义**（与引擎加载同一份 checker，见下） |
 | `INJ` | **生成期**断言（§4.2，不属校验期） |
 
 旧 `SC` / `SV` 两族**已退役**：它们校验的是 legacy 输入路径，而 `wfg_parser` 只实现
@@ -448,6 +449,14 @@ stream / 规则绑定 → `VN3` / `VN10` / `VN14`；字段与 schema → `VN11` 
 | VN35 | `use(...)` / `without(...)` / join 块里写了 schema 的**时间字段**（会造出双时间轴：事件字段与 oracle/引擎读的列时间分叉） | `… 第 N 步的 use 里写了时间字段 '<f>'：时间字段由生成器按事件时间写入，不能由 use/without 覆盖（会造成双时间轴、静默不一致）` |
 | VN34 | 同一个 `background` 里对**同一窗口**重复声明 `stream`（生成器各造一份：流量按速率之和叠加、两条流各有独立取值带） | `background 里重复声明了 stream '<s>'：同一窗口只能声明一次（…）；请合并成一条 \`gen <rate>\`` |
 | VN28 | 背景速率用了未实现的随时间形态 `wave(...)` / `burst(...)` / `timeline { ... }`（会按 `base=` 常量生成，与写法不符） | `stream 'auth_events': \`gen burst(...)\` 的随时间变化尚未实现（当前会按 \`base=\` 的常量速率生成，与写法不符）；请先改用常量速率 \`gen 100/s\`` |
+
+`WFL` 族没有自己的编号表：它就是规则 checker 的原始诊断，形如
+`[WFL] error: rule \`r\`: …`。`wfgen lint` 对场景 `use` 进来的每条 `.wfl` 跑两遍——
+先 `check_wfl`（规则语义，位置 / 类型 / 阈值常量性等），干净后再 `compile_wfl` 兜住 checker
+之后的装配阶段；**只把 `error` 当失败，`warning` 不算**（`lint` 的输出被脚本按「整行 == `OK`」
+判定，混进 warning 会让所有场景莫名变红）。因此 `lint` 与 `gen` 对同一份规则给出一致结论，
+不再出现「`lint` 说 OK、`gen` 才报错」，也覆盖了「能过编译、运行期却永不生效」那类写法
+（阈值非常量，warp-fusion#101）。
 
 `without(...)` 的谓词与 `use(...)` 共用同一套字段检查：重名 VN9、不在 schema VN11、
 重复实体键 VN12（VN12 在这条路径上尤其重要——见 §3.8）。

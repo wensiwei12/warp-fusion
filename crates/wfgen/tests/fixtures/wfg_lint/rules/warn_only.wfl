@@ -1,0 +1,16 @@
+// 只产生 **warning** 的规则（链步 `within` 超过 match 窗口时长）。
+//
+// `lint` 只把 error 当失败：这条规则必须仍然输出 `OK`、退出码 0 —— 否则
+// `verify_wfg.sh` 那类按「整行 == OK」判定的调用方会全线变红。
+rule warn_only {
+    events {
+        scan : LoginWindow && success == false
+    }
+    match<src_ip : 5s> {
+        on event seq {
+            has scan within 10s;
+        }
+    } -> score(1)
+    entity(ip, scan.src_ip)
+    yield alerts()
+}

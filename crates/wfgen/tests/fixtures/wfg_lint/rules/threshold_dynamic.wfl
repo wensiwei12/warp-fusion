@@ -1,0 +1,16 @@
+// warp-fusion#101 的最小复现：阈值里写 instance 收集函数（`first`）。
+//
+// 编译期曾放行，`wf-cep` 的 `check_threshold` 却折叠不出结果 → 分支恒判不满足、
+// 永不触发，运行期无任何信号。
+rule bad_threshold {
+    events {
+        scan : LoginWindow && success == false
+    }
+    match<src_ip : 5s> {
+        on event {
+            scan.bytes | sum >= first(scan.bytes);
+        }
+    } -> score(1)
+    entity(ip, scan.src_ip)
+    yield alerts()
+}

@@ -30,6 +30,7 @@
 - `use from "file"` 现在真正生效（此前文件里的值用不上）。
 - 场景注解只认 `duration` / `seed`（其他键此前被静默忽略）；`wave` / `burst` / `timeline` 此前按常量速率生成（压测强度静默失效）。
 - `.wfg` 的 `lint` 不再 panic；join 块里的 `use from` 会被解析；同一窗口重复声明 `stream` 会被拦下。
+- `wfgen lint` 现在也检查规则语义（此前只看 `.wfg` 结构，会出现「`lint` 说 OK、`gen` 才报错」；阈值非常量这类能过编译、运行期却永不触发的写法现在 `lint` 就会报出）。
 - `close` 规则尾部实例的时间此前可能与引擎对不上；`array/<base>` 此前丢失数组结构与值。
 - `wfgen verify` 的对拍匹配显著提速；`wfgen dump-frames` 不再需要一个在跑的 daemon。
 - admin API 的超限请求体稳定返回 413（此前偶发连接被重置）。

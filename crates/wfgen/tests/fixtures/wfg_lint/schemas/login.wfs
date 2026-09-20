@@ -1,0 +1,20 @@
+// `wfgen lint` 语义检查夹具：窗口与 `wfg_l3/without` 同构，多一个数值字段
+// `bytes`，用于构造 #101 那类「阈值非常量」的规则。
+
+window LoginWindow {
+    stream_tag = "login_events"
+    time = timestamp
+    over = 5m
+    fields {
+        timestamp: time
+        src_ip: ip
+        username: chars
+        bytes: digit
+        success: bool
+    }
+}
+
+window alerts {
+    fields { }
+    over = 0
+}

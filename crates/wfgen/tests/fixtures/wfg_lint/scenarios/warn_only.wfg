@@ -1,0 +1,15 @@
+use "../schemas/login.wfs"
+use "../rules/warn_only.wfl"
+
+#[duration=1m]
+scenario lint_warn_only<seed=7> {
+    background {
+        stream LoginWindow gen 20/s
+    }
+
+    inject {
+        hit<src_ip: 10> for warn_only LoginWindow {
+            use(success=false) x 1
+        }
+    }
+}

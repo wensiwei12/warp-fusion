@@ -1,0 +1,15 @@
+use "../schemas/login.wfs"
+use "../rules/ok.wfl"
+
+#[duration=1m]
+scenario lint_ok<seed=7> {
+    background {
+        stream LoginWindow gen 20/s
+    }
+
+    inject {
+        hit<src_ip: 10> for ok_rule LoginWindow {
+            use(success=false) x 2
+        }
+    }
+}

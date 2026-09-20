@@ -1,0 +1,14 @@
+// 干净规则：`lint` 应报 `OK`。
+rule ok_rule {
+    events {
+        scan : LoginWindow && success == false
+    }
+    match<src_ip : 5s> {
+        on event seq {
+            has scan;
+            has scan;
+        }
+    } -> score(1)
+    entity(ip, scan.src_ip)
+    yield alerts()
+}
