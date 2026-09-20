@@ -279,3 +279,42 @@ fn time_mismatch_beyond_tolerance_fails() {
     assert_eq!(report.status, "pass");
     assert_eq!(report.summary.matched, 1);
 }
+
+/// 热实体（同一 `entity_id` 落几千条告警）的配对必须**不退化**。
+///
+/// 匹配的分组键含 `entity_id` ⇒ 单组规模 = 该实体的告警数；组内是「逐期望找最近未用」的
+/// 扫描（Σ(n²)）。`parse_time_approx` 一旦被放回**内层循环**（历史实现），成本会再乘上
+/// 一次 chrono 日期解析：实测 q21 语料（单组 8050）据此从 0.28s 涨到 5.37s。
+/// 本用例取 3000×3000（9e6 次比较，debug 下 ~0.1s）：若解析回归进内层，它会涨到**秒级**
+/// （debug 下每对一次 chrono 解析），在 CI 墙上时间上非常显眼（同时也在断言配对计数正确）。
+#[test]
+fn hot_group_matching_stays_fast_and_correct() {
+    const N: usize = 3_000;
+    let expected: Vec<OracleAlert> = (0..N)
+        .map(|i| OracleAlert {
+            rule_name: "hot".to_string(),
+            score: 1.0,
+            entity_type: "digit".to_string(),
+            entity_id: "42".to_string(), // 同一个实体 → 全部落进同一组
+            origin: "event".to_string(),
+            emit_time: format!("2024-01-01T00:00:{:02}Z", i % 60),
+            fields: vec![],
+            intermediate: false,
+        })
+        .collect();
+    let actual: Vec<ActualAlert> = (0..N)
+        .map(|i| ActualAlert {
+            rule_name: "hot".to_string(),
+            score: 1.0,
+            entity_type: "digit".to_string(),
+            entity_id: "42".to_string(),
+            origin: "event".to_string(),
+            fired_at: format!("2024-01-01T00:00:{:02}Z", i % 60),
+        })
+        .collect();
+
+    let report = verify(&expected, &actual, 0.01, 1.0);
+    assert_eq!(report.summary.expected_total, N);
+    assert_eq!(report.summary.matched, N, "同分布的两侧应逐条配上");
+    assert_eq!(report.summary.missing + report.summary.unexpected, 0);
+}

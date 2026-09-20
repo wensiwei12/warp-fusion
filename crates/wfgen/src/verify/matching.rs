@@ -14,6 +14,14 @@ pub(super) struct MatchResult {
 }
 
 /// Greedily pair expected and actual alerts within a group by nearest time.
+///
+/// **性能**：ISO 时间戳的解析（`parse_time_approx`）必须**按边预计算**、不能放进内层循环。
+/// 历史上它在内层逐对解析，于是成本 ≈ Σ(组大小²) × 一次 chrono 解析：
+/// 热实体的语料（同一 entity_id 落几千条）实测把它推到秒级（q21：单组 8050² ≈ 6500 万次
+/// 日期解析 → `wfgen verify` 5.4s）。现改为 O(n) 次解析 + 纯 f64 比较，配对结果逐条不变。
+///
+/// 剩下的扫描仍是 Σ(|期望组| × |实际组|)；单热组达数万条时仍会显形（每对约 1–2ns），
+/// 届时应改成「按时间排序 + 双向游标/DSU 找最近未用」——当前语料规模下不值那份复杂度。
 pub(super) fn greedy_match(
     expected: &[&OracleAlert],
     actual: &[&ActualAlert],
@@ -25,17 +33,26 @@ pub(super) fn greedy_match(
     let mut mismatches = Vec::new();
     let mut paired_expected = vec![false; expected.len()];
 
+    // 时间戳只解析一次（每条边各一遍），内层循环只做 f64 比较。
+    let exp_times: Vec<f64> = expected
+        .iter()
+        .map(|e| parse_time_approx(&e.emit_time))
+        .collect();
+    let act_times: Vec<f64> = actual
+        .iter()
+        .map(|a| parse_time_approx(&a.fired_at))
+        .collect();
+
     // For each expected alert, find the nearest unused actual by time
     for (ei, exp) in expected.iter().enumerate() {
-        let exp_time = parse_time_approx(&exp.emit_time);
+        let exp_time = exp_times[ei];
         let mut best_idx: Option<usize> = None;
         let mut best_dist = f64::MAX;
 
-        for (j, act) in actual.iter().enumerate() {
+        for (j, act_time) in act_times.iter().enumerate() {
             if used_actual[j] {
                 continue;
             }
-            let act_time = parse_time_approx(&act.fired_at);
             let dist = (exp_time - act_time).abs();
             if dist < best_dist {
                 best_dist = dist;
