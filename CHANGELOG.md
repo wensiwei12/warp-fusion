@@ -8,19 +8,9 @@
 
 ### 注入语法（破坏性）
 
-数量改为显式：实体个数与每实体条数都写在用例里（总条数 = 背景配额 + 注入）。旧写法在加载期报错并给出改写方向。
-
-| 旧写法 | 新写法 |
-|---|---|
-| `hit<20%>` | `hit<sip: 500>` + `use(...) x 12` |
-| `traffic { … }` | `background { … }` |
-| `injection { … }` | `inject { … }` |
-| `use(...) with(N)` | `use(...) x N` |
-| `<field> seq { … }` | 取消——实体字段写在用例头（可省则从规则推断） |
-| `not(...) within(...)` | `without(preds) [within D]`——不写条数、不占步骤位 |
-| `expect { … }` | 取消——期望由模式 `hit` / `near_miss` / `miss` 承担 |
-
-`without(...)` 声明「该实体的窗口内不得出现匹配事件」；`use from "file"` 相对 `.wfg` 目录解析（支持 object / 数组 / NDJSON）。
+数量改为显式（总条数 = 背景配额 + 注入），旧写法在加载期报错并给出改写方向。**语法用法见
+[`docs/useage/scenarios.md`](docs/useage/scenarios.md)**（含错误码按族说明），**旧写法逐条对照与折算
+见 [`docs/design/wfg-design.md`](docs/design/wfg-design.md) §5**。
 
 ### 新增
 
@@ -29,6 +19,7 @@
 - **背景实体分布 `entity <window>.<field> zipf(pool=N, exponent=S, fresh=R)`**：背景可按 Zipf 权重从实体池抽取并保留新实体比例，值域与注入实体分区。
 - **`replay <window> { use from "file" }` 照单发货通道**：把现成数据原样灌进去（不写条数、不做实体数学、不参与断言），时间平移到场景起点。
 - `use(...)` 的值可以直接写结构化值（object / array / `null`，含多层嵌套与 UTF-8），规则里可用 `s.source_finding_obj.title` 这类嵌套路径读；`on each` 规则可作注入目标。
+- **`without(preds) [within D]`**：声明「该实体的窗口内不得出现匹配事件」（不写条数、不占步骤位）。
 - 使用指南 `docs/useage/scenarios.md` 与 `wfadm init` 模板、示例场景已迁到新语法。
 
 校验期新增错误码（触发条件见 `docs/design/wfg-design.md` §4.1）：VN22/VN23 显式实体字段、VN24 `use` 组数、VN25 时间窗超 `#[duration]`、VN26 `replay` 文件口径、VN27 实体 id 预算、VN28 未实现的速率形态、VN29 场景注解白名单、VN30 `join` 块形态、VN31 实体分布参数、VN32 重复单例块、VN33 用例 stream 须是规则绑定窗、VN34 同窗重复 `stream`、VN35 不能覆盖时间字段。
@@ -43,6 +34,7 @@
 - **背景不再与注入实体撞值**：`near_miss` / `miss` 的「必不报警」此前会被背景噪声破坏（概率性）。
 - **对拍口径修正**：`digit` 按列类型取值（>2^53 的 ID / 计数此前在期望侧被量化成另一个数）；链式规则的中间管道输出不再当最终告警写进期望、下游规则告警不再算 `unexpected`；`stats` 收口的 `entity_id` 与 `origin` 对齐引擎。
 - **`wfgen verify` 的匹配提速 19×**（热实体语料 5.4s → 0.28s，配对结果不变）；`wfgen dump-frames` 改为纯离线编码，不再需要一个在跑的 daemon。
+- `use from "file"` 现在真正生效（相对 `.wfg` 目录解析，支持 object / 数组 / NDJSON）。
 - `.wfg` 校验与生成的口径一致性：`lint` 不再 panic（多字节残余内容、超大 `#[duration]` 下的 `replay`）；join 块里的 `use from` 会被解析；同窗重复 `stream` 报 **VN34**。
 - admin API 的超限请求体稳定返回 413（此前偶发连接被重置）。
 
