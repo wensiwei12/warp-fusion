@@ -828,6 +828,11 @@ async fn reload_without_token_returns_401() {
 
 /// Regression for review M2: an oversized request body is rejected with
 /// 413 instead of being buffered unbounded into memory.
+///
+/// 断言连**响应体**一起读回：只比 status 会漏掉“服务端在超限处停读 → close → 客户端
+/// 写 body 时被 RST”这条竞态（那时 `send()` 直接报 `Connection reset by peer`，
+/// 根本拿不到 status）。`read_json_body` 现会把超限后的剩余 body 读干净（只丢弃），
+/// 客户端写完 body 才收到响应，因此这一步是确定性的。
 #[tokio::test]
 async fn reload_oversized_body_returns_413() {
     let (_temp, base, servant) = boot_engine_with_admin(BRUTE_FORCE_RULE).await;
@@ -842,6 +847,9 @@ async fn reload_oversized_body_returns_413() {
         .await
         .expect("post");
     assert_eq!(resp.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+    let body: serde_json::Value = resp.json().await.expect("413 body must be readable");
+    assert_eq!(body["result"], "payload_too_large");
+    assert_eq!(body["accepted"], false);
     servant.shutdown().await;
 }
 

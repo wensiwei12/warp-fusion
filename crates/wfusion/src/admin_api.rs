@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, Utc};
-use http_body_util::{BodyExt, Full, Limited};
+use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use hyper::service::service_fn;
@@ -1379,6 +1379,19 @@ enum ReadBodyError {
     Read(String),
 }
 
+/// 超限后仍继续“排空”读侧的上界（只丢弃、不落内存）。
+///
+/// 为什么必须排空：解析在超限处停下来时，socket 接收缓冲里还留着客户端尚未写完的
+/// body；此时 `close()` 会让内核发 RST，而客户端往往正卡在 write 上 —— 它拿到的是
+/// `Connection reset by peer`（hyper `BodyWrite`），**看不到那个 413**。
+/// `reload_oversized_body_returns_413` 的偶发失败就是这么来的：同一个 2 MiB body，
+/// 有时正常收到 413、有时写 body 时被重置，取决于“响应先到”还是“客户端写完后 close”
+/// 这个竞态哪边先赢（本机 30/30 都走好路，静默地在别的机器上翻车）。
+/// 排空把读侧读到 body 尽头，客户端写完 body 才轮到响应 —— 竞态消失。
+/// 两个上界（先到者生效）保证排空不会无界吃带宽/占连接：超过上界则按旧行为切断。
+const DRAIN_AFTER_LIMIT_MAX_BYTES: usize = 16 * 1024 * 1024;
+const DRAIN_AFTER_LIMIT_TIMEOUT: Duration = Duration::from_secs(2);
+
 async fn read_json_body<T>(
     body: hyper::body::Incoming,
     max_body_bytes: usize,
@@ -1386,18 +1399,45 @@ async fn read_json_body<T>(
 where
     T: for<'de> Deserialize<'de>,
 {
-    let collected = Limited::new(body, max_body_bytes)
-        .collect()
-        .await
-        .map_err(|err| {
-            if err.to_string().contains("length limit exceeded") {
-                ReadBodyError::TooLarge(max_body_bytes)
-            } else {
-                ReadBodyError::Read(format!("read request body failed: {err}"))
+    let mut body = body;
+    let mut collected: Vec<u8> = Vec::new();
+    let mut too_large = false;
+
+    while let Some(frame) = body.frame().await {
+        let frame =
+            frame.map_err(|err| ReadBodyError::Read(format!("read request body failed: {err}")))?;
+        // trailers 不带数据；忽略即可
+        let Ok(data) = frame.into_data() else {
+            continue;
+        };
+        if collected.len() + data.len() > max_body_bytes {
+            too_large = true;
+            break;
+        }
+        collected.extend_from_slice(&data);
+    }
+
+    if too_large {
+        // 已超限：不再累积（内存上界仍是 max_body_bytes），只把剩余 body 读干净。
+        // 排空失败（客户端中断）不影响裁定：照样返回 413。
+        let mut drained = 0usize;
+        let _ = timeout(DRAIN_AFTER_LIMIT_TIMEOUT, async {
+            while drained < DRAIN_AFTER_LIMIT_MAX_BYTES {
+                match body.frame().await {
+                    Some(Ok(frame)) => {
+                        if let Ok(data) = frame.into_data() {
+                            drained += data.len();
+                        }
+                    }
+                    Some(Err(_)) | None => break,
+                }
             }
-        })?;
-    let bytes = collected.to_bytes();
-    serde_json::from_slice(&bytes)
+        })
+        .await;
+        return Err(ReadBodyError::TooLarge(max_body_bytes));
+    }
+
+    serde_json::from_slice(&collected)
         .map_err(|e| ReadBodyError::InvalidJson(format!("invalid JSON body: {}", e)))
 }
 
