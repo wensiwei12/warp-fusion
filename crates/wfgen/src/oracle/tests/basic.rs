@@ -367,7 +367,11 @@ fn multi_alias_same_window_both_receive_events() {
 }
 
 #[test]
-fn sc7_uninjected_rule_skipped() {
+fn uninjected_rule_is_still_evaluated() {
+    // 期望流不再按 `injected_rules` 划范围：引擎加载的是整个 .wfl（所有规则都在跑），
+    // L3 对拍的是完整告警流 ⇒ 即使规则不在 `injected_rules` 里，oracle 也要算它。
+    // （旧行为/SC7 的“只算被注入的规则”会让链式查询的下游规则输出变成 unexpected——
+    //   实测 q13：引擎 12001 条 q13b、oracle 0 条。）
     let plan = make_simple_rule_plan(); // name = "brute_force"
     let start: chrono::DateTime<Utc> = "2024-01-01T00:00:00Z".parse().unwrap();
     let duration = Duration::from_secs(3600);
@@ -392,11 +396,15 @@ fn sc7_uninjected_rule_skipped() {
     .unwrap();
     assert_eq!(result.alerts.len(), 1);
 
-    // With injected_rules NOT containing "brute_force" → no alert (SC7)
+    // With injected_rules NOT containing "brute_force" → **仍然生成期望**（不再被跳过）
     let other: std::collections::HashSet<String> =
         ["some_other_rule".to_string()].into_iter().collect();
     let result = run_oracle(&events, &[plan], &start, &duration, Some(&other)).unwrap();
-    assert_eq!(result.alerts.len(), 0);
+    assert_eq!(
+        result.alerts.len(),
+        1,
+        "oracle 必须评估所有已加载规则（与引擎的完整告警流对齐）"
+    );
 }
 
 // ---------------------------------------------------------------------------

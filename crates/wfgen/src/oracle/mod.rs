@@ -34,7 +34,10 @@ pub struct OracleResult {
 /// timestamp order, and collects oracle alerts. Uses event-time nanoseconds
 /// for deterministic window expiry.
 ///
-/// SC7: when `injected_rules` is `Some`, only the rules whose names appear
+/// ⚠ `injected_rules` **不再**给期望流划定范围：引擎加载的是整个 `.wfl`（所有规则都在跑），
+/// L3 比的是完整告警流，所以 oracle 必须评估**所有已加载规则**——否则链式查询的下游规则
+/// （如 q13b）的 sink 可见告警会变成 `unexpected`。该形参保留给 L1 逐实体断言（INJ1/INJ2）
+/// 的调用方，不参与期望流。
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
@@ -139,19 +142,21 @@ where
         return Ok(OracleResult { alerts: vec![] });
     }
 
-    // Build per-rule engines, filtering to injected rules only (SC7).
+// Build per-rule engines over **所有已加载规则**（不按 injected_rules 过滤）：
+// 与引擎 `collect_intermediate_targets` / 整个 .wfl 都在跑的语义对齐。
     // Stats（`stats<...>`）规则 oracle 用 StatsExecutor 逐事件驱动（2026-08-27 接入）
     // ——fixed 窗口 bucket 对齐推进（同 StatsTask::advance_window）, 跨边界 close
     // 计数, 流末 close 全部尾部（对齐引擎 shutdown flush 的确定性收口）。
     // session/sliding 窗口（stats P2/P3 范围）不接入, 跳过计数。
+    let _ = injected_rules; // 保留形参（调用方/兼容）：它只用于 L1 的逐实体断言，不参与期望流——见下。
     let mut skipped_stats = 0usize;
     let mut engines: Vec<RuleEngine> = Vec::new();
     let mut stats_engines: Vec<StatsOracleEngine> = Vec::new();
-    for plan in rule_plans.iter().filter(|plan| {
-        injected_rules
-            .map(|set| set.contains(&plan.name))
-            .unwrap_or(true)
-    }) {
+    // ⚠ **不按 `injected_rules` 过滤**：引擎加载的是整个 `.wfl`（文件里**所有**规则都在跑），
+    // L3 对拍比的是**完整告警流**。若 oracle 只算"被注入的规则"，链式查询里下游规则的
+    // sink 可见告警就会成为 `unexpected`（q13 实测：引擎 12001 条 q13b，oracle 0 条）。
+    // `injected_rules` 的作用域只应该是 **L1 的逐实体断言**（INJ1/INJ2），不是期望流。
+    for plan in rule_plans.iter() {
         if let Some(stats_plan) = &plan.stats_plan {
             // 仅 fixed 窗口可 oracle（bucket 对齐推进）; session/sliding 跳过。
             if matches!(stats_plan.window_spec, WindowSpec::Fixed(_)) {
@@ -243,22 +248,19 @@ where
     // 上游规则输出到它时，既计数（与引擎 emitted_total 含中间一致）又作为事件
     // feed 给 bind 该窗口的下游规则（on-each 无状态路径；match 下游的 expiry
     // scan 由驱动事件主遍负责，中间 feed 只做状态推进，q13 场景为 each 规则）。
+    // 「中间窗」= 某个已加载规则的 bind 会消费的 yield 目标（引擎 `emit()` 对它们提前
+    // return、只回灌窗口给下游规则、**不落 sink**）。
+    //
+    // ⚠ 这里**不能**按 `injected_rules` 过滤：引擎 `collect_intermediate_targets` 是在
+    // **全部已加载规则**上算的（.wfl 里所有规则都进了 plan）。若只看被注入的规则,
+    // 链式查询（如 q4a → auction_finals → q4b）的内层 yield 会被误判成「最终告警」
+    // → 写进期望文件 → 而引擎永不落 sink → 永远报 `missing`（q4 的 old known-diff 就是这个）。
     let consumed_windows: std::collections::HashSet<&str> = rule_plans
         .iter()
-        .filter(|plan| {
-            injected_rules
-                .map(|set| set.contains(&plan.name))
-                .unwrap_or(true)
-        })
         .flat_map(|plan| plan.binds.iter().map(|b| b.window.as_str()))
         .collect();
     let intermediate_windows: std::collections::HashSet<String> = rule_plans
         .iter()
-        .filter(|plan| {
-            injected_rules
-                .map(|set| set.contains(&plan.name))
-                .unwrap_or(true)
-        })
         .map(|plan| plan.yield_plan.target.as_str())
         .filter(|target| consumed_windows.contains(target))
         .map(String::from)

@@ -19,19 +19,26 @@ type MatchKey = (String, String, String, String);
 /// Compare actual alerts against oracle (expected) alerts.
 ///
 /// Algorithm:
-/// 1. Group both sides by match key `(rule_name, entity_type, entity_id, origin)`.
-/// 2. Within each group, greedily pair by nearest time.
-/// 3. Paired alerts with `|time_diff| > time_tolerance` or `|score_diff| > score_tolerance`
+/// 1. **剔除中间管道输出**（`intermediate == true`）：yield target 被下游规则 bind 的
+///    yield（如 q4a→`auction_finals`、q13a→`bid_mod`）**不落 sink**——引擎 `emit()`
+///    对 `intermediate_targets` 提前 `return`，只回灌窗口给下游规则（见
+///    `wf-runtime/engine_task/rule_task/rule_task_emit.rs`）。它们不在实际告警流里，
+///    参与比较只会永远报 `missing`（q4 的"已知差异"就是这个）。
+///    改 sink 配置没有用——`windows = ["*"]` 的全量组也拿不到它们。
+/// 2. Group both sides by match key `(rule_name, entity_type, entity_id, origin)`.
+/// 3. Within each group, greedily pair by nearest time.
+/// 4. Paired alerts with `|time_diff| > time_tolerance` or `|score_diff| > score_tolerance`
 ///    count as field_mismatch.
-/// 4. Unpaired expected → missing, unpaired actual → unexpected.
-/// 5. Status = "pass" iff missing == 0 && unexpected == 0 && field_mismatch == 0.
+/// 5. Unpaired expected → missing, unpaired actual → unexpected.
+/// 6. Status = "pass" iff missing == 0 && unexpected == 0 && field_mismatch == 0.
 pub fn verify(
     expected: &[OracleAlert],
     actual: &[ActualAlert],
     score_tolerance: f64,
     time_tolerance_secs: f64,
 ) -> VerifyReport {
-    let expected_groups = group_expected(expected);
+    let sink_expected: Vec<&OracleAlert> = expected.iter().filter(|a| !a.intermediate).collect();
+    let expected_groups = group_expected(&sink_expected);
     let actual_groups = group_actual(actual);
 
     let mut matched = 0usize;
@@ -134,7 +141,7 @@ pub fn verify(
         schema: "wfgen-verify-report/v2".to_string(),
         status,
         summary: VerifySummary {
-            expected_total: expected.len(),
+            expected_total: sink_expected.len(),
             actual_total: actual.len(),
             matched,
             missing,
@@ -169,7 +176,7 @@ fn match_key_actual(a: &ActualAlert) -> MatchKey {
     )
 }
 
-fn group_expected(alerts: &[OracleAlert]) -> HashMap<MatchKey, Vec<&OracleAlert>> {
+fn group_expected<'a>(alerts: &'a [&'a OracleAlert]) -> HashMap<MatchKey, Vec<&'a OracleAlert>> {
     let mut map: HashMap<MatchKey, Vec<&OracleAlert>> = HashMap::new();
     for a in alerts {
         map.entry(match_key_expected(a)).or_default().push(a);
