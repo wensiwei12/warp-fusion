@@ -4,49 +4,45 @@
 
 ## [0.7.0]
 
-`.wfg` 注入语法重写（**破坏性**，现有场景需改写）；引擎对齐 wp-reactor 2.3.0、连接器对齐 wp-connectors 0.21.0。
-
-### 注入语法（破坏性）
-
-数量改为显式（总条数 = 背景配额 + 注入），旧写法在加载期报错并给出改写方向。**语法用法见
-[`docs/useage/scenarios.md`](docs/useage/scenarios.md)**（含错误码按族说明），**旧写法逐条对照与折算
-见 [`docs/design/wfg-design.md`](docs/design/wfg-design.md) §5**。
+`.wfg` 注入语法重写（**破坏性**，现有场景需改写）：旧写法在加载期报错并给出改写方向，语法用法见
+[`docs/useage/scenarios.md`](docs/useage/scenarios.md)、旧写法逐条对照见
+[`docs/design/wfg-design.md`](docs/design/wfg-design.md) §5。引擎对齐 wp-reactor 2.3.0、连接器对齐 wp-connectors 0.21.0。
 
 ### 新增
 
 - **生成期硬断言 INJ1 / INJ2**：`hit` 的每个实体必须报警、`near_miss` / `miss` 的每个实体必须不报警，失败点名实体。
-- **跨流注入 `join <window> as <key> { … }`**：为规则的 join 目标窗造配对事件（连接键 = 左实体键值、时间取左事件时间）；snapshot 形态与 join-then-key（键在 join 侧，如 q6）都支持。
-- **背景实体分布 `entity <window>.<field> zipf(pool=N, exponent=S, fresh=R)`**：背景可按 Zipf 权重从实体池抽取并保留新实体比例，值域与注入实体分区。
-- **`replay <window> { use from "file" }` 照单发货通道**：把现成数据原样灌进去（不写条数、不做实体数学、不参与断言），时间平移到场景起点。
-- `use(...)` 的值可以直接写结构化值（object / array / `null`，含多层嵌套与 UTF-8），规则里可用 `s.source_finding_obj.title` 这类嵌套路径读；`on each` 规则可作注入目标。
-- **`without(preds) [within D]`**：声明「该实体的窗口内不得出现匹配事件」（不写条数、不占步骤位）。
-- 使用指南 `docs/useage/scenarios.md` 与 `wfadm init` 模板、示例场景已迁到新语法。
+- **跨流注入 `join <window> as <key> { … }`**：为规则的 join 目标窗造配对事件（支持 snapshot 与 join-then-key 形态）。
+- **背景实体分布 `entity <window>.<field> zipf(…)`**：背景按 Zipf 权重从实体池抽取并保留新实体比例，值域与注入实体分区。
+- **`replay <window> { use from "file" }`**：把现成数据原样灌进去（不写条数、不做实体数学、不参与断言）。
+- `use(...)` 可以写结构化值（object / array / `null`，含多层嵌套），规则里可以用 `s.source_finding_obj.title` 这类嵌套路径读。
+- `without(preds) [within D]`：声明「该实体的窗口内不得出现匹配事件」。
+- `on each` 规则可作注入目标；数量显式写（总条数 = 背景配额 + 注入）。
 
-校验期新增错误码（触发条件见 `docs/design/wfg-design.md` §4.1）：VN22/VN23 显式实体字段、VN24 `use` 组数、VN25 时间窗超 `#[duration]`、VN26 `replay` 文件口径、VN27 实体 id 预算、VN28 未实现的速率形态、VN29 场景注解白名单、VN30 `join` 块形态、VN31 实体分布参数、VN32 重复单例块、VN33 用例 stream 须是规则绑定窗、VN34 同窗重复 `stream`、VN35 不能覆盖时间字段。
+校验期新增 13 个错误码（VN22–VN35，触发条件见 [`docs/design/wfg-design.md`](docs/design/wfg-design.md) §4.1）。
 
 ### 修复
 
-- 场景注解只认 `duration` / `seed`（其他键此前被静默忽略）→ **VN29**；背景速率的 `wave` / `burst` / `timeline` 此前按 `base=` 常量生成、压测强度静默失效 → **VN28**。
-- `array/<base>` 此前丢失数组结构与值；结构化字段此前在断言侧被丢弃；`close` 规则尾部实例的时间此前可能与引擎 `close:flush` 对不上。
-- **`wfgen verify` 不再把「空对空」算成通过**：两侧都是 0 条时此前报 `pass`；现判失败，要接受空输入须显式 `--allow-empty`（`wfl verify` 同名旗标）。
-- **`--no-expect` 不再静默关掉注入断言**，并清掉上一次遗留的期望文件（陈旧期望会让对拍拿旧期望比新数据）。
-- **实体键字段口径统一**：`entity(...)` 的单字段总是写进事件、显式 `key` 映射写来源字段、join 驱动侧连接键自动对齐；`use(...)` / `without(...)` / join 块写这些字段或 schema 时间字段一律拦下（**VN12** / **VN35**）。
-- **背景不再与注入实体撞值**：`near_miss` / `miss` 的「必不报警」此前会被背景噪声破坏（概率性）。
-- **对拍口径修正**：`digit` 按列类型取值（>2^53 的 ID / 计数此前在期望侧被量化成另一个数）；链式规则的中间管道输出不再当最终告警写进期望、下游规则告警不再算 `unexpected`；`stats` 收口的 `entity_id` 与 `origin` 对齐引擎。
-- **`wfgen verify` 的匹配提速 19×**（热实体语料 5.4s → 0.28s，配对结果不变）；`wfgen dump-frames` 改为纯离线编码，不再需要一个在跑的 daemon。
-- `use from "file"` 现在真正生效（相对 `.wfg` 目录解析，支持 object / 数组 / NDJSON）。
-- `.wfg` 校验与生成的口径一致性：`lint` 不再 panic（多字节残余内容、超大 `#[duration]` 下的 `replay`）；join 块里的 `use from` 会被解析；同窗重复 `stream` 报 **VN34**。
+- `wfgen verify` 不再把「空对空」算成通过（两侧都是 0 条时此前报 `pass`）——要接受空输入用 `--allow-empty`（`wfl verify` 同名旗标）。
+- `--no-expect` 不再静默关掉注入断言，并清掉上一次遗留的期望文件（陈旧期望会让对拍拿旧期望比新数据）。
+- `use(...)` / `without(...)` / join 块里写实体键字段或 schema 时间字段一律拦下（VN12 / VN35）：此前会被静默换成别的值，断言随之指错实体；join 驱动侧的连接键值也不再需要手写 `use(...)` 去凑。
+- 对拍口径修正：`digit` 按列类型取值（>2^53 的 ID 此前被量化成另一个数）；链式规则的中间管道输出不再当最终告警写进期望；`stats` 收口口径对齐引擎。
+- 背景不再与注入实体的键值撞车（负样本的「必不报警」此前可能被背景噪声破坏）。
+- `use from "file"` 现在真正生效（此前文件里的值用不上）。
+- 场景注解只认 `duration` / `seed`（其他键此前被静默忽略）；`wave` / `burst` / `timeline` 此前按常量速率生成（压测强度静默失效）。
+- `.wfg` 的 `lint` 不再 panic；join 块里的 `use from` 会被解析；同一窗口重复声明 `stream` 会被拦下。
+- `close` 规则尾部实例的时间此前可能与引擎对不上；`array/<base>` 此前丢失数组结构与值。
+- `wfgen verify` 的对拍匹配显著提速；`wfgen dump-frames` 不再需要一个在跑的 daemon。
 - admin API 的超限请求体稳定返回 413（此前偶发连接被重置）。
 
 ### 命名
 
-“oracle”向用户侧统一改叫**期望**（代码里的标识符不动）：`--no-oracle` → `--no-expect`（旧名保留为隐藏别名）；`verify` 报告 `summary.oracle_total` → `summary.expected_total`、`schema` 升到 `/v2`；`docs/ORACLE_VERIFY.md` → `docs/EXPECTATION_VERIFY.md`。
+“oracle”向用户侧统一改叫**期望**（标识符不动）：`--no-oracle` → `--no-expect`；`verify` 报告字段 `oracle_total` → `expected_total`、`schema` 升到 `/v2`；文档改名 `docs/EXPECTATION_VERIFY.md`。
 
 ### 引擎（对齐 wp-reactor 2.3.0）
 
-- 新增在线行为基线检测（`judge` / `detect`）与 `baseline_dev` / `sumsq` / `phase_bucket` 内建；外部供给刷新一致性提升、供给 SQL 变量错误改为启动即报错。
+- 新增在线行为基线检测（`judge` / `detect`）与 `baseline_dev` / `sumsq` / `phase_bucket` 内建；外部供给刷新一致性提升、供给 SQL 变量配置错误改为启动即报错。
 - 规则里「能编译、但永远不生效」的写法改编译期报错（位置不对的集合 / 统计函数与 `window.has` / `baseline`、无限定 `has(...)`、`stats` 桶键写成表达式）。
-- `|v| >= 2^53` 的大整数不再被量化（区间比较与同刻跨流配对不再随机丢）；修掉几处静默丢数据 / 回绕：`arrow_framed` 文件源丢批、小数时间戳偏 64ns、接收侧不支持的列组合让投影作废（改空值 + WARN）、时长字面量溢出。
+- `|v| >= 2^53` 的大整数不再被量化；修掉几处静默丢数据的输入路径（`arrow_framed` 文件源丢批、接收侧不支持的列组合让投影作废）。
 
 ## [0.6.3]
 
