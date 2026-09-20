@@ -76,7 +76,7 @@ async fn run_cli() -> WfgenResult<()> {
         Commands::Lint(a) => wfgen::cmd_lint::run(a),
         Commands::Verify(a) => wfgen::cmd_verify::run(a),
         Commands::Send(a) => wfgen::cmd_send::run(a).await,
-        Commands::DumpFrames(a) => wfgen::cmd_frames::dump_frames(a).await,
+        Commands::DumpFrames(a) => wfgen::cmd_frames::dump_frames(a),
         Commands::SendArrow(a) => wfgen::cmd_frames::send_arrow(a).await,
         Commands::ShardFrames(a) => wfgen::cmd_frames::shard_frames(a).await,
         Commands::Bench(a) => wfgen::cmd_bench::run(a).await,
@@ -131,9 +131,9 @@ mod tests {
     }
 
     #[test]
-    fn gen_no_oracle_flag_parses() {
-        // --no-oracle is a distinct flag (skip the WFL pipeline and oracle);
-        // must parse independently of --no-wfl.
+    fn gen_no_expect_flag_parses() {
+        // --no-expect is a distinct flag (skip the WFL pipeline and expected
+        // output); must parse independently of --no-wfl.
         let cli = Cli::try_parse_from([
             "wfgen",
             "gen",
@@ -141,13 +141,13 @@ mod tests {
             "x.wfg",
             "--out",
             "out",
-            "--no-oracle",
+            "--no-expect",
         ]);
         assert!(cli.is_ok(), "expected parse success, got: {:?}", cli.err());
     }
 
     #[test]
-    fn gen_no_wfl_and_no_oracle_both_parse() {
+    fn gen_no_wfl_and_no_expect_both_parse() {
         let cli = Cli::try_parse_from([
             "wfgen",
             "gen",
@@ -156,6 +156,21 @@ mod tests {
             "--out",
             "out",
             "--no-wfl",
+            "--no-expect",
+        ]);
+        assert!(cli.is_ok(), "expected parse success, got: {:?}", cli.err());
+    }
+
+    #[test]
+    fn gen_no_oracle_remains_a_hidden_alias() {
+        // 旧名保留为别名（隐藏），老脚本不会因改写而挂。
+        let cli = Cli::try_parse_from([
+            "wfgen",
+            "gen",
+            "--scenario",
+            "x.wfg",
+            "--out",
+            "out",
             "--no-oracle",
         ]);
         assert!(cli.is_ok(), "expected parse success, got: {:?}", cli.err());

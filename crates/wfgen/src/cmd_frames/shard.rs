@@ -555,11 +555,27 @@ pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
     h
 }
 
+/// 一帧的离线编码：`<len> <payload>`，payload = `[4B tag_len][tag][IPC stream]`。
+///
+/// 与在线发送路径（`TcpArrowSink::encode_batch_payload_with_tag` 的 `arrow_framed`
+/// 分支 = `encode_ipc_frame` + RFC6587 `Framing::Len` 前缀）**字节一致**——这是
+/// “预编码帧回放等价于在线发送”的前提，由 `offline_frame_bytes_match_tcp_sink_encoder`
+/// 单测锁定，防止两条路径静默分叉。
+pub(crate) fn encode_framed_payload(
+    tag: &str,
+    batch: &arrow::record_batch::RecordBatch,
+) -> WfgenResult<Vec<u8>> {
+    let payload = wp_arrow::ipc::encode_ipc(tag, batch)
+        .map_err(|e| crate::error::error(WfgenReason::Serialization, format!("encode: {e}")))?;
+    let mut framed = Vec::with_capacity(16 + payload.len());
+    write_frame(&mut framed, &payload)?;
+    Ok(framed)
+}
+
 /// Encode `events` into typed Arrow batches and append each framed payload.
 pub(crate) fn write_frames(
     events: &[crate::datagen::stream_gen::GenEvent],
     schemas: &[WindowSchema],
-    sink: &wp_core_connectors::sinks::tcp::TcpArrowSink,
     writer: &mut impl Write,
     total_bytes: &mut usize,
     max_frame_bytes: usize,
@@ -568,13 +584,11 @@ pub(crate) fn write_frames(
     let batches = events_to_typed_batches(events, schemas, max_frame_bytes, max_frame_rows)?;
     let mut frames = 0usize;
     for (stream_name, batch) in &batches {
-        let payload = sink
-            .encode_batch_payload_with_tag(stream_name, batch)
-            .source_err(WfgenReason::Serialization, "encode_batch_payload failed")?;
+        let framed = encode_framed_payload(stream_name, batch)?;
         writer
-            .write_all(&payload)
+            .write_all(&framed)
             .source_err(WfgenReason::Io, "writing frame bytes")?;
-        *total_bytes += payload.len();
+        *total_bytes += framed.len();
         frames += 1;
     }
     Ok(frames)

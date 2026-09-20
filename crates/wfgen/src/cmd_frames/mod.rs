@@ -25,7 +25,6 @@ use crate::cmd_helpers::load_ws_files;
 use crate::error::{WfgenReason, WfgenResult};
 use crate::loader::load_from_uses;
 use crate::output::jsonl::parse_gen_event_line;
-use crate::tcp_send::connect_sender;
 use crate::wfg_parser::parse_wfg;
 
 mod shard;
@@ -45,7 +44,8 @@ pub struct DumpFramesArgs {
     #[arg(long)]
     pub input: PathBuf,
 
-    /// Runtime TCP address used only to borrow the framed encoder
+    /// 已废弃（保留仅为兼容旧脚本）：dump-frames 现在**纯离线编码**，不连接运行时，
+    /// 此参数被忽略。帧字节与在线发送（`wfgen send`）完全一致，由单测锁定。
     #[arg(long, default_value = "127.0.0.1:9800")]
     pub addr: String,
 
@@ -144,19 +144,19 @@ pub struct ShardFramesArgs {
 /// `wfgen dump-frames`: read JSONL once and write the pre-encoded Arrow frames
 /// (the byte-identical payloads `wfgen send` produces) to `output`.
 ///
-/// A connected `TcpArrowSink` is only borrowed for its `framed` encoding mode;
-/// the payloads go to `output`, not the network. `--addr` defaults to the
-/// benchmark port and is where the sink connects for the encode borrow.
-pub async fn dump_frames(args: DumpFramesArgs) -> WfgenResult<()> {
+/// **纯离线**：不连接任何运行时（旧版的 `--addr` 连接只为借用 `TcpArrowSink` 的
+/// `arrow_framed` 编码器；现在直接用共享的 `wp_arrow::ipc::encode_ipc` + RFC6587
+/// 长度前缀，与在线发送/接收侧同格式，并由单测锁定字节一致）。
+pub fn dump_frames(args: DumpFramesArgs) -> WfgenResult<()> {
     let DumpFramesArgs {
         scenario,
         input,
-        addr,
         ws,
         output,
         chunk,
         max_frame_bytes,
         max_frame_rows,
+        ..
     } = args;
     let wfg_content = std::fs::read_to_string(&scenario).source_err(
         WfgenReason::Io,
@@ -166,8 +166,6 @@ pub async fn dump_frames(args: DumpFramesArgs) -> WfgenResult<()> {
 
     let (mut schemas, _) = load_from_uses(&mut wfg, &scenario, &HashMap::new(), false)?;
     schemas.extend(load_ws_files(&ws)?);
-
-    let sink = connect_sender(&addr).await?;
 
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent).source_err(
@@ -216,7 +214,6 @@ pub async fn dump_frames(args: DumpFramesArgs) -> WfgenResult<()> {
             total_frames += write_frames(
                 &events,
                 &schemas,
-                &sink,
                 &mut writer,
                 &mut total_bytes,
                 max_frame_bytes,
@@ -236,7 +233,6 @@ pub async fn dump_frames(args: DumpFramesArgs) -> WfgenResult<()> {
         total_frames += write_frames(
             &events,
             &schemas,
-            &sink,
             &mut writer,
             &mut total_bytes,
             max_frame_bytes,

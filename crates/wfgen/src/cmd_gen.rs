@@ -51,12 +51,14 @@ pub struct Args {
     #[arg(long)]
     pub no_wfl: bool,
 
-    /// Skip oracle/expected output only: WFL is still compiled, so
-    /// injection `use()` fixed values apply and generated events are
-    /// inject-aware; no `.except.jsonl` / `.except.meta.jsonl` sidecars
-    /// are written. Use `--no-wfl` to also drop rule compilation.
-    #[arg(long)]
-    pub no_oracle: bool,
+    /// Skip expected output only: WFL is still compiled, so injection
+    /// `use()` fixed values apply and generated events are inject-aware;
+    /// no `.except.jsonl` / `.except.meta.jsonl` sidecars are written.
+    /// Use `--no-wfl` to also drop rule compilation.
+    ///
+    /// `--no-oracle` is kept as a hidden alias.
+    #[arg(long, alias = "no-oracle")]
+    pub no_expect: bool,
 
     /// Send generated events to wfusion over TCP + Arrow IPC
     #[arg(long)]
@@ -82,7 +84,7 @@ pub async fn run(args: Args) -> WfgenResult<()> {
         ws,
         wfl,
         no_wfl,
-        no_oracle,
+        no_expect,
         send,
         addr,
         duration,
@@ -135,9 +137,9 @@ pub async fn run(args: Args) -> WfgenResult<()> {
 
     // `--no-wfl` skips the entire WFL pipeline: no rule loading, no
     // `_global.wfl` / yield-preset evaluation, no compilation, no injection, no
-    // oracle / expected output. Generation falls back to baseline events.
-    // `--no-oracle` keeps the pipeline (injection fixed values still apply) and
-    // only skips oracle / expected output.
+    // expected output. Generation falls back to baseline events.
+    // `--no-expect` keeps the pipeline (injection fixed values still apply) and
+    // only skips expected output.
     let skip_wfl = no_wfl;
 
     let (mut schemas, mut wfl_files) =
@@ -160,12 +162,12 @@ pub async fn run(args: Args) -> WfgenResult<()> {
     }
 
     // 期望输出（`.except.jsonl`）不再由 `expect` 块触发——该块已删除：只要 WFL
-    // 管线在跑（没有 `--no-wfl`）且没有被 `--no-oracle` 关掉，就生成期望文件。
+    // 管线在跑（没有 `--no-wfl`）且没有被 `--no-expect` 关掉，就生成期望文件。
     // 此时 WFL 编译失败必须致命，否则会写出错误的期望。
-    let expected_requested = !skip_wfl && !no_oracle;
+    let expected_requested = !skip_wfl && !no_expect;
 
-    // Compile WFL rules. Skipped entirely by `--no-wfl`; `--no-oracle` still
-    // compiles so injection-aware generation works, and only oracle/expected
+    // Compile WFL rules. Skipped entirely by `--no-wfl`; `--no-expect` still
+    // compiles so injection-aware generation works, and only expected
     // output is suppressed. `rule_plans` stays empty only under `--no-wfl`,
     // which falls back to baseline background events.
     let mut rule_plans = Vec::new();
@@ -186,7 +188,7 @@ pub async fn run(args: Args) -> WfgenResult<()> {
                 return error::fail(
                     WfgenReason::Validation,
                     "WFL compilation failed while expected output is enabled; \
-                     fix the WFL errors or use --no-oracle / --no-wfl to skip expected output",
+                     fix the WFL errors or use --no-expect / --no-wfl to skip expected output",
                 );
             } else {
                 for e in &compile_errors {
@@ -201,12 +203,12 @@ pub async fn run(args: Args) -> WfgenResult<()> {
 
     // Expected alert generation (on CLEAN events, before faults).
     let expected_enabled = expected_requested && !rule_plans.is_empty();
-    // Oracle/expected output was requested, not opted out (--no-wfl /
-    // --no-oracle) but there is nowhere to write it (--send only, no --out).
+    // Expected output was requested, not opted out (--no-wfl /
+    // --no-expect) but there is nowhere to write it (--send only, no --out).
     // Warn rather than silently drop it.
     if expected_requested && out.is_none() {
         eprintln!(
-            "Warning: oracle/expected output requested but --out not set; \
+            "Warning: expected output requested but --out not set; \
              skipping expected generation"
         );
     }
@@ -376,7 +378,7 @@ mod tests {
             ws: Vec::new(),
             wfl: Vec::new(),
             no_wfl: false,
-            no_oracle: false,
+            no_expect: false,
             send: false,
             addr: "127.0.0.1:1".to_string(),
             duration: None,

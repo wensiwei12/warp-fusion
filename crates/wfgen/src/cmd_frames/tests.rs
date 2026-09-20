@@ -219,3 +219,41 @@ async fn shard_frames_mid_stream_flush_and_multi_stream_grouping() {
     assert_eq!(bid_rows, 450_500);
     assert_eq!(auc_rows, 450_000);
 }
+
+/// `dump-frames` 的离线帧字节必须与在线发送路径（`TcpArrowSink`，即 `wfgen send`
+/// 用的编码器）**逐字节一致**——否则「预编码帧回放 == 在线发送」这个前提就
+/// 静默失效了（帧能读但语义不等价）。
+///
+/// 编码与连接内容无关（`encode_ipc_frame` + RFC6587 长度前缀是纯函数），因此只需
+/// 一个接受连接、不读不写、不响应的监听端就能拿到 sink。
+#[tokio::test]
+async fn offline_frame_bytes_match_tcp_sink_encoder() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let server = std::thread::spawn(move || {
+        let _ = listener.accept();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    });
+
+    let sink = crate::tcp_send::connect_sender(&addr).await.unwrap();
+    let batch = int64_batch(&[("auction", vec![1, 2, 3]), ("price", vec![10, 20, 30])]);
+
+    // 空 tag 与真实流 tag 都要一致：空 tag 覆盖 `stream_tag = ""` 的配置形态。
+    for tag in ["bid_events", ""] {
+        let online = sink.encode_batch_payload_with_tag(tag, &batch).unwrap();
+        let offline = encode_framed_payload(tag, &batch).unwrap();
+        assert_eq!(
+            online, offline,
+            "tag={tag:?}: 离线编码与 TCP sink 编码必须逐字节一致"
+        );
+        // 帧格式自检：`<len> <payload>`，payload 前 4 字节 = tag 长度（大端）。
+        let sep = offline.iter().position(|&b| b == b' ').unwrap();
+        let len: usize = std::str::from_utf8(&offline[..sep]).unwrap().parse().unwrap();
+        assert_eq!(len, offline.len() - sep - 1, "RFC6587 长度前缀 = payload 长度");
+        let tag_len = u32::from_be_bytes(offline[sep + 1..sep + 5].try_into().unwrap());
+        assert_eq!(tag_len as usize, tag.len(), "wp_arrow 帧头 tag 长度");
+    }
+
+    drop(sink);
+    server.join().ok();
+}
