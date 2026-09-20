@@ -416,13 +416,18 @@ impl ColumnBuilder {
     }
 }
 
-/// `digit` 列取值：整数直接用；**整值浮点**（`3e7` / `30000000.0`）也接受。
+/// `digit` 列（箭头 `Int64`）取值：整数直接用；**整值浮点**（`3e7` / `30000000.0`）也接受。
 ///
 /// 原始日志文件里整数常带小数点，而 `as_i64()` 对浮点返回 `None` —— 直接用它会把值
 /// 静默写成 **null**（数据看起来在、数值其实是空，引擎侧 `sum` / 阈值比较恒为 0）。
 /// 整值浮点按整数处理；非整值（`22.5` 给 `digit` 列）仍然拒绝（写 null），
 /// 不猜用户意图。
-fn json_as_i64(value: &serde_json::Value) -> Option<i64> {
+///
+/// **这是「JSON → `Int64` 列值」的唯一实现**（与列类型强绑定的归一化）：Arrow 编码
+/// 与 oracle 的事件构造（`crate::oracle::gen_event_to_core`）共用它——两侧若各写一份，
+/// 对同一份数据会得出不同的值域（oracle 按 JSON 口径落 `Float`、引擎按列落 `Int`），
+/// `>2^53`（雪花 ID / 纳秒 / 大计数）时静默分叉。
+pub(crate) fn json_as_i64(value: &serde_json::Value) -> Option<i64> {
     if let Some(i) = value.as_i64() {
         return Some(i);
     }

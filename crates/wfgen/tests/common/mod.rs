@@ -5,8 +5,9 @@
 //! 时长、变量**参数化**，供语料级 L3 复用；`windows.toml` 由场景 schema 生成，因此任何
 //! 示例目录都能直接跑。
 //!
-//! 已知口径：batch/file 模式最后一批告警的 `origin` 是 `close:flush`，oracle 建模为
-//! 场景末尾 `close:eos`；对拍前统一归一化（见 [`normalize_origin`]）。
+//! 收尾口径（两侧已对齐）：batch/file 模式最后一批告警在**停机刷写**时产出，打
+//! `close:flush`；oracle 按同一口径建模（`CloseReason::Eos` 在运行时没有生产路径）。
+//! 因此不再需要把 `close:flush` 归一成 `close:eos` 的补丁 —— 标签不一致会如实报出来。
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -27,8 +28,6 @@ pub struct EngineRun {
     pub report: VerifyReport,
     pub oracle_total: usize,
     pub actual_total: usize,
-    /// 被归一化的 `close:flush` 告警数（> 0 说明走了收尾路径）。
-    pub normalized_flush: usize,
     /// 产物目录（失败时可去看 `wfusion.toml` / `alerts/` / `input/`）。
     pub artifact_dir: PathBuf,
 }
@@ -194,9 +193,8 @@ rules   = "{example}/rules/*.wfl"
         .expect("reactor.wait failed");
 
     // ---- 对拍 ----
-    let mut actual = read_alerts_from_sink_dir(&alert_dir)
+    let actual = read_alerts_from_sink_dir(&alert_dir)
         .unwrap_or_else(|e| panic!("reading alerts from {}: {e}", alert_dir.display()));
-    let normalized_flush = normalize_origin(&mut actual);
     let tolerances = wfgen::oracle::OracleTolerances::default();
     let oracle_total = oracle.alerts.len();
     let actual_total = actual.len();
@@ -211,7 +209,6 @@ rules   = "{example}/rules/*.wfl"
         report,
         oracle_total,
         actual_total,
-        normalized_flush,
         artifact_dir,
     }
 }
@@ -333,16 +330,4 @@ fn read_alerts_from_sink_dir(alert_dir: &Path) -> std::io::Result<Vec<ActualAler
         ))
     });
     Ok(alerts)
-}
-
-/// 收尾口径归一化：`close:flush`（引擎 batch 收尾）→ `close:eos`（oracle 的场景末尾）。
-fn normalize_origin(alerts: &mut [ActualAlert]) -> usize {
-    let mut normalized = 0;
-    for alert in alerts.iter_mut() {
-        if alert.origin == "close:flush" {
-            alert.origin = "close:eos".to_string();
-            normalized += 1;
-        }
-    }
-    normalized
 }

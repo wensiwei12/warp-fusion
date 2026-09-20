@@ -31,7 +31,7 @@ Counts are explicit now: both the entity count and the per-entity count are writ
 - **Cross-stream injection `join <window> as <key> { ... }`**: builds the paired events a rule's `join` target window needs (the join key is written from the left entity's key value, the timestamp is taken from the left event — both derived, not hand-written), so join-family rules can now be fed assertable data from `.wfg`. v1 supports only the default inner form and single-key rules; anything else reports `VN30`.
 - Cross-stream injection now also covers the **snapshot form** (`join ... snapshot on ...`, no `within`): the right event is placed 1ms earlier, covering point-lookup enrichment rules such as q3/q20; "join-then-key" (key taken from the join side, e.g. q6) is recorded as a known gap.
 - Cross-stream injection now supports **join-then-key** (`match<seller:...>` where `seller` lives on the join target window, e.g. nexmark q6): the connective key is shared across both sides, the join-side key is written onto the right row with a value band disjoint from background noise, and the entity stays the driver-side field.
-- Fixed: `gen`'s oracle evaluation did not load window schemas, so join-family rules could never produce expectations (INJ1 always failed and `.except.jsonl` stayed empty); it now evaluates with schemas, making join rules usable.
+- Fixed: `gen`'s expectation evaluation did not load window schemas, so join-family rules could never produce expectations (INJ1 always failed and `.except.jsonl` stayed empty); it now evaluates with schemas, making join rules usable.
 - **New `replay <window> { use from "file" }` pass-through channel**: feed an existing dataset as-is (no count, no entity math, no entity assertions); timestamps are rebased onto the scenario start from the file's earliest record. Empty files, mixed time-field usage and spans beyond `#[duration]` fail at load/validation time.
 - Injected events are now spread **evenly** across the scenario `#[duration]` (previously each cluster got a random start, so entities could overlap).
 - object / array fields from `use({...})` / `use from` are parsed as structured values by the engine (previously strings, so rules reading nested fields never matched).
@@ -58,6 +58,17 @@ New validation codes (reported at load time by `lint` / `gen`):
 - `array/<base>` fields (e.g. `array/digit`) no longer degrade and lose their array structure and values.
 - Structured fields are no longer dropped on the assertion side, where expected files disagreed with the actual output.
 - Close timing: tail instances of `close` rules could previously disagree with the engine's `close:flush` timestamp (same count and entities, time only); now aligned with the engine.
+- **`wfgen dump-frames` no longer needs a running runtime to borrow an encoder**: it used to open a TCP connection to `--addr` (default `127.0.0.1:9800`) purely to obtain a framed encoder, so encoding a JSONL file into frames required booting a whole daemon (and would silently attach to whatever happened to listen on that port). It is now a pure offline transform — the frame bytes (RFC6587 `<len> ` prefix + `[4B tag_len][tag][IPC stream]`) are unchanged and byte-identical to the online send path, locked by a unit test. `--addr` is kept as an accepted-but-ignored compatibility flag; scripts that booted a daemon solely for `dump-frames` can drop that step.
+- **Naming an entity key field inside `use(...)` is now always rejected (VN12)**: the generator unconditionally writes its own computed values into the event (`key_overrides` outranks the `use` `predicate_overrides`). The overridden set is the rule's **entity key fields** (`match<...>` keys; for `on each` rules with no match key, the single field of `entity(...)`) plus any field written explicitly in the case header. A value given in `use(...)` was **silently replaced by the entity-id-derived value** — the data never contained the number that was written, and the `hit` / `near_miss` assertions pointed at the wrong entity as a result. **VN12** previously covered only two cases: a field written **explicitly** in the case header, and the join block's connective key; the main path (`on each` / `match` rules, entity field inferred from the rule) was missed. It now decides by the generator's actual override set (for `match` rules, the rule's **entity key fields** — not the "inferred entity field", which would false-positive join-then-key rules such as `match<seller>` + `entity(…, auction)`).
+
+### Naming (user-facing wording)
+
+The word "oracle" is now **expectation** everywhere user-facing (it collides with the database company); code identifiers and paths are unchanged.
+
+- Docs / comments / script output: "oracle" → "expectation" (e.g. `oracle 对拍` → `期望对拍`).
+- **CLI flag renamed**: `--no-oracle` → **`--no-expect`** (semantics unchanged: WFL is still compiled, only the expected-output sidecars are skipped). The old `--no-oracle` is kept as a **hidden alias**, so existing scripts keep working.
+- **Report field renamed + schema bumped**: in the `wfgen verify --format json` report, `summary.oracle_total` → **`summary.expected_total`**, and `schema` goes from `wfgen-verify-report/v1` to **`/v2`**. Consumers parsing the old report must be updated.
+- Doc file `docs/ORACLE_VERIFY.md` → `docs/EXPECTATION_VERIFY.md` (the query semantics it records are unchanged).
 
 ### Engine (aligned with wp-reactor 2.1.0)
 
@@ -159,7 +170,7 @@ New validation codes (reported at load time by `lint` / `gen`):
 
 ### wfl
 
-- **`wfl verify` EOF close fix (issue #23)**: for spans shorter than the window, EOF closes remaining `and close` instances uniformly — verify hits match the oracle.
+- **`wfl verify` EOF close fix (issue #23)**: for spans shorter than the window, EOF closes remaining `and close` instances uniformly — verify hits match the expectation.
 
 ### Engine (aligned with wp-reactor 2.0.15)
 
@@ -179,7 +190,7 @@ New validation codes (reported at load time by `lint` / `gen`):
 
 ### wfgen
 
-- **`verify-nexmark --detail-diff`**: oracle field-level detail diff — each alert's yield field values compared row-by-row against engine output, upgrading verification from count-level to field-level.
+- **`verify-nexmark --detail-diff`**: expectation field-level detail diff — each alert's yield field values compared row-by-row against engine output, upgrading verification from count-level to field-level.
 
 ## [0.5.4]
 
@@ -210,7 +221,7 @@ New validation codes (reported at load time by `lint` / `gen`):
 
 ### wfgen
 
-- **Stats rules wired into oracle cross-check**: q15–q19 verify consistent; oracle feeds rows by bound window + enqueues intermediate events.
+- **Stats rules wired into expectation cross-check**: q15–q19 verify consistent; expectation feeds rows by bound window + enqueues intermediate events.
 
 ## [0.5.2]
 
@@ -231,11 +242,11 @@ New validation codes (reported at load time by `lint` / `gen`):
 
 ## [0.5.0]
 
-### wfgen — NEXMark data generation and oracle cross-check
+### wfgen — NEXMark data generation and expectation cross-check
 
 - **Data generation aligned with Flink official**: `gen-nexmark` distribution parameters corrected item-by-item (string fields / extra padding / fixed 100µs event rate / nextExtra range / cold 90% / horizon millisecond rounding); `bid.url` matches the official `getBaseUrl` (3-segment directory, supporting q22); `bid` gains a `channel_id` field (q21 alignment).
 - **`gen-nexmark --check` self-check**: value ranges / timestamps / stream counts + md5 fingerprint + stream-order self-check; `--check` / `verify-nexmark` emit a Flink NEXMark conformance statement.
-- **`verify-nexmark` oracle cross-check**: new Rust NEXMark ground-truth simulator, cross-checking against the real WFL rule engine; adds deferred join / cross-stream time ordering within frames / join window state (q21 green) / intermediate output fed downstream + union-find grouping (q13 dual-rule chain); `known-diff` mechanism (q12/q17); parallel by auction (100M 5min→44s).
+- **`verify-nexmark` expectation cross-check**: new Rust NEXMark ground-truth simulator, cross-checking against the real WFL rule engine; adds deferred join / cross-stream time ordering within frames / join window state (q21 green) / intermediate output fed downstream + union-find grouping (q13 dual-rule chain); `known-diff` mechanism (q12/q17); parallel by auction (100M 5min→44s).
 - **`diff` command**: layered file comparison (L1 hash equality / L2 Myers diff volume / L3 `--detail` localization).
 - **Terminal progress bars**: `gen-nexmark` / `verify-nexmark` (stderr, TTY only); non-TTY falls back to a completion summary.
 - **`send-arrow` injection control**: `--rate-bytes` rate limiting (default 0 = unlimited); 1MiB large-buffer TCP copy (replacing 8KiB).
@@ -281,7 +292,7 @@ New validation codes (reported at load time by `lint` / `gen`):
 ### wfgen
 
 - `--no-wfl` skips the entire WFL pipeline (no rule load/compile, no injection) and generates pure baseline random events.
-- `--no-oracle` still compiles WFL (keeping injection `use()` fixed values) and only skips oracle/expected output (no `.except.*` sidecars).
+- `--no-oracle` still compiles WFL (keeping injection `use()` fixed values) and only skips expected output (no `.except.*` sidecars).
 - `yield preset` declared in a rule-directory `_global.wfl` is auto-merged, so `yield <target> : <preset>` reuses common output fields.
 
 ### wfusion

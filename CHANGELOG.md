@@ -30,7 +30,7 @@
 - **跨流注入 `join <window> as <key> { … }`**：为规则的 join 目标窗造配对事件（连接键 = 左实体键值、时间取左事件时间，均由生成器推导），补上 join 家族规则在 `.wfg` 里造可断言数据的能力。v1 只支持缺省 inner 形态与单键规则，其余明确报 `VN30`。
 - 跨流注入补齐 **snapshot 形态**（`join … snapshot on …`，无 `within`）：右事件提前 1ms，覆盖 q3/q20 这类点查富化规则；并登记「join-then-key」（键在 join 侧，如 q6）为已知缺口。
 - 跨流注入支持 **join-then-key**（`match<seller:…>` 而 `seller` 在 join 目标窗上，如 nexmark q6）：连接键两侧同源、join 侧键自动写到右行且与背景噪声的值域分开，实体仍取驱动侧字段。
-- 修复：`gen` 的 oracle 评估此前不加载窗口 schema，join 家族规则因此永远产不出期望（INJ1 必然失败、`.except.jsonl` 为空）——现带 schema 评估，join 规则可用。
+- 修复：`gen` 的期望评估此前不加载窗口 schema，join 家族规则因此永远产不出期望（INJ1 必然失败、`.except.jsonl` 为空）——现带 schema 评估，join 规则可用。
 - **新增 `replay <window> { use from "file" }` 照单发货通道**：把现成数据原样灌进去（不写条数、不做实体数学、不参与断言），时间以文件最早一条为锚平移到场景起点；为空 / 时间字段口径不齐 / 跨度超 `#[duration]` 都在加载与校验期报错。
 - 注入时间在场景 `#[duration]` 内**等距铺开**（此前每簇随机起点，实体之间会重叠）。
 - `use({...})` / `use from` 的 object / array 字段在引擎侧按结构值解析（此前当字符串，读嵌套字段的规则不命中）。
@@ -57,6 +57,19 @@
 - `array/<base>`（如 `array/digit`）此前退化，丢失数组结构与值。
 - 结构化字段此前在断言侧被丢弃，期望文件与实际输出不一致。
 - 收尾时间口径：`close` 规则的尾部实例此前可能与引擎的 `close:flush` 时间对不上（数量与实体一致，仅时间差）；现与引擎同口径。
+- **`wfgen dump-frames` 不再需要一个在跑的运行时来借编码器**：它此前会向 `--addr`（默认 `127.0.0.1:9800`）开一条 TCP 连接，只为拿一个带帧格式的编码器——于是「把 JSONL 编成帧文件」这件事竟要先起一个完整 daemon（而且会静默连上恰好监听该端口的任何进程）。现改为**纯离线**转换：帧字节（RFC6587 `<len> ` 前缀 + `[4B tag_len][tag][IPC stream]`）完全不变、与在线发送路径逐字节一致（由单测锁定）。`--addr` 保留为「接受但忽略」的兼容参数；那些只为 `dump-frames` 而起 daemon 的场景/脚本可以去掉这一步。
+- 跨流注入的 **deferred 形态右行改为与左行同刻**（此前取「左行 + 1µs」）：那个 +1µs 只是为规避引擎侧一个时间界精度缺陷的临时手段，该缺陷已随 wp-reactor 2.1.0 修复、wfgen 侧口径也已对齐；改为同刻后右行正好落在 `within` 闭区间的**下界**上，把这个边界持续压在回归护栏下（同刻下期望与**真引擎**均 50/50、L3 对拍 200/200）。
+- **对拍口径：`digit` 字段按列类型取值**，与真引擎一致（此前期望侧按 JSON 口径把整数当浮点）：超过 2^53 的 ID / 计数（雪花 ID、纳秒、大计数器）在期望侧会被量化成**另一个**数，于是 `verify` 误报不一致、`gen` 的 `hit` / `miss` 断言也可能指错实体（典型：实体 ID 由 `7302112345678901234` 变成 `7302112345678901000`，下游按 ID upsert 会得到两条记录）。现 `digit` 与 Arrow 编码共用同一套取值归一，非整值给 `digit` 字段与真引擎同样按缺失处理。
+- **`use(...)` 里写实体键字段改为一律拦下（VN12）**：生成器会无条件把自己算出来的值写进事件（`key_overrides` 优先级高于 `use` 的 `predicate_overrides`），被覆盖的是**实体键字段**（`match<...>` 的键；`on each` 无 match key，则为 `entity(...)` 的单字段）∪ 用例头显式写的字段。写进 `use` 的值会被**静默替换成实体 id 派生值**——数据里根本不是写的那个数，`hit` / `near_miss` 断言也随之指向错实体（表现为断言“看”了另一个实体而过/不过）。**VN12** 此前只覆盖两种情况：用例头**显式**写了字段、或 join 块的连接键；`on each` / `match` 规则从规则推断实体字段这条主路径反而漏了。现改为按生成器的真实覆盖口径判定（`match` 规则按**规则的实体键字段**，不再拿“推断的实体字段”替代，否则 `match<seller>`+`entity(…, auction)` 这类 join-then-key 规则会误报）。
+
+### 命名（面向使用者的措辞统一）
+
+“oracle”这个词向用户侧统一改成**期望**（数据库公司同名，容易误读）；代码里的标识符/路径不动。
+
+- 文档/注释/脚本输出：“oracle” → “期望”（如 `oracle 对拍` → `期望对拍`）。
+- **CLI flag 改名**：`--no-oracle` → **`--no-expect`**（语义不变：仍然编译 WFL、只不写期望侧车文件）；旧名 `--no-oracle` **保留为隐藏别名**，老脚本无需改。
+- **报告字段改名 + schema 升版**：`wfgen verify --format json` 报告里的 `summary.oracle_total` → **`summary.expected_total`**，`schema` 由 `wfgen-verify-report/v1` → **`/v2`**。解析旧报告的消费者需要跟着改。
+- 文档文件名 `docs/ORACLE_VERIFY.md` → `docs/EXPECTATION_VERIFY.md`（内容引用的查询口径不变）。
 
 ### 引擎（对齐 wp-reactor 2.1.0）
 
@@ -161,7 +174,7 @@
 
 ### wfl
 
-- **`wfl verify` EOF 收口修正（issue #23）**：对 span 短于窗口的验证数据，`and close` 规则不再等窗口自然过期——EOF 统一 close 剩余实例，verify 与 oracle 命中一致。
+- **`wfl verify` EOF 收口修正（issue #23）**：对 span 短于窗口的验证数据，`and close` 规则不再等窗口自然过期——EOF 统一 close 剩余实例，verify 与期望命中一致。
 
 ### 引擎（对齐 wp-reactor 2.0.15）
 
@@ -181,7 +194,7 @@
 
 ### wfgen
 
-- **`verify-nexmark --detail-diff`**：oracle 字段级明细对拍——每条告警的 yield 字段值与引擎输出逐行比较，验证从计数级提升到字段级。
+- **`verify-nexmark --detail-diff`**：期望字段级明细对拍——每条告警的 yield 字段值与引擎输出逐行比较，验证从计数级提升到字段级。
 
 ## [0.5.4]
 
@@ -212,7 +225,7 @@
 
 ### wfgen
 
-- **stats 规则接入 oracle 对拍**：q15–q19 verify 一致；oracle 按绑定窗口喂行 + 中间事件入队。
+- **stats 规则接入期望对拍**：q15–q19 verify 一致；期望按绑定窗口喂行 + 中间事件入队。
 
 ## [0.5.2]
 
@@ -233,11 +246,11 @@
 
 ## [0.5.0]
 
-### wfgen —— NEXMark 数据生成与 oracle 对拍
+### wfgen —— NEXMark 数据生成与期望对拍
 
 - **数据生成对齐 Flink 官方**：`gen-nexmark` 分布参数逐项修正（字符串字段 / extra padding / 固定 100µs 事件速率 / nextExtra 区间 / cold 90% / horizon 毫秒取整）；`bid.url` 对齐官方 `getBaseUrl`（3 段目录，支撑 q22）；`bid` 增 `channel_id` 字段（q21 对齐）。
 - **`gen-nexmark --check` 自检**：值域 / 时间戳 / 流计数 + md5 指纹 + 流序自检；`--check` / `verify-nexmark` 输出 Flink NEXMark 符合性声明。
-- **`verify-nexmark` oracle 对拍**：新增 Rust 版 NEXMark ground-truth 模拟器，改用真实 WFL 规则引擎对拍；补 deferred join / 帧内跨流时间序 / join 窗口状态（q21 打通）/ 中间输出 feed 下游 + 并查集分组（q13 双规则链）；`known-diff` 机制（q12/q17）；按 auction 分片并行（100M 5min→44s）。
+- **`verify-nexmark` 期望对拍**：新增 Rust 版 NEXMark ground-truth 模拟器，改用真实 WFL 规则引擎对拍；补 deferred join / 帧内跨流时间序 / join 窗口状态（q21 打通）/ 中间输出 feed 下游 + 并查集分组（q13 双规则链）；`known-diff` 机制（q12/q17）；按 auction 分片并行（100M 5min→44s）。
 - **`diff` 命令**：分层文件比对（L1 哈希相同性 / L2 Myers 差异量 / L3 `--detail` 定位）。
 - **终端进度条**：`gen-nexmark` / `verify-nexmark`（stderr、仅 TTY）；非 TTY 降级输出完成摘要。
 - **`send-arrow` 注入控制**：`--rate-bytes` 限速（默认 0=不限速）；1MiB 大缓冲 TCP copy（替代 8KiB）。
@@ -283,7 +296,7 @@
 ### wfgen
 
 - `--no-wfl` 跳过整个 WFL 管线（不加载/编译规则、无 injection），生成纯背景随机事件。
-- `--no-oracle` 仍编译 WFL（**保留 injection `use()` 固定值**），只跳过 oracle/expected 输出（不产出 `.except.*` 侧车文件）。
+- `--no-oracle` 仍编译 WFL（**保留 injection `use()` 固定值**），只跳过期望输出（不产出 `.except.*` 侧车文件）。
 - 规则同目录的 `_global.wfl` 声明的 `yield preset` 自动合并进规则，`yield <target> : <preset>` 可复用公共输出字段。
 
 ### wfusion

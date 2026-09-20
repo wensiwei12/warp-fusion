@@ -80,11 +80,10 @@ async fn l3_corpus_matches_the_real_engine() {
         let duration = Duration::from_secs(secs.unwrap_or(60));
         let run = common::engine_verify_in(root, scenario_rel, duration, &[]).await;
         let line = format!(
-            "{scenario_rel} ({what}): oracle={} actual={} matched={} flush_normalized={} artifact={}",
+            "{scenario_rel} ({what}): oracle={} actual={} matched={} artifact={}",
             run.oracle_total,
             run.actual_total,
             run.report.summary.matched,
-            run.normalized_flush,
             run.artifact_dir.display()
         );
         summary.push(line.clone());

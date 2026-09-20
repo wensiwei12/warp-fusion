@@ -5502,7 +5502,7 @@ dependencies = [
 
 [[package]]
 name = "wf-cep"
-version = "2.1.0"
+version = "2.3.0"
 dependencies = [
  "arrow",
  "chrono",
@@ -5516,12 +5516,13 @@ dependencies = [
  "sha1 0.11.0",
  "sha2 0.11.0",
  "smol_str",
+ "wf-data",
  "wf-lang",
 ]
 
 [[package]]
 name = "wf-config"
-version = "2.1.0"
+version = "2.3.0"
 dependencies = [
  "chrono",
  "glob",
@@ -5548,7 +5549,7 @@ dependencies = [
 
 [[package]]
 name = "wf-data"
-version = "2.1.0"
+version = "2.3.0"
 dependencies = [
  "chrono",
  "serde_json",
@@ -5556,7 +5557,7 @@ dependencies = [
 
 [[package]]
 name = "wf-engine"
-version = "2.1.0"
+version = "2.3.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5589,7 +5590,7 @@ dependencies = [
 
 [[package]]
 name = "wf-lang"
-version = "2.1.0"
+version = "2.3.0"
 dependencies = [
  "jumo-derive",
  "orion-error",
@@ -5614,7 +5615,7 @@ dependencies = [
 
 [[package]]
 name = "wf-runtime"
-version = "2.1.0"
+version = "2.3.0"
 dependencies = [
  "arrow",
  "async-broadcast",

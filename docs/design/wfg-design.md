@@ -19,7 +19,7 @@
 - **一件事一个旋钮**：数量归数量、值归值、背景归背景、时间归时间。
 - **不兼容旧语法**：旧形态直接报 VN20，附等价值改写建议。
 
-不含：`faults` 块语义、oracle 对拍机制（复用现有实现）。
+不含：`faults` 块语义、期望对拍机制（复用现有实现）。
 
 ### 1.1 为什么这样设计（旧语义的缺口）
 
@@ -40,7 +40,7 @@ stream 配额 = stream 速率 × duration
 | P1 数量显式，不做隐式除法 | `%` 的含义不可读；实体数靠两次乘除推出 |
 | P2 一个字段一个职责 | `with(N)` 同时是"每簇条数"和"分簇除数" |
 | P3 模式是断言方向，不改任何数量与字段值 | `near_miss` 把条数夹到 `min(N, 阈值-1)`；`miss` 走"允许与 filter 冲突"旁路而 `hit` 禁止 |
-| P4 断言可判定（复用 oracle，生成期报错） | `expect { hit(rule) >= 90% }` 的度量与阈值从不被求值；命中路径不可预判 |
+| P4 断言可判定（复用期望，生成期报错） | `expect { hit(rule) >= 90% }` 的度量与阈值从不被求值；命中路径不可预判 |
 | P5 背景与注入分离 | 背景事件也参与判定分母；改背景速率会改变注入量 |
 | P6 时间显式 | 铺开策略隐式，峰值速率不可预期（可能撞 `limits` throttle） |
 | P7 语法自解释 | `sip seq { … }` 像块名而不是实体键；`for RULE` 可省、靠 `expect` 反推 |
@@ -238,7 +238,7 @@ scenario no_login_then_xfer<seed=7> {
 - 模式**不修改**任何数量、不修改任何字段值。
 - `near_miss` 与 `miss` 的区别只剩构造意图（是否满足 filter），断言强度相同。
 - 断言以**实体**为单位，背景事件不参与。
-- 判定复用内置 oracle（`oracle/mod.rs` 的 `RuleEngine` + `CepStateMachine`）：`gen` 本来就要跑它算期望告警，因此断言是"读已有结果"。
+- 判定复用内置期望（`oracle/mod.rs` 的 `RuleEngine` + `CepStateMachine`）：`gen` 本来就要跑它算期望告警，因此断言是"读已有结果"。
 - 多条触发路径（`on event` / `on close` / `seq` / `conv`）天然被覆盖：只要任一路径产出告警即算"报警"。
 - **`conv` + `top(N)` 的例外**：`top(N)` 每个窗口最多输出 N 条，所以只有"能进入某窗口
   top-N"的实体才可能报警——`hit` 实体数取 ≤ N 最直观（`hit<14400>` + `top(2)` 必然 INJ1，
@@ -281,7 +281,7 @@ scenario no_login_then_xfer<seed=7> {
 - 实体的簇起点在 `[0, 跨度]` 上**等距**铺开（`uniform_cluster_start`，跨度 = `duration − 窗口`）：
   首簇贴 `0`、末簇贴 `跨度`（末簇窗口刚好收在场景末尾），整段 `duration` 被均匀覆盖、两端
   不留空档；只有一个簇时取中点。
-  “末簇顶到场景末尾”本身不再有风险：引擎的收尾水位是 `final_wm` = **数据末尾**，oracle 已按
+  “末簇顶到场景末尾”本身不再有风险：引擎的收尾水位是 `final_wm` = **数据末尾**，期望已按
   同一口径扫收尾（§7.2 那条已落地，回归见 `crates/wfgen/tests/e2e_datagen.rs`）。
   窗口不短于 `duration` 时无法错开，退回起点 `0`（簇必然重叠，保持旧行为）。
 - 簇内事件仍按步骤顺序在窗口内均匀落下（`per_step_window × i / N`）；`miss` 本来就按
@@ -385,7 +385,7 @@ replay conn_events { use from "raw/monday.ndjson" }
 | 时间来源 | `_timestamp` 优先，其次 schema 的 `time_field`；按位宽归一化（秒 / 毫秒 / 微秒 / 纳秒） |
 | 时间对齐 | 以文件**最早一条**为锚平移到场景起点（同文件内相对间隔保持），使 `#[duration]` 成为三类事件共同的时间窗 |
 | 无时间字段 | 按序号在 `duration` 内均匀落下（与 `miss` 同策略） |
-| 断言 | 不对任何实体承诺"必须 / 不得报警"，但它的事件**必须**进 oracle 的输入流（否则期望文件与引擎不一致） |
+| 断言 | 不对任何实体承诺"必须 / 不得报警"，但它的事件**必须**进期望的输入流（否则期望文件与引擎不一致） |
 | `without(...)` | 对 replay 事件同样生效：命中 guard 谓词 → 生成期报错（replay 数据不能自动剔除） |
 | `spread` | 与它无关（`spread` 是 inject 簇的铺开旋钮） |
 
@@ -460,14 +460,14 @@ VN27 的计数口径与生成侧一致：`hit` / `near_miss` 每个实体占一�
 实现（`wfgen/src/inject_assert/`，由 `cmd_gen` 在 `run_oracle` 之后、写
 `.except.jsonl` 之前调用，与期望文件同一门控）：
 
-- 判定**复用** `gen` 本来就要跑的 oracle 结果（`OracleAlert`），不额外评估。
+- 判定**复用** `gen` 本来就要跑的期望结果（`OracleAlert`），不额外评估。
 - 按 `(rule_name, entity_id)` 建索引；实体值按 `entity_id` 同口径渲染
   （Str 透传 / 数字整数不带 `.0` / 容器退化为 `[array]`、`[object]`）。
 - 失败**一次性汇总**报出（`WfgenReason::Generation`），每类最多列 5 条明细 + 同码总数，
   避免语料级失败（上万个实体）刷屏。
 - 断言覆盖不到的实体（`entity(...)` 不是单一字段、实体字段不在本次键覆盖里）会计入
   `GenResult::unasserted_inject_entities`，由 `gen` 打一条 Warning 说明——不静默跳过。
-- `--no-oracle` / `--no-wfl` / 无 `--out`（即不生成期望文件的场景）不做断言。
+- `--no-expect` / `--no-wfl` / 无 `--out`（即不生成期望文件的场景）不做断言。
 - `miss` 的 `x N` 是"N 条各自独立键"，因此**实体数 = 用例头实体数 × Σ N**，比
   `hit`/`near_miss` 的口径大 N 倍（同一实体成簇就会报警，独立键是 `miss` 能构造出来的前提）。
 
@@ -561,7 +561,7 @@ wfg + wfs + wfl
    -> 断言判定 + 报告
 ```
 
-`wfgen gen` 在未 `--no-oracle` / 未 `--no-wfl` 时会生成 `.except.jsonl` / `.except.meta.jsonl`
+`wfgen gen` 在未 `--no-expect` / 未 `--no-wfl` 时会生成 `.except.jsonl` / `.except.meta.jsonl`
 （期望告警），`wfgen verify` 据此对拍。
 
 ## 7. 落地状态
@@ -573,13 +573,13 @@ wfg + wfs + wfl
 - 数量显式：删除 `compute_cluster_count*` 与从 stream 配额推导的整条链路。
 - 模式不改数字：`near_miss` 不再夹取，`hit`/`near_miss` 共用同一套条数口径。
 - 旧语法在**解析期**报 VN20。
-- `expect` 块删除；期望文件改为"未 `--no-oracle` / 未 `--no-wfl` 即生成"。
+- `expect` 块删除；期望文件改为"未 `--no-expect` / 未 `--no-wfl` 即生成"。
 - 语料迁移：本仓库内 14 个 tracked `.wfg`（`crates/wfgen/examples` 6 · `crates/wfadm/templates` 4 ·
   `docker/default_setting` 4）与相关 Rust 测试用例。
 - `.wfg` 只有一份解析器实现（本仓库 `wfgen`）；`wp-reactor/wf-lang` 里的旧副本已删除，
   `wfadm` 改为用 `wfgen` 的解析器校验场景。
 - 生成期硬断言 INJ1/INJ2（§4.2）：`hit` 每个实体必须报警、`near_miss`/`miss` 每个实体
-  必须不报警；复用 oracle 结果，失败在写期望文件之前报出。
+  必须不报警；复用期望结果，失败在写期望文件之前报出。
 - 实体键空间按用例分段（`InjectEntities::next_entity_base`）：用例之间实体值不重叠，
   否则 `hit` 与 `near_miss` 会指向同一实体、两个口径互相污染。
 - 分段上限由校验期 VN27 拦下：实体值按 24 位地址映射（Ip 写 `10.a.b.c`），一个场景的
@@ -592,7 +592,7 @@ wfg + wfs + wfl
   类型的字段只会用字符串兜底。
 - 校验期 `use` 组数检查 VN24：`use` 事件组数不得超过规则的事件步骤数，口径与编译产物一致
   （`on event seq` 链只数非 `neg` 步骤、`on each` = 1、stats = 0；由一条「以编译产物为
-  oracle」的边界测试锁定）。数错组数会静默少注入某个步骤的事件；生成期 `plan_use_steps`
+  期望」的边界测试锁定）。数错组数会静默少注入某个步骤的事件；生成期 `plan_use_steps`
   仍保留同一检查（纵深防御）。
 - `without(...)` 构造约束（§3.8）：`without(preds) [within D]` 解析进 `InjectCase::withouts`
   （与 `groups` 解耦，不参与 VN24），谓词过 VN9/VN11/VN12、`within` 过 VN25；生成期展开成
@@ -618,11 +618,11 @@ wfg + wfs + wfl
 - 结构化列与引擎契约对齐：wfgen 写 Arrow 时对 `object` / `array` / `array/<base>` 字段统一用
   **JSON 文本的 Utf8 列 + `wf.wfl.field_type` metadata**（常量取自 `wf-engine`，不复制字符串）。
   引擎只在带该 metadata 时把列值解析成 `Value::Object` / `Value::Array`，否则一律 `Value::Str`
-  ——缺了它，读嵌套字段的规则会**静默不产出**，且与直读 `GenEvent` 的 oracle 不一致。
+  ——缺了它，读嵌套字段的规则会**静默不产出**，且与直读 `GenEvent` 的期望不一致。
   有 schema 时按 schema 打标；`.arrow` 文件输出（无 schema）按列内实际值推断（整列同形才打标，
   混形保持当字符串）。
-  同一条链的 oracle 侧同步收口：`GenEvent` → 引擎 `Value` 的转换**递归保留** object / array
-  （旧实现 `_ => None` 把结构化字段整个丢掉，读嵌套字段的规则在 oracle 侧恒不命中）。
+  同一条链的期望侧同步收口：`GenEvent` → 引擎 `Value` 的转换**递归保留** object / array
+  （旧实现 `_ => None` 把结构化字段整个丢掉，读嵌套字段的规则在期望侧恒不命中）。
 - 14 个仓内语料在断言下**全部通过**；其中 2 个按断言口径调整过（§5.3）。
 - 外部语料迁移（P3）：`wf-rules`（4）· `wf-examples`（11）· `wf-conf-example`（1）共 **16 个**
   tracked `.wfg` 已迁到新语法并逐文件验证——`wfgen lint` 16/16 OK、`wfgen gen` 带 INJ1/INJ2
@@ -635,12 +635,12 @@ wfg + wfs + wfl
 |---|---|
 | 外部语料迁移：`wf-rules` / `wf-examples` / `wf-conf-example` | **已落地**（§7.1；16/16 `lint` + `gen` 断言通过） |
 | 文档：CHANGELOG | **已落地**（v0.7.0 随 release 提交写入 `CHANGELOG.md` / `CHANGELOG.en.md`，中英双语） |
-| 尾部实例的 `close:flush` / `close:timeout` 时间口径 | **已落地**（oracle 收尾水位改用数据末尾 `final_wm`，与引擎 `close:flush` 对齐；回归见 `crates/wfgen/tests/e2e_datagen.rs`，`hop_oracle_closes_every_covered_window` / `batch_sweep_uses_data_end_not_scenario_end` 锁定口径） |
+| 尾部实例的 `close:flush` / `close:timeout` 时间口径 | **已落地**（期望收尾水位改用数据末尾 `final_wm`，与引擎 `close:flush` 对齐；回归见 `crates/wfgen/tests/e2e_datagen.rs`，`hop_oracle_closes_every_covered_window` / `batch_sweep_uses_data_end_not_scenario_end` 锁定口径） |
 | 注解键白名单（VN29）+ `oracle { … }` 解析残留清理 | **已落地**（`tick` / `rows` / `emit` 与未知键、错值类型现由 VN29 拒绝；`OracleBlock` / `ParamAssign` / `ParamValue` / `extract_oracle_tolerances` / `validate/oracle.rs` 及 `ScenarioDecl.oracle` 已删除，容差固定 1s / 0.01） |
 
 未决（不阻塞实现）：
 
-- 生成期断言在**分片 / 多实例**下的口径（当前 oracle 是单机内存模型）——已登记为需求
+- 生成期断言在**分片 / 多实例**下的口径（当前期望是单机内存模型）——已登记为需求
   **§11 R2**（含依据与落地要点）。
 
 ### 7.3 扩展规划
@@ -670,21 +670,21 @@ wfg + wfs + wfl
 | 事实 | 依据 |
 |---|---|
 | 输出是**单条时间序**流 | `datagen::merge_sorted_chunks` 按时间戳归并所有 chunk |
-| oracle 的收口水位固定在 `场景起点 + #[duration]` | `oracle/mod.rs`：`eos_time = scenario_start + duration`，随后推进水位并（batch 时）`close_all` |
+| 期望的收口水位固定在 `场景起点 + #[duration]` | `oracle/mod.rs`：`eos_time = scenario_start + duration`，随后推进水位并（batch 时）`close_all` |
 | `--send` 只发事件，引擎**纯事件时间**驱动 watermark | `cmd_gen` 的发送路径只送 `_stream` / `_window` / 字段，不传场景起止 |
 | `inject` / `background` 的时间**全部由 `#[duration]` 决定** | 簇起点 `uniform_cluster_start`（§3.5）、背景 `rate × duration` |
 
-推论：**文件里的时间戳一旦落在 `[场景起点, 场景起点 + duration]` 之外，oracle 与引擎的口径
-就对不上**——oracle 会在文件时间戳之后把水位退回 EOS，引擎侧的窗口收口则是跟着数据走的。
+推论：**文件里的时间戳一旦落在 `[场景起点, 场景起点 + duration]` 之外，期望与引擎的口径
+就对不上**——期望会在文件时间戳之后把水位退回 EOS，引擎侧的窗口收口则是跟着数据走的。
 
 ### 8.2 方案对比
 
 | 方案 | 做法 | 优点 | 问题 |
 |---|---|---|---|
-| **A 原样照发** | 直接并入文件时间戳，`#[duration]` 只管 background / inject | 最"回放"，不改文件语义 | 单条时间轴被打破：超出窗口的事件会让 oracle 水位与引擎错位，期望文件与实际输出不一致 |
-| **B 重新基准（推荐）** | 取文件内最早时间戳为锚，整体平移使锚点落在场景起点；`#[duration]` 成为三类事件**共同**的时间窗 | 一条时间轴、水位唯一、oracle 的 EOS 口径不变、batch 与 `--send` 行为一致 | 文件里的"真实时刻"被改写（回放语义有损），需在文档里写明 |
+| **A 原样照发** | 直接并入文件时间戳，`#[duration]` 只管 background / inject | 最"回放"，不改文件语义 | 单条时间轴被打破：超出窗口的事件会让期望水位与引擎错位，期望文件与实际输出不一致 |
+| **B 重新基准（推荐）** | 取文件内最早时间戳为锚，整体平移使锚点落在场景起点；`#[duration]` 成为三类事件**共同**的时间窗 | 一条时间轴、水位唯一、期望的 EOS 口径不变、batch 与 `--send` 行为一致 | 文件里的"真实时刻"被改写（回放语义有损），需在文档里写明 |
 | **C 场景时长让给 replay** | 场景时长取 `max(#[duration], replay 跨度)`，或给 `replay` 自带 `within D` | 保留文件时间戳的相对关系 | 多 replay 块 + inject + background 需要一个统一的"时间轴合并"规则，复杂度高、校验码也要新增 |
-| **D replay 不进 oracle** | 断言只看 background + inject，replay 只写文件 | 断言口径最干净 | 引擎看到的是**合并后的流**，replay 事件照样可能触发规则 → 期望文件与引擎必然不一致。除非能保证 replay 事件不触发任何规则（做不到） |
+| **D replay 不进期望** | 断言只看 background + inject，replay 只写文件 | 断言口径最干净 | 引擎看到的是**合并后的流**，replay 事件照样可能触发规则 → 期望文件与引擎必然不一致。除非能保证 replay 事件不触发任何规则（做不到） |
 
 ### 8.3 已定口径
 
@@ -697,7 +697,7 @@ wfg + wfs + wfl
    **用字段值**算锚点与间隔；同一个文件里“部分记录有时间字段” ⇒ **报错**（口径必须唯一）；
    全都没有时间字段时，按序号在 `duration` 内均匀落下（与 `miss` 同策略，见 §3.5）。
 3. **断言豁免、但参与流**：`replay` 不对任何实体承诺"必须 / 不得报警"，但它的事件**必须**
-   进 oracle 的输入流——否则期望文件与引擎不一致（这正是 D 的问题）。
+   进期望的输入流——否则期望文件与引擎不一致（这正是 D 的问题）。
 4. **与 `inject` 可指同一 stream**：叠加是预期语义；叠加后若 replay 数据破坏了 hit /
    near_miss 的口径，INJ1/INJ2 会如实报出——不静默。
 5. **文件跨度不得超过 `#[duration]`**：平移后落在窗内是硬前提（否则违反第 1 条），超出
@@ -738,8 +738,8 @@ loader 解析（`--no-wfl` 也解析，因为 replay 不依赖规则）、生成
 | 注入器**不读 join**：只遍历 `match_plan.event_steps` + `each_plan` | `inject_gen/extract.rs` `extract_rule_structure` |
 | 管道已经是「每步一个窗口」的形状 | `StepInfo` 带 per-step `window_name` / `scenario_alias` |
 | 配对所需信息在计划里齐备 | `JoinPlan { right_window, mode, conds, within, reduce, emit_at }`；`JoinCondPlan::right_field_name()` |
-| oracle 侧 join 已实现 | `run_oracle_events_full` 带 schemas → 右窗 lookup（否则 `EmptyLookup`，join 恒 miss） |
-| **`gen` 的 oracle 调用没带 schemas** | `cmd_gen.rs` 用 `run_oracle`（无 schemas 形态）→ 任何 join 规则的右窗恒空、oracle 一条告警都出不来，INJ1 必然失败。这就是 join 负载从来不经过 `.wfg` 的直接原因；本次一并修掉 |
+| 期望侧 join 已实现 | `run_oracle_events_full` 带 schemas → 右窗 lookup（否则 `EmptyLookup`，join 恒 miss） |
+| **`gen` 的期望调用没带 schemas** | `cmd_gen.rs` 用 `run_oracle`（无 schemas 形态）→ 任何 join 规则的右窗恒空、期望一条告警都出不来，INJ1 必然失败。这就是 join 负载从来不经过 `.wfg` 的直接原因；本次一并修掉 |
 | 区间求值器**拿不到** | 引擎的 `eval_interval_bound` 是 `pub(crate)` |
 
 ### 9.2 语法
@@ -788,34 +788,44 @@ hit<id: 200> for q8_monitor_new_user person_events {
 
 - **尾部边界（引擎侧）：`emit at` 必须落在最后一个驱动事件之前**。deferred 的到期评估由
   **驱动事件**推进的水位触发；若某个簇的 `emit at`（`bucket_end(左事件时间, 桶长)`）晚于流中
-  最后一个驱动事件，引擎永远不会到期 → 该实体的告警**不产出**；而 oracle 在 EOS 会 flush 全部
+  最后一个驱动事件，引擎永远不会到期 → 该实体的告警**不产出**；而期望在 EOS 会 flush 全部
   剩余挂起项 → 对拍多出 missing。实测（200 个 hit 实体、簇铺到场景末尾）：最后一个 5s 桶的
   **14 个实体**全部不触发；簇只铺到前段（10s）而后无驱动事件时，同样整桶丢失。
   规避：让驱动事件延续到场景末尾（背景保持一个非零速率），并把注入簇留在前段（`spread`）。
   L3 夹具 `tests/fixtures/wfg_l3/deferred/` 即按此布置（背景 `gen 1/s` + `spread`）。
-  是否让 oracle 也镜像该语义（不 flush 到期未到的挂起项）待定——nexmark q8/q9 的现有对拍
+  是否让期望也镜像该语义（不 flush 到期未到的挂起项）待定——nexmark q8/q9 的现有对拍
   依赖 EOS flush，改动需单独评估。
 - **deferred 右事件取同刻（`DEFERRED_OFFSET_NANOS = 0`；2026-09-18 发现，2026-09-19 修好并改回同刻）**：
   `within` 的界（如 `p.timestamp`）曾经由 f64 求值，而纳秒时间戳（≈1.77e18）**超出 f64 的精确整数
   范围**（2^53≈9e15），往返取整粒度约 **256ns**。同刻时右行正好压在下界上：约一半时间戳的下界会被
   **向上**取整，`row_ts >= lo` 随之不成立 → 右行被区间过滤掉 → join miss → 该 `hit` 实体不产出告警。
   当时的实测（`on each` 驱动 + deferred，200 个实体各 1 左 1 右、键与纳秒时间**逐条严格相等**）：
-  oracle 只出 **102** 条、真引擎 **95** 条；且“命中与否”与 `(ts as f64) as i64 > ts` **逐条吻合
+  期望只出 **102** 条、真引擎 **95** 条；且“命中与否”与 `(ts as f64) as i64 > ts` **逐条吻合
   （200/200）**，与事件顺序、时长均无关。（定位期曾用 **+1µs** 规避，现已删除。）
   **缺陷在两侧，只修一边不够**：
   - **引擎侧**：界求值改走精确整数通道（`eval_interval_bound` 的 `Value::Int → i64`）；
-  - **wfgen/oracle 侧**：oracle 的时间列字段也要按**列式口径**落 `Value::Int`
-    （`oracle::time_columns` / `json_to_time_value`）—— oracle 只有 JSON 来源，若时间字段
-    仍按 JSON 口径落 `Float`，**同刻下 oracle 仍只出 26/50**，对拍会把 oracle 自己的口径差
+  - **wfgen/期望侧**：期望的时间列字段也要按**列式口径**落 `Value::Int`
+    （`oracle::time_columns` / `json_to_time_value`）—— 期望只有 JSON 来源，若时间字段
+    仍按 JSON 口径落 `Float`，**同刻下期望仍只出 26/50**，对拍会把期望自己的口径差
     误报成引擎的问题（本页原版就是这样误判为「根因在引擎侧」的）。
   两侧对齐后同刻 **50/50** 全命中，夹具因此改成**故意同刻**：右行正好落在 `within` 闭区间的下界上，
   把这个边界持续压在护栏下，而不是用 1µs 余量绕过它。
   回归用例：`datagen/tests/inject/join.rs::deferred_same_instant_right_event_fires_all_entities`；
-  oracle 侧口径单测：`oracle/tests/basic.rs::time_typed_fields_are_exact_int_columns_in_oracle_events`。
-  ⚠️ **仍存的同类口径差**（本页不掩盖）：`Digit`（箭头 `Int64`）列在引擎里同样是 `Value::Int`，
-  oracle 仍按 JSON 口径落 `Float`。`|i| < 2^53`（id / price 等）时各消费点（`JoinKey` / `ValueKey`
-  归一、`format_f64` 输出、`numeric_cmp`）恰好一致，所以当前无害；若 `Digit` 装进超过 2^53 的
-  值（雪花 ID / 纳秒 / 大计数）会以**同一类方式**静默咬人。是否全面对齐待定。
+  期望侧口径单测：`oracle/tests/basic.rs::typed_columns_are_exact_int_in_oracle_events`，
+  行为级（告警身份）：`large_digit_entity_id_is_not_quantized`。
+  ✅ **同类口径差已收（2026-09-19）**：`Digit`（箭头 `Int64`）列在引擎里同样是 `Value::Int`，而期望
+  此前仍按 JSON 口径落 `Float`——`|i| < 2^53`（id / price 等）时各消费点（`JoinKey` / `ValueKey` 归一、
+  `format_f64` 输出、`numeric_cmp`）恰好一致，所以无害；一旦装进超过 2^53 的值（雪花 ID / 纳秒 /
+  大计数）就以**同一类方式**静默咬人：实体 ID 会被打印成**另一个**十进制串（实测
+  `7302112345678901234` → `7302112345678901000`），下游按 ID upsert 会得到两条逻辑记录。
+  现期望的字段值一律按**箭头列类型**取：`digit` 与 Arrow 编码**共用**
+  `output::arrow_ipc::json_as_i64`（唯一实现，两侧不可能漂移；非整值 / 非数字 → 列写 null →
+  期望同样丢字段），`time` 走整数精确通道。
+  **刻意不纳入**：`array(...)` / `object` 是 Utf8 JSON 文本列（DIV-3），引擎解文本时数字仍是 `Float`，
+  所以结构化字段内的数字**必须**保持 `Float`——否则反而是期望先分叉。
+  ⚠️ **仍未对齐（低危，登记不掩盖）**：① `time` 列的 ISO 字符串形态（引擎的 `TimeNanos` 臂会解析成 ns
+  落 `Int`，期望仍落 `Str`）；② `chars` / `ip` / `hex` 列里的非字符串 JSON（引擎写列走 `to_string()`
+  落 `Str`，期望落 `Float`）。两者都不涉及精度丢失，且 wfgen 生成的这两类字段本就是字符串形态。
 
 - 目标窗必须已在 schema 里、`use` 的字段必须属于目标窗（VN11）、在 `use` 里重复连接键报 VN12。
 
@@ -850,7 +860,7 @@ join 侧键的值落在**与背景噪声分开的值带**（`1 << 22` 起）：�
 `wfg_ast.rs`（`JoinStmt` + `InjectCase.joins`）、`wfg_parser/syntax/inject.rs`（`join` 块 +
 抽出共用的 `parse_use_group`）、`validate/syntax.rs`（VN30）、`extract.rs`
 （`InjectOverrides.joins`）、`helpers/generate.rs`（`push_join_events`）、`hit.rs` /
-`near_miss.rs` / `non_hit.rs`（在左事件之后补发右事件）、**`cmd_gen.rs`（oracle 调用改为带
+`near_miss.rs` / `non_hit.rs`（在左事件之后补发右事件）、**`cmd_gen.rs`（期望调用改为带
 schemas，否则 join 规则永远出不了期望）**。
 
 `extract.rs` 额外登记规则侧 join 口径（`RuleJoinInfo`：目标窗 + 右侧连接键 + **驱动侧连接键** +
@@ -858,7 +868,7 @@ schemas，否则 join 规则永远出不了期望）**。
 `generate_key_values` 的字段类型查找扩到所有窗口，并给 join 侧键用分离值带；VN23 的实体推断
 在 join-then-key 时改取 `entity(...)`。
 
-测试：解析 1、VN30 4、生成 + oracle 复核 6（deferred / snapshot / join-then-key 各 2；配对后
+测试：解析 1、VN30 4、生成 + 期望复核 6（deferred / snapshot / join-then-key 各 2；配对后
 **真能触发规则**，配对错、时间放错或值带选错就掉到 0 条）；另有 CLI 端到端实测（q8、q20 与
 q6 三种形态：`lint` OK、`gen` 断言全过、右事件键与时间符合 §9.4/§9.5、期望告警数正确）。
 
@@ -938,10 +948,10 @@ VN31 校验 `total_entity_ids + 2·pool ≤ 2^24`。少了这一步，背景噪�
 | 项 | 内容 |
 |---|---|
 | 需求 | INJ1 / INJ2 在引擎分片（多 worker / 多实例）下仍然成立 |
-| 现状 | oracle 是**单机内存模型**；分片下同一实体的窗口可能跨 shard，断言口径未定义（§7.2 未决）。单机 e2e（`e2e_datagen`）已覆盖 |
+| 现状 | 期望是**单机内存模型**；分片下同一实体的窗口可能跨 shard，断言口径未定义（§7.2 未决）。单机 e2e（`e2e_datagen`）已覆盖 |
 | 依据 | **未知**——取决于是否要在分片环境跑生成期断言 |
 | 落地要点 | 先定义"分片下 hit / near_miss / miss 如何计入"，再决定断言放在生成期还是交给 `verify` 读引擎实际输出 |
-| 开放问题 | 是否干脆把分片断言交给 `verify`（以引擎输出为准），而不是扩 oracle？ |
+| 开放问题 | 是否干脆把分片断言交给 `verify`（以引擎输出为准），而不是扩期望？ |
 
 ### R3 速率波形：`wave` / `burst` / `timeline` 语义
 
@@ -950,7 +960,7 @@ VN31 校验 `total_entity_ids + 2·pool ≤ 2^24`。少了这一步，背景噪�
 | 需求 | 背景速率随时间变化（尖峰 / 周期 / 分段），用于压测波形 |
 | 现状 | 语法在（§2 grammar）、能解析成 AST，但生成器只取 `base=`（`timeline` 取第一段）→ **静默塌成平坦流量**。已用 **VN28** 拦下（`lint` / `gen` 报错并给改写方向），**实现后再放开** |
 | 依据 | **低**——30/30 语料 0 使用（唯一一处 `wave` 是 e2e fixture 的残留，已改成等价常量） |
-| 落地要点 | ① 命名统一：`spike` ≈ 已有 `burst`、`diurnal` ≈ `wave(period=24h)`，真正要新增的是 `jitter`；② 把 profile 带进 `StreamBlock`、按桶算条数——总条数从 `rate × duration` 变成**积分**，`derive_total` / oracle / INJ 口径同步；③ 校验（区间不连续、`amp > base` 等） |
+| 落地要点 | ① 命名统一：`spike` ≈ 已有 `burst`、`diurnal` ≈ `wave(period=24h)`，真正要新增的是 `jitter`；② 把 profile 带进 `StreamBlock`、按桶算条数——总条数从 `rate × duration` 变成**积分**，`derive_total` / 期望 / INJ 口径同步；③ 校验（区间不连续、`amp > base` 等） |
 | 开放问题 | 是否值得为"当前无使用者"的形态引入积分口径（会动所有场景的总量）？ |
 
 ### R4 发布口径：alpha channel 的版本推进

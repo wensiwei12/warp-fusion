@@ -35,7 +35,7 @@ pub struct OracleResult {
 /// for deterministic window expiry.
 ///
 /// SC7: when `injected_rules` is `Some`, only the rules whose names appear
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -49,6 +49,8 @@ use wf_lang::{BaseType, FieldType, WindowSchema};
 
 use crate::datagen::stream_gen::GenEvent;
 use crate::error::WfgenResult;
+// 「JSON → `Int64` 列值」的唯一实现（与 Arrow 编码共用，避免两侧值域漂移）。
+use crate::output::arrow_ipc::json_as_i64;
 
 mod window;
 
@@ -209,9 +211,9 @@ where
         ));
     }
 
-    // 时间列字段（`BaseType::Time`）在 oracle 侧也要落 `Value::Int`——见
-    // [`time_columns`] 的说明。
-    let time_columns = time_columns(schemas);
+    // 事件字段按**箭头列类型**取值（`digit` / `time` → `Value::Int`）——见
+    // [`typed_columns`] 的说明。
+    let typed_columns = typed_columns(schemas);
 
     // P2 (Path A): 预加载 join 目标窗口的全部行。引擎 replay 的窗口 actor
     // append 超前于规则任务消费（pull/push 解耦），join_lookup 因此能看到
@@ -225,7 +227,7 @@ where
     // 无 join 规则的引擎组跳过预加载遍（避免全流双遍历）。
     if engines.iter().any(|e| e.lookup.is_some()) {
         for ev in events.clone() {
-            let core = gen_event_to_core(&ev, &time_columns);
+            let core = gen_event_to_core(&ev, &typed_columns);
             let ns = ev.timestamp.timestamp_nanos_opt().unwrap_or(0);
             for engine in &mut engines {
                 if let Some(lookup) = &mut engine.lookup {
@@ -271,7 +273,7 @@ where
         let event_nanos = event.timestamp.timestamp_nanos_opt().unwrap_or(0);
         last_event_nanos = last_event_nanos.max(event_nanos);
 
-        let core_event = gen_event_to_core(&event, &time_columns);
+        let core_event = gen_event_to_core(&event, &typed_columns);
 
         // 本事件的中间输出：既 push_alert（计数）又入队 feed 下游。
         let mut feed_queue: Vec<(String, Event, i64)> = Vec::new();
@@ -581,9 +583,17 @@ where
             // End-of-scenario in datagen is also a finite replay boundary. After
             // the timeout sweep, close remaining active instances so `and close`
             // rules match batch/EOF execution semantics.
+            //
+            // reason = `Flush`（**不是** `Eos`）：运行时只在“输入完结/停机收尾”时
+            // 刷写尾部实例，且打的是 `close:flush`（`rule_task_scan.rs` 的 flush 路径；
+            // `CloseReason::Eos` 在 `wf-runtime` 里**没有生产路径**）。对拍按
+            // `origin` 分组配对，两边标签必须一致，否则尾部窗口永远配不上（实测 q5：
+            // 115 条里 114 条精确配对，差的 1 条就是 eos/flush 标签差）。
+            // 语义上两者都成立（期望侧讲“时间线到头了”，引擎讲“我是被刷写关的”），
+            // 这里选择向**引擎的实际行为**对齐（与“收尾时间口径”的历史对齐同方向）。
             let closed = engine
                 .sm
-                .close_all_with_conv(CloseReason::Eos, engine.conv_plan.as_ref());
+                .close_all_with_conv(CloseReason::Flush, engine.conv_plan.as_ref());
             collect_close_alerts(
                 &engine.executor,
                 closed,
@@ -1027,41 +1037,78 @@ fn build_window_alias_map(plan: &RulePlan) -> HashMap<String, Vec<String>> {
     map
 }
 
-/// Convert a GenEvent to a wf_core Event.
-/// 窗口名 → 「时间列」字段名集合（schema 声明为 `BaseType::Time` 的标量字段）。
+/// 标量字段的列类型口径：引擎的数据面是列式的，值域由**箭头列类型**决定，oracle 必须
+/// 按同一口径落 `Value`（不能按 JSON 文本形态猜）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TypedColumn {
+    /// `digit` → 箭头 `Int64`。
+    Int,
+    /// `time` → 箭头 `Timestamp(Nanosecond)`。
+    Time,
+}
+
+/// 窗口名 → 「需按列类型取值的标量字段」→ 口径。
+type TypedColumns = HashMap<String, HashMap<String, TypedColumn>>;
+
+/// 收集每个窗口里需要按列类型取值的标量字段。
 ///
-/// **为什么需要它**：引擎的数据面是**列式**的，值域由列类型决定——wfgen 写盘时
-/// `BaseType::Time` → 箭头 `Timestamp(Nanosecond)` 列，引擎
-/// `extract_field_value` 读该列即落 `Value::Int(i64)`（逐位精确）。而 oracle 只有
-/// JSON 来源，若一律按 [`json_to_core_value`] 「JSON 数字不猜整型」落 `Value::Float`，
-/// 两侧对**同一份数据**的值域口径就不同。差异只在时间戳上露怯：epoch-ns
-/// （≈1.77e18）超出 f64 精确整数范围（2^53≈9.0e15），量化粒度 ~256ns；
-/// `within` 的下界（如 `p.timestamp`）经 `eval_interval_bound` 的 `Float` 通道被
-/// 取整，同刻时右行正好压在下界上 → 约一半的 `row_ts >= lo` 翻转 → join 静默漏配。
+/// **为什么需要它**：`digit` 写盘为箭头 `Int64`、`time` 写盘为 `Timestamp(Nanosecond)`，
+/// 引擎 `extract_field_value` 读这两类列都落 `Value::Int(i64)`（逐位精确）。而 oracle
+/// 只有 JSON 来源，若一律按 [`json_to_core_value`]「JSON 数字不猜整型」落 `Value::Float`，
+/// 两侧对**同一份数据**的值域口径就不同；`|i| < 2^53`（f64 精确整数上限）时各消费点
+/// 恰好一致，一旦超出（雪花 ID / 纳秒 / 大计数）就**静默分叉**，已实测咬人的入口：
+/// - `within` 下界经 `eval_interval_bound` 的 `Float` 通道取整（ulp≈256ns）→ 同刻右行
+///   压在下界上被区间过滤 → join 漏配（2026-09-18 实测丢约一半）；
+/// - `JoinKey::from_value` 的 `Float` 臂走 `as i64`，`>2^53` 的 `digit` 连接键错配；
+/// - `ValueKey` / entity 去重键同源，`distinct` 静默少计。
 ///
-/// 与引擎一致的做法是**看列类型**：时间字段走 `as_i64()` 精确落 `Int`（见
-/// [`json_to_time_value`]），其余字段保持 JSON 口径（`Float`），结构化
-/// object/array（JSON 文本列）内部同样保持 `Float`。
-fn time_columns(schemas: &[WindowSchema]) -> HashMap<String, HashSet<String>> {
+/// **刻意不纳入**：`array(...)` / `object` 在接收侧的期望 schema 里是 **Utf8**
+/// （结构化 JSON 文本，见 `docs/design/arrow-type-mapping.md` DIV-3），引擎用
+/// `json_to_value` 解析该文本列、数字仍是 `Float`——所以结构化字段内的数字必须
+/// **保持 `Float`**，否则反而是 oracle 先分叉。`float` / `chars` / `ip` / `hex` 同理
+/// 走 JSON 口径（`Float64` / `Utf8` 列）。
+fn typed_columns(schemas: &[WindowSchema]) -> TypedColumns {
     schemas
         .iter()
         .map(|schema| {
-            let names = schema
+            let fields = schema
                 .fields
                 .iter()
-                .filter(|field| matches!(field.field_type, FieldType::Base(BaseType::Time)))
-                .map(|field| field.name.clone())
+                .filter_map(|field| match field.field_type {
+                    FieldType::Base(BaseType::Digit) => {
+                        Some((field.name.clone(), TypedColumn::Int))
+                    }
+                    FieldType::Base(BaseType::Time) => {
+                        Some((field.name.clone(), TypedColumn::Time))
+                    }
+                    _ => None,
+                })
                 .collect();
-            (schema.name.clone(), names)
+            (schema.name.clone(), fields)
         })
         .collect()
 }
 
-/// 时间列字段的 JSON → [`Value`]：整数用 `as_i64()` **不经 f64** 落 [`Value::Int`]。
+/// `digit` 列字段的 JSON → [`Value`]：与 Arrow 编码（`output::arrow_ipc`）**共用**
+/// [`json_as_i64`]——它就是「JSON → `Int64` 列值」的唯一实现。
+///
+/// 必须在 JSON 解析处就分路：`f64` 一旦往返已经把 `>2^53` 的值量化（epoch-ns 约
+/// 256ns、雪花 ID 直接变另一个数），事后把 `Float` 转回 `i64` 无法恢复原始值。
+///
+/// 非整值 / 越界 / 非数字 → `None`（丢字段）：Arrow 编码对这类值写 **null**，引擎读该列
+/// 得 `None`、字段根本不存在——oracle 必须同样丢掉，否则规则引用它会看到引擎看不到的值。
+fn json_to_digit_column_value(v: &serde_json::Value) -> Option<Value> {
+    json_as_i64(v).map(Value::Int)
+}
+
+/// `time` 列字段的 JSON → [`Value`]：整数用 `as_i64()` **不经 f64** 落 [`Value::Int`]。
 ///
 /// 必须在 JSON 解析处就分路：`f64` 一旦往返已经把 epoch-ns 量化到 ~256ns，
 /// 事后把 `Float` 转回 `i64` 无法恢复原始值。
-fn json_to_time_value(v: &serde_json::Value) -> Option<Value> {
+///
+/// 边界（**已知未对齐**）：Arrow 编码的 `TimeNanos` 臂还接受 ISO 字符串（解析为 ns）
+/// 与事件时间兼底，这里只认整数形态——其余形态仍走 JSON 口径（`Str` / `Float`）。
+fn json_to_time_column_value(v: &serde_json::Value) -> Option<Value> {
     match v {
         serde_json::Value::Number(n) => n
             .as_i64()
@@ -1071,17 +1118,17 @@ fn json_to_time_value(v: &serde_json::Value) -> Option<Value> {
     }
 }
 
-fn gen_event_to_core(event: &GenEvent, time_columns: &HashMap<String, HashSet<String>>) -> Event {
-    let empty = HashSet::new();
-    let time_fields = time_columns.get(&event.window_name).unwrap_or(&empty);
+fn gen_event_to_core(event: &GenEvent, typed: &TypedColumns) -> Event {
+    let none = HashMap::new();
+    let columns = typed.get(&event.window_name).unwrap_or(&none);
     let mut fields: EngineHashMap<_, Value> = EngineHashMap::default();
     for (k, v) in &event.fields {
-        let convert = if time_fields.contains(k.as_str()) {
-            json_to_time_value
-        } else {
-            json_to_core_value
+        let converted = match columns.get(k.as_str()) {
+            Some(TypedColumn::Int) => json_to_digit_column_value(v),
+            Some(TypedColumn::Time) => json_to_time_column_value(v),
+            None => json_to_core_value(v),
         };
-        if let Some(core_v) = convert(v) {
+        if let Some(core_v) = converted {
             fields.insert(k.clone().into(), core_v);
         }
     }

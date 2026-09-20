@@ -162,7 +162,7 @@ fn close_all_eos_fires_and_close_rule_at_scenario_end() {
     assert_eq!(result.alerts.len(), 1);
     assert_eq!(result.alerts[0].rule_name, "close_rule");
     assert_eq!(result.alerts[0].entity_id, "10.0.0.1");
-    assert_eq!(result.alerts[0].origin, "close:eos");
+    assert_eq!(result.alerts[0].origin, "close:flush");
 }
 
 /// batch 收尾水位 = **数据末尾**（P0）：5m 窗口的到期点（~303s）落在数据末尾
@@ -220,7 +220,8 @@ fn timeout_guard_fires_when_instance_expires_before_data_end() {
 }
 
 /// batch 收尾水位 = **数据末尾**（P0）的正面锁定：到期点在数据末尾之后的实例，
-/// 由收尾 `close_all` 以 `close:eos` 收口，且 `emit_time` = **该实例最后一条
+/// 由收尾 `close_all` 以 `close:flush` 收口（向引擎实际行为对齐：运行时只在输入
+/// 完结/停机时刷写并打 `close:flush`），且 `emit_time` = **该实例最后一条
 /// 事件**（4s），不是场景边界（600s）。
 #[test]
 fn batch_sweep_uses_data_end_not_scenario_end() {
@@ -238,7 +239,7 @@ fn batch_sweep_uses_data_end_not_scenario_end() {
     let result = run_oracle(&events, &[plan], &start, &duration, None).unwrap();
 
     assert_eq!(result.alerts.len(), 1);
-    assert_eq!(result.alerts[0].origin, "close:eos");
+    assert_eq!(result.alerts[0].origin, "close:flush");
     assert_eq!(result.alerts[0].emit_time, "2024-01-01T00:00:04.000Z");
 }
 
@@ -447,23 +448,28 @@ fn json_to_core_value_keeps_structured_values() {
 // 时间列字段的值域口径（oracle ↔ 引擎列式读取）
 // ---------------------------------------------------------------------------
 
-/// 回归（2026-09-19）：**时间列字段**必须落 [`Value::Int`]，与引擎的列式口径一致。
+/// 回归：**需按箭头列类型取值的标量字段**必须落 [`Value::Int`]，与引擎的列式口径一致。
 ///
-/// 引擎的数据面是**列式**的：wfgen 把 `BaseType::Time` 写成箭头 `Timestamp(Nanosecond)`
-/// 列，引擎 `extract_field_value` 读列即 `Value::Int(i64)`（逐位精确）。oracle 只有
-/// JSON 来源，若时间字段也跟着 [`json_to_core_value`] 的「JSON 数字不猜整型」落
-/// `Float`，两侧对同一份数据就不同口径；`within` 的下界（`p.timestamp`）经 f64 把
-/// epoch-ns（≈1.77e18 > 2^53）量化到 ~256ns，同刻时右行正压在下界上，约一半的
-/// `row_ts >= lo` 翻转 → deferred join 静默漏配（实测：50 个实体只命中 26 个，
-/// 时间字段改走 `Int` 后 50/50）。
+/// 引擎的数据面是**列式**的：wfgen 把 `BaseType::Time` 写成箭头 `Timestamp(Nanosecond)`、
+/// `BaseType::Digit` 写成 `Int64`，引擎 `extract_field_value` 读这两类列都即 `Value::Int(i64)`
+/// （逐位精确）。oracle 只有 JSON 来源，若这些字段跟着 [`json_to_core_value`] 的
+/// 「JSON 数字不猜整型」落 `Float`，两侧对同一份数据就不同口径；`>2^53`（f64 精确整数
+/// 上限）时静默分叉：`within` 下界被量化 ~256ns → deferred join 漏配（实测 50 实体只中 26），
+/// `JoinKey::from_value` 的 `Float` 臂走 `as i64` → `>2^53` 的 digit 连接键错配。
 #[test]
-fn time_typed_fields_are_exact_int_columns_in_oracle_events() {
-    use super::super::{gen_event_to_core, time_columns};
-    use wf_lang::{BaseType, FieldDef, FieldType, WindowSchema};
+fn typed_columns_are_exact_int_in_oracle_events() {
+    use super::super::{gen_event_to_core, typed_columns};
+    use wf_lang::{BaseType, FieldType, WindowSchema};
 
     // ulp=256 → 非对齐，经 f64 往返必变（对齐值恰好可精确表示，测不出差异）。
     let ns: i64 = 1_767_225_600_000_000_001;
     assert_ne!(ns as f64 as i64, ns, "前提：该值经 f64 必丢精度");
+    // 雪花 ID 量级（远超 2^53）：f64 根本存不下这个整数。
+    let snowflake: i64 = 7_302_112_345_678_901_234;
+    assert_ne!(
+        snowflake as f64 as i64, snowflake,
+        "前提：雪花 ID 经 f64 必变"
+    );
 
     let schema = WindowSchema {
         name: "conn_events".into(),
@@ -471,21 +477,20 @@ fn time_typed_fields_are_exact_int_columns_in_oracle_events() {
         time_field: Some("ts".into()),
         over: Duration::from_secs(300),
         fields: vec![
-            FieldDef {
-                name: "ts".into(),
-                field_type: FieldType::Base(BaseType::Time),
-            },
-            FieldDef {
-                name: "id".into(),
-                field_type: FieldType::Base(BaseType::Digit),
-            },
+            field("ts", FieldType::Base(BaseType::Time)),
+            field("id", FieldType::Base(BaseType::Digit)),
+            field("price", FieldType::Base(BaseType::Float)),
+            field("tags", FieldType::Array(BaseType::Digit)),
         ],
     };
-    let cols = time_columns(&[schema]);
+    let cols = typed_columns(&[schema]);
 
     let mut fields = serde_json::Map::new();
     fields.insert("ts".into(), serde_json::json!(ns));
-    fields.insert("id".into(), serde_json::json!(7));
+    fields.insert("id".into(), serde_json::json!(snowflake));
+    fields.insert("price".into(), serde_json::json!(1.5));
+    // 结构化列（箭头 Utf8 + JSON 文本）：引擎用 `json_to_value` 解文本，数字仍是 `Float`。
+    fields.insert("tags".into(), serde_json::json!([22, 2222]));
     let ev = GenEvent {
         stream_name: "conn_events".into(),
         window_name: "conn_events".into(),
@@ -497,11 +502,154 @@ fn time_typed_fields_are_exact_int_columns_in_oracle_events() {
     assert_eq!(
         core.fields["ts"],
         Value::Int(ns),
-        "时间列必须逐位精确（不得经 f64）"
+        "time 列必须逐位精确（不得经 f64）"
     );
-    // 已知边界（**本片未对齐**）：`Digit`/`Int64` 列在引擎里同样是 `Value::Int`，
-    // 但 oracle 仍按 JSON 口径落 `Float`。对 `|i| < 2^53`（id / price 等）两者在
-    // 比较、同一性键、`format_f64` 输出上恰好一致，所以暂时无害；若将来要全面对齐
-    // 列式口径，本断言会失败——那是**故意**的提醒点，不是需保的契约。
-    assert_eq!(core.fields["id"], Value::Float(7.0));
+    assert_eq!(
+        core.fields["id"],
+        Value::Int(snowflake),
+        "digit 列必须逐位精确——引擎读 Int64 列即 Int，oracle 不得落 Float（>2^53 会被量化）"
+    );
+    // 同一份 JSON 值在两侧的 `Value` 必须同变体：这正是 `JoinKey` / `ValueKey`
+    // / `eval_interval_bound` 是否分叉的分水岭。
+    assert_ne!(
+        wf_engine::match_engine::JoinKey::from_value(&core.fields["id"]),
+        wf_engine::match_engine::JoinKey::from_value(&Value::Float(snowflake as f64)),
+        "前提：>2^53 的 digit 若落 Float，连接键会错配"
+    );
+    // 非整数列不受影响（保持 JSON 口径）。
+    assert_eq!(core.fields["price"], Value::Float(1.5));
+    assert_eq!(
+        core.fields["tags"],
+        Value::Array(vec![Value::Float(22.0), Value::Float(2222.0)]),
+        "结构化列是 Utf8 JSON 文本列，内部数字必须保持 Float（否则 oracle 先分叉）"
+    );
+    // 整值浮点（`use(bytes=3e7)` 那类）与整数同落 `Int`——与 Arrow 编码共用同一归一化。
+    let mut int_forms = serde_json::Map::new();
+    int_forms.insert("id".into(), serde_json::json!(30_000_000.0));
+    let ev = GenEvent {
+        stream_name: "conn_events".into(),
+        window_name: "conn_events".into(),
+        timestamp: Utc::now(),
+        fields: int_forms,
+    };
+    assert_eq!(
+        gen_event_to_core(&ev, &cols).fields["id"],
+        Value::Int(30_000_000)
+    );
+}
+
+/// 非整值 / 非数字给 `digit` 列：Arrow 编码写 **null**，引擎读该列得 `None`、字段根本
+/// 不存在——oracle 必须同样丢掉字段，否则规则引用它会看到引擎看不到的值。
+#[test]
+fn digit_column_values_that_arrow_writes_as_null_are_dropped() {
+    use super::super::{gen_event_to_core, typed_columns};
+    use wf_lang::{BaseType, FieldType, WindowSchema};
+
+    let schema = WindowSchema {
+        name: "conn_events".into(),
+        streams: vec!["conn_events".into()],
+        time_field: None,
+        over: Duration::ZERO,
+        fields: vec![field("id", FieldType::Base(BaseType::Digit))],
+    };
+    let cols = typed_columns(&[schema]);
+    let convert = |value: serde_json::Value| {
+        let mut fields = serde_json::Map::new();
+        fields.insert("id".into(), value);
+        gen_event_to_core(
+            &GenEvent {
+                stream_name: "conn_events".into(),
+                window_name: "conn_events".into(),
+                timestamp: Utc::now(),
+                fields,
+            },
+            &cols,
+        )
+        .fields
+        .get("id")
+        .cloned()
+    };
+
+    assert_eq!(convert(serde_json::json!(42)), Some(Value::Int(42)));
+    // 以下三种 Arrow 编码都会写 null（`json_as_i64` 返回 None）→ 字段必须缺失。
+    assert_eq!(convert(serde_json::json!(22.5)), None, "非整值");
+    assert_eq!(convert(serde_json::json!("42")), None, "数字形态的字符串");
+    assert_eq!(convert(serde_json::json!(null)), None, "null");
+}
+
+fn field(name: &str, field_type: wf_lang::FieldType) -> wf_lang::FieldDef {
+    wf_lang::FieldDef {
+        name: name.to_string(),
+        field_type,
+    }
+}
+
+/// 行为级回归：`>2^53` 的 `digit` 字段作为**实体 ID** 时不得被量化。
+///
+/// 这是同一条口径差在**告警身份**上的表现：oracle 若按 JSON 口径落 `Float`，
+/// `7302112345678901234` 会先变成 f64 的最近可表示值、再打印成**另一个**十进制串，同一条
+/// 告警在 oracle 与引擎侧得到不同的 `entity_id`（下游按 ID upsert 会得到两条记录）。
+///
+/// 必须走 `run_oracle_events_full`（带 schemas）——`run_oracle` 传空 schemas，不走列类型口径。
+#[test]
+fn large_digit_entity_id_is_not_quantized() {
+    use crate::oracle::run_oracle_events_full;
+    use wf_lang::{BaseType, FieldType, WindowSchema};
+
+    // 雪花 ID 量级：f64 无精确表示（前提断言）。
+    let snowflake: i64 = 7_302_112_345_678_901_234;
+    assert_ne!(
+        snowflake as f64 as i64, snowflake,
+        "前提：该 ID 经 f64 必变（否则本用例无意义）"
+    );
+
+    let mut plan = make_simple_rule_plan();
+    plan.match_plan.keys = vec![FieldRef::Simple("id".to_string())];
+    plan.entity_plan = EntityPlan {
+        entity_type: "digit".to_string(),
+        entity_id_expr: Expr::Field(FieldRef::Simple("id".to_string())),
+    };
+
+    let schema = WindowSchema {
+        name: "LoginWindow".into(),
+        streams: vec!["s1".into()],
+        time_field: Some("timestamp".into()),
+        over: Duration::from_secs(300),
+        fields: vec![
+            field("id", FieldType::Base(BaseType::Digit)),
+            field("timestamp", FieldType::Base(BaseType::Time)),
+        ],
+    };
+
+    let events: Vec<GenEvent> = [
+        "2024-01-01T00:00:00Z",
+        "2024-01-01T00:00:01Z",
+        "2024-01-01T00:00:02Z",
+    ]
+    .into_iter()
+    .map(|ts| {
+        let mut ev = make_event("s1", "LoginWindow", "10.0.0.1", ts);
+        ev.fields.insert("id".into(), serde_json::json!(snowflake));
+        ev
+    })
+    .collect();
+
+    let start: chrono::DateTime<Utc> = "2024-01-01T00:00:00Z".parse().unwrap();
+    let result = run_oracle_events_full(
+        events,
+        &[plan],
+        &[schema],
+        &start,
+        &Duration::from_secs(3600),
+        None,
+        true,
+    )
+    .unwrap();
+
+    assert_eq!(result.alerts.len(), 1, "3 个同键事件应触发一条告警");
+    assert_eq!(
+        result.alerts[0].entity_id,
+        snowflake.to_string(),
+        "实体 ID 必须逐位精确（落 Float 会被量化成另一个十进制串）"
+    );
 }

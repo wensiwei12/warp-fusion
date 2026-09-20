@@ -27,8 +27,8 @@ const SNAPSHOT_LEAD_NANOS: i64 = -1_000_000;
 /// 该缺陷已于 2026-09-19 两侧先后修好：
 /// - 引擎侧：`within` 的界走 `Value::Int` 精确通道
 ///   （`wf-engine …/executor/context.rs::eval_interval_bound`）；
-/// - wfgen/oracle 侧：时间列字段也按**列式口径**落 `Value::Int`
-///   （`oracle::time_columns` / `json_to_time_value`）；
+/// - wfgen/oracle 侧：`time` / `digit` 列字段也按**列式口径**落 `Value::Int`
+///   （`oracle::typed_columns` / `json_to_time_column_value` / `json_to_digit_column_value`）；
 ///
 /// 因此现在故意产**同刻**数据：右行正好落在 `within` 闭区间的下界上，
 /// 把这个边界（而不是靠 1µs 余量绕过它）持续压在回归护栏下。

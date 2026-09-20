@@ -231,32 +231,15 @@ FAIL_THRESHOLD = "3"
     // ---- Read actual alerts from all routed sink outputs ----
     let actual = read_alerts_from_sink_dir(&alert_dir)
         .unwrap_or_else(|e| panic!("failed to read alerts from {}: {e}", alert_dir.display()));
-    // In `file + batch` mode, final alerts are emitted during rule-task flush on
-    // shutdown. That lifecycle uses `close:flush`, while the oracle models the
-    // finite scenario boundary as EOF (`close:eos`). Normalize the origin so the
-    // content comparison still validates the generated alerts.
-    let mut actual_normalized = actual.clone();
-    let mut normalized_flush = 0usize;
-    for alert in &mut actual_normalized {
-        if alert.origin == "close:flush" {
-            alert.origin = "close:eos".to_string();
-            normalized_flush += 1;
-        }
-    }
-
-    // ---- Run verify and write diagnostic report ----
+    // `file + batch` 收尾口径两侧已对齐（见模块注释）：引擎停机刷写打 `close:flush`，
+    // oracle 同口径建模 —— 不再需要把 `close:flush` 改写成 `close:eos` 的归一化补丁。
     let report = wfgen::verify::verify(
         oracle_alerts,
-        &actual_normalized,
+        &actual,
         tolerances.score_tolerance,
         tolerances.time_tolerance_secs,
     );
-    let mut report_md = report.to_markdown();
-    if normalized_flush > 0 {
-        report_md.push_str(&format!(
-            "\n### Notes\n\n- Normalized shutdown `close:flush` alerts to `close:eos`: {normalized_flush}\n"
-        ));
-    }
+    let report_md = report.to_markdown();
     let report_path = artifact_dir.join("verify_report.md");
     std::fs::write(&report_path, &report_md)
         .unwrap_or_else(|e| panic!("failed to write report to {}: {e}", report_path.display()));

@@ -137,7 +137,7 @@ async fn run_one(root: &Path, rel: &str) -> Result<(), String> {
         ws: Vec::new(),
         wfl: Vec::new(),
         no_wfl: false,
-        no_oracle: false,
+        no_expect: false,
         send: false,
         addr: "127.0.0.1:1".to_string(),
         duration: Some(CORPUS_DURATION.to_string()),
@@ -164,7 +164,7 @@ async fn run_one(root: &Path, rel: &str) -> Result<(), String> {
     let expected_rows = expected.lines().filter(|l| !l.trim().is_empty()).count();
     assert!(
         expected_rows > 0,
-        "[{rel}] expected-alert file is empty — oracle produced nothing"
+        "[{rel}] expected-alert file is empty — the expectation produced nothing"
     );
 
     if let Some(inject) = inject {
