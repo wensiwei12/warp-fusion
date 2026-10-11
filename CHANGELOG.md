@@ -2,6 +2,16 @@
 
 本文件记录 `wfusion` / `wfl` / `wfgen` / `wfadm` 面向使用者的变更。内部实现细节、依赖版本对齐和测试计数不在此展开。
 
+## [0.8.0-alpha] — 2026-10-12
+
+### 新增
+
+- **monitor 指标可按配置筛选 `[metrics.monitor]`**（warp-fusion#115）：可按 `stage` / `name`（指标名）/ `target`（标签）的通配规则选择哪些运行指标发往 monitor sink（文件 NDJSON、VM 等），支持 `include` / `exclude`（`exclude` 优先）与 `default = "include" | "exclude"`。未配置时行为不变；详见 [`docs/useage/config/metrics.md`](docs/useage/config/metrics.md)。
+
+### 引擎（对齐 wp-reactor 2.4.0）
+
+- 引擎对齐 wp-reactor 2.3.0 → 2.4.0：新增 monitor 指标筛选（`[metrics.monitor]`）；被排除的指标不再写入 monitor sink，仅 monitor 读的指标族启动期即不采集。
+
 ## [0.7.0]
 
 `.wfg` 注入语法重写（**破坏性**，现有场景需改写）：旧写法在加载期报错并给出改写方向，语法用法见
@@ -10,7 +20,6 @@
 
 ### 新增
 
-- **monitor 指标可按配置筛选 `[metrics.monitor]`**（warp-fusion#115）：可按 `stage` / `name`（指标名）/ `target`（标签）的通配规则选择哪些运行指标发往 monitor sink（文件 NDJSON、VM 等），支持 `include` / `exclude`（`exclude` 优先）与 `default`。未配置时行为不变；详见 [`docs/useage/config/metrics.md`](docs/useage/config/metrics.md)。需引擎支持该配置（wp-reactor ≥ 相应版本）。
 - **生成期硬断言 INJ1 / INJ2**：`hit` 的每个实体必须报警、`near_miss` / `miss` 的每个实体必须不报警，失败点名实体。
 - **跨流注入 `join <window> as <key> { … }`**：为规则的 join 目标窗造配对事件（支持 snapshot 与 join-then-key 形态）。
 - **背景实体分布 `entity <window>.<field> zipf(…)`**：背景按 Zipf 权重从实体池抽取并保留新实体比例，值域与注入实体分区。
