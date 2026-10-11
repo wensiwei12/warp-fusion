@@ -10,6 +10,7 @@
 
 ### 新增
 
+- **monitor 指标可按配置筛选 `[metrics.monitor]`**（warp-fusion#115）：可按 `stage` / `name`（指标名）/ `target`（标签）的通配规则选择哪些运行指标发往 monitor sink（文件 NDJSON、VM 等），支持 `include` / `exclude`（`exclude` 优先）与 `default`。未配置时行为不变；详见 [`docs/useage/config/metrics.md`](docs/useage/config/metrics.md)。需引擎支持该配置（wp-reactor ≥ 相应版本）。
 - **生成期硬断言 INJ1 / INJ2**：`hit` 的每个实体必须报警、`near_miss` / `miss` 的每个实体必须不报警，失败点名实体。
 - **跨流注入 `join <window> as <key> { … }`**：为规则的 join 目标窗造配对事件（支持 snapshot 与 join-then-key 形态）。
 - **背景实体分布 `entity <window>.<field> zipf(…)`**：背景按 Zipf 权重从实体池抽取并保留新实体比例，值域与注入实体分区。
